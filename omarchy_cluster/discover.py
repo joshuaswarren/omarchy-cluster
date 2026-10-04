@@ -137,6 +137,9 @@ def discover_nodes(mdns_timeout=4.0, hostfile=HOSTFILE):
 
     Returns {name: {name, ip, port, source, facts|None, error}}."""
     nodes = merge_discovered(browse(mdns_timeout), read_hostfile(hostfile))
+    local = platform.node().split(".")[0] or "localhost"
+    nodes.setdefault(local, {"name": local, "host": local, "ip": "127.0.0.1",
+                             "ips": ["127.0.0.1"], "port": DEFAULT_PORT, "source": "local"})
     for node in nodes.values():
         node["facts"] = node["error"] = None
         best = None  # (score, ip, facts) — prefer the fastest interface that answers
@@ -148,9 +151,9 @@ def discover_nodes(mdns_timeout=4.0, hostfile=HOSTFILE):
             except Exception as e:  # noqa: BLE001 - remember last failure per node
                 node["error"] = "%s: %s" % (type(e).__name__, e)
                 continue
-            score = max((ifc.get("speed_mbps") or 0)
-                        for ifc in facts.get("interfaces", [])
-                        if ip in [a["ip"] for a in ifc.get("ips", [])]) if facts.get("interfaces") else 0
+            speeds = [ifc.get("speed_mbps") or 0 for ifc in facts.get("interfaces", [])
+                      if ip in [a["ip"] for a in ifc.get("ips", [])]]
+            score = max(speeds) if speeds else 0
             if best is None or score > best[0]:
                 best = (score, ip, facts)
         if best:
