@@ -76,7 +76,7 @@ def cmd_install_agent(args):
     pkg_dst = os.path.join(src, "omarchy_cluster")
     shutil.rmtree(pkg_dst, ignore_errors=True)
     os.makedirs(src, exist_ok=True)
-    shutil.copytree(_agent_src_dir(), pkg_dst)
+    shutil.copytree(os.path.join(_agent_src_dir(), "omarchy_cluster"), pkg_dst)
 
     wrapper = os.path.join(home, ".local/bin/omarchy-cluster")
     os.makedirs(os.path.dirname(wrapper), exist_ok=True)

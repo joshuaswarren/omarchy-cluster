@@ -16,10 +16,17 @@ HOSTFILE = os.path.expanduser("~/.config/omarchy-cluster/hosts")
 
 
 def _run(cmd, timeout):
+    """Run cmd, returning stdout+stderr even when it must be killed at timeout.
+
+    dns-sd/avahi-browse stream until killed; their partial output is the result."""
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return p.stdout + "\n" + p.stderr
-    except (OSError, subprocess.SubprocessError):
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            return p.communicate(timeout=timeout)[0]
+        except subprocess.TimeoutExpired:
+            p.kill()
+            return p.communicate()[0]
+    except OSError:
         return ""
 
 
@@ -41,7 +48,8 @@ def _browse_avahi(timeout):
     for line in out.splitlines():
         f = line.split(";")
         if len(f) > 8 and f[0] == "=" and f[2] == "IPv4" and f[8].isdigit():
-            found[f[3]] = {"name": f[3], "host": f[6], "ip": f[7], "port": int(f[8])}
+            found[f[3]] = {"name": f[3], "host": f[6], "ip": f[7], "ips": [f[7]],
+                           "port": int(f[8])}
     return found
 
 
@@ -50,23 +58,28 @@ def _browse_dns_sd(timeout):
     out = _run(["dns-sd", "-B", SERVICE, ".", str(timeout)], timeout + 3)
     names = []
     for line in out.splitlines():
-        m = re.match(r"\s*\d+:\s+(\S+)", line)
-        if m and SERVICE in m.group(1):
-            names.append(m.group(1)[: -len(SERVICE) - len(".local.")].rstrip("."))
+        # Timestamp A/R Flags if Domain ServiceType InstanceName
+        m = re.match(r"\s*\S+\s+Add\s+\d+\s+\d+\s+\S+\s+\S+\s+.+?$", line)
+        if m and SERVICE in line:
+            name = line.split()[-1].rstrip(".")
+            if name not in names:
+                names.append(name)
     seen = set()
     for name in names:
         if name in seen:
             continue
         seen.add(name)
         out2 = _run(["dns-sd", "-L", name, SERVICE, ".", "2"], 5)
-        m = re.search(r"reachable at (\S+?):(\d+)", out2)
+        m = re.search(r"reached at (\S+?):(\d+)", out2)
         if not m:
             continue
         host, port = m.group(1), int(m.group(2))
-        out3 = _run(["dns-sd", "-G", "v4", host, ".", "2"], 5)
-        ips = re.findall(r"Add\s+\d+\s+\d+\s+\S+\s+(\d+\.\d+\.\d+\.\d+)", out3)
+        out3 = _run(["dns-sd", "-G", "v4", host], 5)
+        ips = [ip for ip in re.findall(r"(\d+\.\d+\.\d+\.\d+)", out3)
+               if not ip.startswith("127.")]
+        ips.sort(key=lambda ip: ip.startswith("169.254."))  # global first, link-local last
         if ips:
-            found[name] = {"name": name, "host": host, "ip": ips[-1], "port": port}
+            found[name] = {"name": name, "host": host, "ip": ips[0], "ips": ips, "port": port}
     return found
 
 
@@ -113,6 +126,7 @@ def merge_discovered(found, overrides):
     for name, addr in overrides.items():
         node = nodes.get(name, {"name": name, "host": addr, "port": DEFAULT_PORT})
         node["ip"] = _resolve(addr)
+        node["ips"] = [node["ip"]]
         node["source"] = "hostfile"
         nodes[name] = node
     return nodes
@@ -124,10 +138,22 @@ def discover_nodes(mdns_timeout=4.0, hostfile=HOSTFILE):
     Returns {name: {name, ip, port, source, facts|None, error}}."""
     nodes = merge_discovered(browse(mdns_timeout), read_hostfile(hostfile))
     for node in nodes.values():
-        try:
-            node["facts"] = fetch_facts(node["ip"], node.get("port", DEFAULT_PORT))
-            node["error"] = None
-        except Exception as e:  # noqa: BLE001 - surface per-node failure
-            node["facts"] = None
-            node["error"] = "%s: %s" % (type(e).__name__, e)
+        node["facts"] = node["error"] = None
+        best = None  # (score, ip, facts) — prefer the fastest interface that answers
+        for ip in node.get("ips") or [node.get("ip")]:
+            if not ip:
+                continue
+            try:
+                facts = fetch_facts(ip, node.get("port", DEFAULT_PORT))
+            except Exception as e:  # noqa: BLE001 - remember last failure per node
+                node["error"] = "%s: %s" % (type(e).__name__, e)
+                continue
+            score = max((ifc.get("speed_mbps") or 0)
+                        for ifc in facts.get("interfaces", [])
+                        if ip in [a["ip"] for a in ifc.get("ips", [])]) if facts.get("interfaces") else 0
+            if best is None or score > best[0]:
+                best = (score, ip, facts)
+        if best:
+            node["ip"] = best[1]
+            node["facts"] = best[2]
     return nodes
