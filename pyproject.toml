@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omarchy-cluster"
+version = "0.1.0"
+description = "One local model across every machine in the homelab: agents, discovery, link probe, route table."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Joshua Warren" }]
+
+[project.scripts]
+omarchy-cluster = "omarchy_cluster.cli:main"
+
+[tool.setuptools]
+packages = ["omarchy_cluster"]
