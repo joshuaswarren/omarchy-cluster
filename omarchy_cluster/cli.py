@@ -147,7 +147,8 @@ def links_table(links):
             continue
         pinned = pair.get("pinned") or {}
         for r in pair["routes"]:
-            mark = "*" if r is pair.get("pinned") else " "
+            is_pin = bool(pinned and (r["a_ip"], r["b_ip"]) == (pinned.get("a_ip"), pinned.get("b_ip")))
+            mark = "*" if is_pin else " "
             g1 = "%.2f" % r["gbps_a2b"] if r.get("gbps_a2b") else "  --  "
             g2 = "%.2f" % r["gbps_b2a"] if r.get("gbps_b2a") else "  --  "
             rtt = rtt_str(r)
@@ -155,7 +156,7 @@ def links_table(links):
             lines.append(" %s %-6s %s:%-15s -> %s:%-15s  %s/%s Gb/s  rtt %s  %s%s" % (
                 mark, r["media"], r["a_iface"], r["a_ip"], r["b_iface"], r["b_ip"],
                 g1, g2, rtt, dec,
-                "" if r is not pair.get("pinned") else "  PINNED"))
+                "" if not is_pin else "  PINNED"))
         if not pair["routes"]:
             lines.append("  (no routes)")
     return "\n".join(lines)
