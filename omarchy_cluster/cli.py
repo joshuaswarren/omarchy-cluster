@@ -163,7 +163,8 @@ def links_table(links):
 
 def rtt_str(r):
     t, u = r.get("rtt_tcp_ms"), r.get("rtt_udp_ms")
-    return "%.2f/%s ms" % (t, ("%.2f" % u) if u is not None else "--")
+    return "%s/%s ms" % (("%.2f" % t) if t is not None else "--",
+                         ("%.2f" % u) if u is not None else "--")
 
 
 # ---- status ----
