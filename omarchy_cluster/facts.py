@@ -203,12 +203,10 @@ def _mac_interfaces():
         if m:
             info["ips"].append({"ip": m.group(1), "prefix": _prefix_from_netmask_hex(m.group(2))})
             continue
-        m = re.search(r"media: (\S+)", line)
+        m = re.search(r"media: \S+ \((\d+)(\S*)base", line) or re.search(r"media: (\d+)(\S*)base", line)
         if m and info["speed_mbps"] is None:
-            mm = re.match(r"(\d+)(\S*)base", m.group(1), re.I)
-            if mm:
-                mult = 1000 if "g" in mm.group(2).lower() else 1
-                info["speed_mbps"] = int(mm.group(1)) * mult
+            mult = 1000 if "g" in (m.group(2) or "").lower() else 1
+            info["speed_mbps"] = int(m.group(1)) * mult
     return result
 
 
