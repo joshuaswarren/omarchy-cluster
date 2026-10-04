@@ -44,9 +44,67 @@ omarchy-cluster probe           # from any node
 omarchy-cluster status
 ```
 
-## Real-fleet receipts
+## Real-fleet receipts — 2026-10-04
 
-(filled from the 2026-10-04 run; see below)
+Agents installed and running as daemons on **mac-a** (macOS 26.6.2, M1
+Ultra, launchd LaunchAgent, KeepAlive) and **linux-b** (Arch Linux ARM,
+M2 Max, systemd user unit, linger on). Both advertise and browse
+`_omarchy-cluster._tcp` natively (dns-sd / Avahi) — zero-config discovery.
+Code SHA at time of run: `d5fff8c` (+ marker fix in the final commit).
+
+`omarchy-cluster install-agent` restart proof on mac-a: killed the agent
+pid, launchd respawed it and `/v1/facts` answered again within 4 s
+(pid 29888 → 53859).
+
+Ran on **linux-b** (control node), against mac-a, default 10 s
+streams, built-in Python TCP sender (macOS end; brew iperf3 is
+Local-Network-blocked there):
+
+```
+$ omarchy-cluster discover --mdns-timeout 4
+mac-a        10.10.10.15   mdns     ok
+linux-b     10.10.10.218  mdns     ok
+
+$ time omarchy-cluster probe          # real 3m44.7s
+mac-a <-> linux-b
+   wifi   en0:10.10.10.15   -> wlan0:10.10.3.103    0.18/1.42 Gb/s  rtt 2.17/1.94 ms  NO-DECODE
+ * wired  en0:10.10.10.15   -> enu1:10.10.10.218    2.24/2.24 Gb/s  rtt 0.33/0.26 ms  decode-ok  PINNED
+   tailscale en1:10.10.3.26 -> tailscale0:100.64.1.36  --/0.20 Gb/s   rtt --/-- ms  NO-DECODE
+   ... 9 more candidate routes measured/unmeasured, all recorded in links.json ...
+wrote /home/user/.local/state/omarchy-cluster/links.json
+
+$ omarchy-cluster status
+NODE             OS                     CHIP             MEM FREE/TOT  BACKEND UP   IP
+mac-a        macOS 26.6.2           Apple M1 Ultra   32.6/128GB    metal   up   10.10.10.15
+linux-b     Arch Linux ARM         Apple M2 Max     88.0/94GB     vulkan  up   10.10.10.218
+pinned routes (links.json 2026-10-04T23:23:57Z):
+mac-a <-> linux-b
+ * wired  en0:10.10.10.15   -> enu1:10.10.10.218    2.24/2.24 Gb/s  rtt 0.33/0.26 ms  decode-ok  PINNED
+```
+
+Measured LAN pin 2.24/2.24 Gb/s agrees with the earlier hand-measured
+2.36/2.35 Gbit/s fleet receipt (the wired-218 "hangs after TCP connect"
+return-route issue did not reproduce — full 10 s streams flowed both ways).
+Wi-Fi and Tailscale routes are measured but always marked NO-DECODE; the
+picker cannot pin them while an eligible route exists.
+
+Second smoke on a third Linux box (control + agent, hostfile override
+`mac-a=10.10.10.15` while its mDNS answer rode another interface):
+LAN pinned at 6.46/5.78 Gb/s (10GbE en0), RTT 0.48/0.45 ms, Wi-Fi measured
+0.20/0.20 Gb/s and correctly excluded from decode.
+
+Notes and limits:
+
+- Reboot re-registration is configured (launchd RunAtLoad/KeepAlive; systemd
+  `WantedBy=default.target` + linger) but was NOT tested by rebooting
+  mac-a (pinned build oracle) or linux-b (fresh from its Thunderbolt
+  test). Restart-under-keepalive was proven on mac-a instead.
+- The 1 s heartbeat today updates per-agent state (`heartbeat_seq` /
+  `heartbeat_age_s`, fetched with facts; `--hub URL` POSTs it to a control
+  hub). The hub-side registry protocol lands with build task 4.
+- mDNS may answer with any of a machine's addresses; discovery verifies
+  candidates and moves the control plane to the fastest answering interface
+  (here: en0 10GbE).
 
 ## Tests
 

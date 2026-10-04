@@ -159,4 +159,19 @@ def discover_nodes(mdns_timeout=4.0, hostfile=HOSTFILE):
         if best:
             node["ip"] = best[1]
             node["facts"] = best[2]
+            # Control plane rides the fastest interface that also answers.
+            ranked = sorted(
+                ((ifc.get("speed_mbps") or 0, not ifc.get("wireless"), a["ip"])
+                 for ifc in best[2].get("interfaces", []) for a in ifc.get("ips", [])
+                 if not a["ip"].startswith("169.254.")),
+                reverse=True)
+            for speed, _, ip in ranked:
+                if speed <= best[0] and ip in (node.get("ips") or []):
+                    break  # already on the best known address
+                try:
+                    node["facts"] = fetch_facts(ip, node.get("port", DEFAULT_PORT))
+                    node["ip"] = ip
+                    break
+                except Exception:  # noqa: BLE001 - keep the first answerer
+                    pass
     return nodes
