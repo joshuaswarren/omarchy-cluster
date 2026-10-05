@@ -41,12 +41,13 @@ def test_pipeline_split_fits_and_orders_decode_tail():
     assert plan["boundaries"][0]["per_token_ms"] > 0
 
 
-def test_no_decode_excluded():
-    nodes = {"linux-d": facts(8, 8), "mac-a": facts(100, 128)}
-    plan = planner.plan_placement(nodes, links_with("linux-d", "mac-a"), INFO,
-                                  no_decode=["linux-d"])
-    assert [s["node"] for s in plan["stages"]] == ["mac-a"]
-    assert plan["mode"] == "replica"
+def test_no_decode_node_can_prefill_but_cannot_be_decode_tail():
+    nodes = {"mac-a": facts(100, 128), "linux-c": facts(80, 94)}
+    plan = planner.plan_placement(nodes, links_with("mac-a", "linux-c"), INFO,
+                                  no_decode=["mac-a"], max_stages=2)
+    assert plan["mode"] == "pipeline"
+    assert [stage["node"] for stage in plan["stages"]] == ["mac-a", "linux-c"]
+    assert plan["decode_tail"] == "linux-c"
 
 
 def test_infeasible_when_model_does_not_fit():
