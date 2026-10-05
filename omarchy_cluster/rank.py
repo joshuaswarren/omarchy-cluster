@@ -45,6 +45,22 @@ def _first_of(model, names):
 
 
 class PipelineRank:
+    def _init_ring(self):
+        """mx.distributed.init for ring retries until both ends are listening."""
+        import time
+        deadline = time.monotonic() + 60
+        last = None
+        while time.monotonic() < deadline:
+            try:
+                g = mx.distributed.init(backend="ring")
+                if g.rank() == self.rank:
+                    return g
+                last = "rank mismatch: %s vs %s" % (g.rank(), self.rank)
+            except Exception as e:  # noqa: BLE001 - retry until peer is up
+                last = str(e)
+                time.sleep(0.5)
+        raise SystemExit("ring init failed after 60 s: %s" % last)
+
     def __init__(self, model_ref, layer_span, rank, world):
         if world not in (1, 2):
             raise SystemExit("only world size 1 or 2 is supported (ring hop protocol is 2-rank)")
@@ -81,6 +97,11 @@ class PipelineRank:
                 self.head = None  # tied embeddings
         self.caches = self._make_caches()
         self._hdr = mx.zeros((3,), mx.int32)
+        # MLX ring requires init() before any send/recv; world=1 is a no-op.
+        # For world=2 retry until the peer also binds (both ends race to be
+        # the listener; retrying closes that race).
+        if world > 1:
+            self.group = self._init_ring()
 
     def _make_caches(self):
         mk = getattr(self.model, "make_cache", None)

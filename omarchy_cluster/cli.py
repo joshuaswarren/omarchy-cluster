@@ -137,7 +137,54 @@ def cmd_install_agent(args):
         linger = subprocess.run(["loginctl", "enable-linger"], capture_output=True, text=True)
         print("systemd user unit enabled; linger: %s" %
               ("on" if linger.returncode == 0 else "FAILED (%s)" % linger.stderr.strip()))
+
     print("agent installed; wrapper: %s" % wrapper)
+
+    # Inbound accept self-test (Lead-requested): open a listener on the
+    # same binary to expose macOS Application Firewall stalls. The firewall
+    # drops inbound connections to binaries without an allow row (Homebrew
+    # Python upgrades silently re-break this). Linux just accepts.
+    _self_test_inbound(args.port, py)
+
+
+def _self_test_inbound(port, py):
+    """Bind an ephemeral listener and warn if the binary looks firewall-blocked."""
+    import socket
+    import threading
+    test_port = port + 100
+    try:
+        server = socket.socket()
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("", test_port))
+        server.listen(1)
+        server.settimeout(3.0)
+        accepted = []
+
+        def _accept():
+            try:
+                c, _ = server.accept()
+                accepted.append(True)
+                c.close()
+            except socket.timeout:
+                pass
+
+        threading.Thread(target=_accept, daemon=True).start()
+        try:
+            c = socket.socket()
+            c.settimeout(2.0)
+            c.connect(("127.0.0.1", test_port))
+            c.close()
+        except OSError:
+            pass  # on macOS, the firewall blocks loopback too; the bind test is what we want
+        server.close()
+        if platform.system() == "Darwin" and not accepted:
+            print("WARN: agent listener self-test did not accept. If peers cannot reach "
+                  ":%d, the macOS Application Firewall may be blocking this python "
+                  "binary. Fix: `sudo socketfilterfw --add %s --unblockapp` (run "
+                  "`launchctl print-cache | grep %s` to confirm the executable path)." %
+                  (port, py, py))
+    except OSError as e:  # noqa: BLE001 - self-test failures are advisory
+        print("WARN: inbound self-test bind failed: %s" % e)
 
 
 # ---- discover ----
@@ -251,7 +298,7 @@ def _launch_rank_via_agent(node, rank, model, layers, hostfile_content, args, fa
     py = args.python_mac if "macOS" in (facts_os or "") else args.python_linux
     tok = _read_local_token()
     if "macOS" in (facts_os or ""):
-        pp = None  # agent falls back to its own installed src
+        pp = None
     else:
         pp = "~/.local/share/omarchy-cluster/src"
         if args.rank_pythonpath:
@@ -337,7 +384,7 @@ def cmd_serve(args):
     engine_host = rank_ips[0]
     local_name = platform.node().split(".")[0]
     if stages[0]["node"] == local_name:
-        engine_host = "127.0.0.1"  # engine and gateway share this host
+        engine_host = "127.0.0.1"
     engine = "http://%s:%d" % (engine_host, args.engine_port)
     print("gateway engine: %s" % engine)
     from .gateway import serve as gw_serve
@@ -389,8 +436,7 @@ def node_table(nodes):
         up = f.get("heartbeat_age_s", 99) < 3.0
         mem = "%.1f/%.0fGB" % (f["memory_free_bytes"] / GB, f["memory_total_bytes"] / GB)
         lines.append("%-16s %-22s %-16s %-13s %-7s %-4s %s" % (
-            name, f["os"], f["chip"], mem,
-            f["gpu_backend"], "up" if up else "stale", n.get("ip")))
+            name, f["os"], f["chip"], mem, f["gpu_backend"], "up" if up else "stale", n.get("ip")))
     return "\n".join(lines)
 
 
