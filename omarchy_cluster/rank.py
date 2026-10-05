@@ -118,6 +118,7 @@ class PipelineRank:
 
     def _recv_int(self, src):
         a = mx.distributed.recv((1,), mx.int32, src=src)
+        mx.eval(a)
         return int(a.item())
 
     def _recv_token(self):
@@ -128,14 +129,17 @@ class PipelineRank:
         while True:
             try:
                 hdr = mx.distributed.recv((3,), mx.int32, src=0)
+                mx.eval(hdr)
                 typ = int(hdr[0].item())
                 n = int(hdr[1].item()) if typ == 0 else 1
                 h = mx.distributed.recv((1, n, self.hidden), mx.float16, src=0)
+                mx.eval(h)
                 h = self._run_stage(h, n)
                 token = self._head_token(h)
                 back = mx.array([token], mx.int32)
                 mx.eval(back)
-                mx.distributed.send(back, 0)
+                sent = mx.distributed.send(back, 0)
+                mx.eval(sent)
             except Exception:  # noqa: BLE001 - keep serving; drop request state
                 import traceback
                 traceback.print_exc()
@@ -184,8 +188,10 @@ class PipelineRank:
         if self.world == 1:
             return self._head_token(h)
         self._hdr = mx.array([0, n, 0], mx.int32)
-        mx.distributed.send(self._hdr, 1)
-        mx.distributed.send(h, 1)
+        s1 = mx.distributed.send(self._hdr, 1)
+        mx.eval(s1)
+        s2 = mx.distributed.send(h, 1)
+        mx.eval(s2)
         return self._recv_token()
 
     def decode_step(self, token):
@@ -196,8 +202,10 @@ class PipelineRank:
         if self.world == 1:
             return self._head_token(h)
         self._hdr = mx.array([1, 1, 0], mx.int32)
-        mx.distributed.send(self._hdr, 1)
-        mx.distributed.send(h, 1)
+        s1 = mx.distributed.send(self._hdr, 1)
+        mx.eval(s1)
+        s2 = mx.distributed.send(h, 1)
+        mx.eval(s2)
         return self._recv_token()
 
 
