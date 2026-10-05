@@ -364,7 +364,10 @@ def cmd_serve(args):
     rank_ips = []
     for s in stages:
         node = nodes[s["node"]]
-        cand = _pick_route_ip(node, stages, s["node"])
+        if len(stages) == 1:
+            cand = "127.0.0.1"
+        else:
+            cand = _pick_route_ip(node, stages, s["node"])
         rank_ips.append(cand)
     with open(hostfile, "w") as f:
         json.dump([["%s:%d" % (ip, 52100)] for ip in rank_ips], f)
