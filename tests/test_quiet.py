@@ -7,6 +7,26 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from omarchy_cluster import agent
 
 
+def test_rank_one_receives_engine_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent, "quiet_flag_path",
+                        lambda: str(tmp_path / "absent-quiet"))
+    monkeypatch.setattr(agent.os.path, "expanduser", lambda path: str(tmp_path))
+    launched = {}
+
+    class Process:
+        pid = 123
+
+    def popen(cmd, **kwargs):
+        launched["cmd"] = cmd
+        return Process()
+
+    monkeypatch.setattr(agent.subprocess, "Popen", popen)
+    agent.rank_start({"rank": 1, "model": "m", "layers": "1:2",
+                      "hostfile_content": "[]", "python": "python3",
+                      "engine_url": "http://rank0:8031"})
+    assert launched["cmd"][launched["cmd"].index("--engine") + 1] == "http://rank0:8031"
+
+
 def test_rank_start_refuses_when_quiet(tmp_path, monkeypatch):
     flag = tmp_path / "quiet"
     flag.write_text("")

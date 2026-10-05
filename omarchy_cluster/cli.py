@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+import signal
 
 from . import AGENT_VERSION
 from . import discover, probe as probe_mod
@@ -309,6 +310,8 @@ def _launch_rank_via_agent(node, rank, model, layers, hostfile_content, args, fa
                "python": py,
                "pythonpath": pp,
                "gpu_turn_minutes": args.gpu_turn if "macOS" not in (facts_os or "") else 0}
+    if rank:
+        payload["engine_url"] = args.engine_url
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         "http://%s:%d/v1/rank/start" % (node["ip"], node.get("port", 8025)),
@@ -322,7 +325,7 @@ def _stop_rank_via_agent(node, pid):
     tok = _read_local_token()
     req = urllib.request.Request(
         "http://%s:%d/v1/rank/stop" % (node["ip"], node.get("port", 8025)),
-        data=json.dumps({"pid": pid}).encode(),
+        data=json.dumps({"pid": pid, "ports": node.get("ports", [52100, 8031])}).encode(),
         headers={"Content-Type": "application/json", "X-Cluster-Token": tok})
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
@@ -385,7 +388,8 @@ def cmd_serve(args):
     with open(hostfile) as f:
         hostfile_content = f.read()
 
-    state = {"stages": [], "gateway_port": args.port,
+    args.engine_url = "http://%s:%d" % (rank_ips[0], args.engine_port)
+    state = {"stages": [], "gateway_port": args.port, "engine_port": args.engine_port,
              "nodes": {s["node"]: nodes[s["node"]]["ip"] for s in stages}}
     for rank, s in enumerate(stages):
         node = nodes[s["node"]]
@@ -404,8 +408,51 @@ def cmd_serve(args):
         engine_host = "127.0.0.1"
     engine = "http://%s:%d" % (engine_host, args.engine_port)
     print("gateway engine: %s" % engine)
-    from .gateway import serve as gw_serve
-    gw_serve(port=args.port, engine=engine)
+    gateway_code = "from omarchy_cluster.gateway import serve; serve(port=%d, engine=%r)" % (args.port, engine)
+    gateway = subprocess.Popen([sys.executable, "-c", gateway_code],
+                               start_new_session=True,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+    state["gateway_pid"] = gateway.pid
+    with open(os.path.expanduser("~/.local/state/omarchy-cluster/serve.json"), "w") as f:
+        json.dump(state, f, indent=2)
+    print("gateway pid: %s" % gateway.pid)
+
+
+def _sweep_listening_port(port):
+    if not port:
+        return
+    try:
+        out = subprocess.check_output(
+            ["lsof", "-tiTCP:%d" % int(port), "-sTCP:LISTEN"],
+            stderr=subprocess.DEVNULL, text=True)
+    except (OSError, subprocess.CalledProcessError):
+        return
+    for value in out.splitlines():
+        try:
+            os.kill(int(value), signal.SIGTERM)
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+def cmd_stop(args):
+    path = os.path.expanduser("~/.local/state/omarchy-cluster/serve.json")
+    if not os.path.exists(path):
+        sys.exit("no serve state")
+    with open(path) as f:
+        state = json.load(f)
+    gateway_pid = state.get("gateway_pid")
+    if gateway_pid:
+        try:
+            os.killpg(int(gateway_pid), signal.SIGTERM)
+            print("stopped gateway process group %s" % gateway_pid)
+        except ProcessLookupError:
+            pass
+    for stage in state.get("stages", []):
+        node = {"ip": stage["node"],
+                "ports": [52100, state.get("engine_port", 8031)]}
+        result = _stop_rank_via_agent(node, stage["pid"])
+        print("stopped rank pid %s on %s: %s" % (stage["pid"], stage["node"], result))
+    _sweep_listening_port(state.get("gateway_port"))
+    os.remove(path)
 
 
 def _pick_route_ip(node_facts_dict, stages, node_name):
@@ -426,18 +473,6 @@ def _pick_route_ip(node_facts_dict, stages, node_name):
             return a["ip"]
     sys.exit("no IP for %s" % node_name)
 
-
-def cmd_stop(args):
-    path = os.path.expanduser("~/.local/state/omarchy-cluster/serve.json")
-    if not os.path.exists(path):
-        sys.exit("no serve state")
-    with open(path) as f:
-        state = json.load(f)
-    for s in state.get("stages", []):
-        ip = s["node"]
-        res = _stop_rank_via_agent({"ip": ip}, s["pid"])
-        print("stopped pid %s on %s: %s" % (s["pid"], ip, res))
-    os.remove(path)
 
 
 def cmd_quiet(args):

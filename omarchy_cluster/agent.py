@@ -263,6 +263,10 @@ def rank_start(req):
             "--model", req["model"], "--layers", req["layers"],
             "--rank", str(req["rank"]), "--hostfile", hostfile,
             "--engine-port", str(req.get("engine_port", 8031))]
+    # rank 1 (decoder) polls rank 0's engine for prompts. Without this
+    # flag rank1_worker has no engine URL and ap.error()s at startup.
+    if int(req["rank"]) > 0 and req.get("engine_url"):
+        cmd += ["--engine", req["engine_url"]]
     log = os.path.join(log_dir, "rank%d.log" % req["rank"])
     with open(log, "w") as lf:
         pid = subprocess.Popen(cmd, env=env, cwd=log_dir, stdout=lf,
@@ -275,10 +279,29 @@ def rank_stop(req):
     import signal
     pid = int(req["pid"])
     try:
-        os.killpg(pid, signal.SIGTERM)  # rank runs in its own session
-        return {"stopped": pid}
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
     except OSError as e:
         return {"stopped": pid, "error": str(e)}
+    ports = []
+    for value in req.get("ports", []):
+        try:
+            port = int(value)
+            if not 1 <= port <= 65535:
+                continue
+            listeners = subprocess.check_output(
+                ["lsof", "-tiTCP:%d" % port, "-sTCP:LISTEN"],
+                stderr=subprocess.DEVNULL, text=True)
+        except (ValueError, OSError, subprocess.CalledProcessError):
+            continue
+        for listener in listeners.splitlines():
+            try:
+                os.kill(int(listener), signal.SIGTERM)
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+        ports.append(port)
+    return {"stopped": pid, "ports_swept": ports}
 
 
 class Handler(BaseHTTPRequestHandler):
