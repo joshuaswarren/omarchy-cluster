@@ -192,7 +192,6 @@ def test_cmd_serve_spawns_gateway_as_detached_child(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(cli, "cmd_place", lambda a: state)
     monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **kw: nodes)
-    monkeypatch.setattr(cli, "_node_quiet", lambda node: False)
     monkeypatch.setattr(cli, "_pick_route_ip", lambda n, s, name: n["ip"])
     monkeypatch.setattr(cli, "_launch_rank_via_agent",
                         lambda n, rank, model, layers, hf, args, facts_os: {"pid": 4242})
