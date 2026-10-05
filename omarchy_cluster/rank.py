@@ -5,8 +5,9 @@ PipelineMixin collectives — the verified cross-version pattern
 (mlx-omarchy 4033f6fe8: byte-identical greedy across mac-a stock
 0.32.2 and the M2 omarchy wheel). No hand-rolled ring hop.
 
-rank 0 (mac-a) hosts the engine HTTP API; rank 1 polls it for the
-prompt, runs the identical stream_generate, and discards its copy.
+rank 0 (mac-a) hosts the engine HTTP API and publishes each job's
+prompt token ids; rank 1 polls for them, runs the identical
+stream_generate on the same tokens, and discards its copy.
 
 Requires a PipelineMixin model (mlx-lm 0.31.3: deepseek_v2/v3,
 glm4_moe, glm4_moe_lite, ministral3). qwen2/qwen3 are NOT pipeline
@@ -49,34 +50,65 @@ def _get_engine(engine, path, params, timeout=600):
         return json.loads(r.read())
 
 
+def _poll_job(engine, last_id):
+    """One poll of rank 0's engine: the new job, or None if there is none."""
+    job = _get_engine(engine, "/prompt/wait", {"after": last_id}, timeout=3600)
+    if job.get("id") == last_id or not job.get("prompt"):
+        return None
+    return job
+
+
+def _pipeline_split(self, group):
+    """PipelineMixin.pipeline with ml-explore/mlx-lm 6c5d3a298 (#1816).
+
+    mlx-lm 0.31.3 starts rank r at (size-r-1) * its own layer count, so an
+    uneven split drops a layer (DeepSeek-V2-Lite: 27 layers / 2 ranks run
+    0-12 and 14-26; layer 13 never runs and greedy output diverges)."""
+    self.pipeline_rank = group.rank()
+    self.pipeline_size = group.size()
+    base, extra = divmod(len(self.layers), self.pipeline_size)
+    split = [base + (r < extra) for r in range(self.pipeline_size)]
+    self.start_idx = sum(split[self.pipeline_rank + 1:])
+    self.end_idx = self.start_idx + split[self.pipeline_rank]
+    self.layers = self.layers[: self.end_idx]
+    self.layers[: self.start_idx] = [None] * self.start_idx
+
+
+def _sharded_load(model_ref, group):
+    from mlx_lm.models.pipeline import PipelineMixin
+    from mlx_lm.utils import sharded_load
+    # ponytail: overrides mlx-lm's split on every rank; delete once both hosts run an mlx-lm release containing #1816
+    PipelineMixin.pipeline = _pipeline_split
+    return sharded_load(model_ref, group, None)
+
+
 def rank1_worker(model_ref, engine):
     """rank 1: poll rank0's engine for prompts and run the identical
     stream_generate so the pipeline collectives stay in lockstep."""
     import mlx.core as mx
-    from mlx_lm.utils import sharded_load
 
     group = mx.distributed.init(backend="ring")
     print("rank 1 ring: rank=%d size=%d device=%s"
           % (group.rank(), group.size(), mx.default_device()), flush=True)
-    model, tokenizer = sharded_load(model_ref, group, None)
+    model, tokenizer = _sharded_load(model_ref, group)
     print("rank 1 sharded_load done: %s" % model_ref, flush=True)
+    print("rank 1 polling %s/prompt/wait" % engine, flush=True)
     last_id = None
     while True:
         try:
-            job = _get_engine(engine, "/prompt/wait", {"after": last_id}, timeout=3600)
+            job = _poll_job(engine, last_id)
         except Exception as e:  # noqa: BLE001 - keep polling through errors
             print("rank 1 poll error: %s" % e, flush=True)
             time.sleep(2)
             continue
-        if job.get("id") == last_id or not job.get("prompt"):
+        if job is None:
             time.sleep(0.5)
             continue
-        last_id = job.get("id")
-        prompt = tokenizer.apply_chat_template(job["messages"],
-                                               add_generation_prompt=True)
-        for _ in _stream(model, tokenizer, prompt, job.get("max_tokens", 64)):
-            pass  # rank 1 runs the identical collectives; output is discarded
-        print("rank 1 completed job %s" % last_id, flush=True)
+        last_id = job["id"]
+        print("rank 1 job %s: %d prompt tokens" % (last_id, len(job["prompt"])), flush=True)
+        parts = [r.text for r in _stream(model, tokenizer, job["prompt"], job["max_tokens"])]
+        print("rank 1 completed job %s: text_sha256 %s" % (
+            last_id, hashlib.sha256("".join(parts).encode()).hexdigest()), flush=True)
 
 
 def _stream(model, tokenizer, prompt, max_tokens):
@@ -95,7 +127,7 @@ class Engine:
         self.model = None
         self._jobs = queue.Queue()
         self._id = 0
-        self._pending = None  # (id, messages, max_tokens) for rank1 to fetch
+        self._pending = None  # {"id", "prompt" token ids, "max_tokens"} for rank1
         self._lock = threading.Lock()
         self._error = None
         threading.Thread(target=self._boot, daemon=True).start()
@@ -110,13 +142,12 @@ class Engine:
                 self.model, self.tok = load(self.model_ref)
                 print("rank 0 replica load done: %s" % self.model_ref, flush=True)
             else:
-                from mlx_lm.utils import sharded_load
                 group = mx.distributed.init(backend="ring")
                 if group.size() != self.world:
                     raise RuntimeError("ring size %d != %d" % (group.size(), self.world))
                 print("rank 0 ring: rank=%d size=%d device=%s"
                       % (group.rank(), group.size(), mx.default_device()), flush=True)
-                self.model, self.tok = sharded_load(self.model_ref, group, None)
+                self.model, self.tok = _sharded_load(self.model_ref, group)
                 print("rank 0 sharded_load done: %s" % self.model_ref, flush=True)
         except Exception as e:  # noqa: BLE001 - surfaced via wait_ready
             self._error = "%s: %s" % (type(e).__name__, e)
@@ -138,14 +169,12 @@ class Engine:
             raise RuntimeError("engine boot failed: %s" % self._error)
 
     def _generate(self, messages, max_tokens):
-        from mlx_lm import stream_generate
+        prompt = self.tok.apply_chat_template(messages, add_generation_prompt=True)
         with self._lock:
             self._id += 1
-            job_id = self._id
-            self._pending = {"id": job_id, "messages": messages,
+            self._pending = {"id": self._id, "prompt": prompt,
                              "max_tokens": max_tokens}
         t0 = time.perf_counter()
-        prompt = self.tok.apply_chat_template(messages, add_generation_prompt=True)
         response = None
         parts = []
         for response in _stream(self.model, self.tok, prompt, max_tokens):
