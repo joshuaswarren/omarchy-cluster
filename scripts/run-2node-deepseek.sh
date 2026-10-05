@@ -65,31 +65,17 @@ run_cli serve "$MODEL" --stages 2 --no-decode MacStudio \
 GW_PID=$!
 printf 'gateway supervisor pid=%s\n' "$GW_PID" | tee "$receipt/supervisor.txt"
 
-gateway_up=0
-for i in $(seq 1 300); do
-    if curl -fsS --max-time 2 http://127.0.0.1:8020/health >/dev/null 2>&1; then
-        printf 'gateway ready after %ss\n' "$i" | tee "$receipt/gateway-ready.txt"
-        gateway_up=1
-        break
-    fi
-    sleep 1
-done
-if [ "$gateway_up" -ne 1 ]; then
-    capture_rank_logs
-    cat "$receipt/gateway.log" "$receipt/rank0.log" "$receipt/rank1.log" >&2
-    exit 1
-fi
-
-engine_up=0
+# gateway /health proxies the engine's, so this waits for both ranks' load
+ready=0
 for i in $(seq 1 "$ENGINE_WAIT_S"); do
-    if curl -fsS --max-time 2 http://127.0.0.1:8031/health >/dev/null 2>&1; then
-        printf 'engine ready after %ss\n' "$i" | tee "$receipt/engine-ready.txt"
-        engine_up=1
+    if curl -fsS --max-time 2 http://127.0.0.1:8020/health >/dev/null 2>&1; then
+        printf 'gateway+engine ready after %ss\n' "$i" | tee "$receipt/ready.txt"
+        ready=1
         break
     fi
     sleep 1
 done
-if [ "$engine_up" -ne 1 ]; then
+if [ "$ready" -ne 1 ]; then
     capture_rank_logs
     cat "$receipt/gateway.log" "$receipt/rank0.log" "$receipt/rank1.log" >&2
     exit 1
