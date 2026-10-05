@@ -172,9 +172,8 @@ class PipelineRank:
         return int(mx.argmax(logits[:, -1, :], axis=-1).item())
 
     def _recv_token(self):
-        back = mx.zeros((1,), mx.int32)
-        mx.distributed.recv(back, (self.rank - 1) % self.world)
-        return int(back.item())
+        a = mx.distributed.recv((1,), mx.int32, src=(self.rank - 1) % self.world)
+        return int(a.item())
 
     def prefill(self, ids):
         """One prefill hop; rank0 returns the first generated token (or None at world 1)."""
