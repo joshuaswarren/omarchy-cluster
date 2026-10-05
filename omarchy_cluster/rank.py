@@ -104,10 +104,15 @@ class Engine:
         try:
             import mlx.core as mx
             from mlx_lm.utils import sharded_load
-            # world 1: mlx-lm's sharded_load would call mx.distributed.init()
-            # itself and fail to self-connect; hand it a strict=False group.
-            group = (mx.distributed.init(backend="ring") if self.world > 1
-                     else mx.distributed.init(strict=False))
+            # world 1: plain full-model load. mlx ring cannot self-connect and
+            # sharded_load insists on a group; a replica needs neither.
+            if self.world == 1:
+                from mlx_lm.utils import load
+                self.model, self.tok = load(self.model_ref)
+                print("rank 0 replica load done: %s" % self.model_ref, flush=True)
+                self.ready.set()
+                return
+            group = mx.distributed.init(backend="ring")
             if group is not None and group.size() != self.world:
                 raise RuntimeError("ring size %d != %d" % (group.size(), self.world))
             print("rank 0 ring: rank=%d size=%d device=%s"
