@@ -13,10 +13,11 @@ MAX_TOKENS=64
 MAC_PY=/tmp/od-mac-venv313/bin/python
 LINUX_PY=/home/joshuawarren/.local/share/mlx-omarchy/golden-main-venv/bin/python
 REPO_DIR="${OMARCHY_CLUSTER_DIR:-/tmp/omarchy-cluster-run}"
-JW16_SSH=(ssh -o IdentitiesOnly=yes -i "$HOME/.ssh/id_rsa_2025" -o HostKeyAlgorithms=ssh-ed25519 joshuawarren@169.254.30.193)
+JW16_IP="${JW16_IP:-169.254.30.193}"
+JW16_SSH=(ssh -o IdentitiesOnly=yes -i "$HOME/.ssh/id_rsa_2025" -o HostKeyAlgorithms=ssh-ed25519 "joshuawarren@$JW16_IP")
 
 run_cli() {
-    PYTHONPATH="$REPO_DIR" "$MAC_PY" -c 'from omarchy_cluster import discover; discover.browse=lambda *a, **k: {}; discover.read_hostfile=lambda path=None: {"MacStudio":"127.0.0.1", "jw16-linux":"169.254.30.193"}; from omarchy_cluster.cli import main; main()' "$@"
+    PYTHONPATH="$REPO_DIR" "$MAC_PY" -c 'from omarchy_cluster import discover; discover.browse=lambda *a, **k: {}; discover.read_hostfile=lambda path=None: {"MacStudio":"127.0.0.1", "jw16-linux":"'"$JW16_IP"'"}; from omarchy_cluster.cli import main; main()' "$@"
 }
 
 run_dir="$HOME/.local/state/omarchy-cluster"
