@@ -94,15 +94,21 @@ class PipelineRank:
     def reset_cache(self):
         self.caches = self._make_caches()
 
+    def _recv_int(self, src):
+        a = mx.distributed.recv((1,), mx.int32, src=src)
+        return int(a.item())
+
+    def _recv_token(self):
+        return self._recv_int((self.rank - 1) % self.world)
+
     def serve_hops(self):
         """Rank-last event loop: each iteration is one hop driven by rank 0."""
         while True:
             try:
-                mx.distributed.recv(self._hdr, 0)
-                typ = int(self._hdr[0].item())
-                n = int(self._hdr[1].item()) if typ == 0 else 1
-                h = mx.zeros((1, n, self.hidden), mx.float16)
-                mx.distributed.recv(h, 0)
+                hdr = mx.distributed.recv((3,), mx.int32, src=0)
+                typ = int(hdr[0].item())
+                n = int(hdr[1].item()) if typ == 0 else 1
+                h = mx.distributed.recv((1, n, self.hidden), mx.float16, src=0)
                 h = self._run_stage(h, n)
                 token = self._head_token(h)
                 back = mx.array([token], mx.int32)

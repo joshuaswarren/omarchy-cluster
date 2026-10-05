@@ -157,7 +157,7 @@ world-1 tok/s is lower than single-node because all 24 layers share one
 M1 Ultra GPU on Metal with chat-template processing; the network-free
 fast path.
 
-### 2026-10-04: 2-node serve attempt (gpu queue)
+### 2026-10-04/05: 2-node serve attempt (gpu queue)
 
 `ssh linux-b 'omarchy-cluster serve SiddhJagani/Qwen3.8-2B-mlx-4Bit
 --stages 2 --no-decode linux-d --python-linux
@@ -166,15 +166,24 @@ fast path.
 --rank-pythonpath ~/.local/share/omarchy-cluster/mlx-lm-pkgs --gpu-turn 25'`
 
 Both agents launched their ranks via the token-authed `/v1/rank/start`
-endpoint (no ssh between nodes). gateway on :8020 was serving before
-the rank0 gpu-turn ticket came up. Rank0 entered the gpu-turn queue
-behind two prior 20-min jobs (`pid=39376` and `pid=42993`); it ran as
-soon as the FCFS lock freed.
+endpoint (no ssh between nodes). Gateway on linux-b :8020 came up with
+rank 0 (linux-c prefill, layers [0:21), M2 Max via the wheel) and rank 1
+(macOS decode tail, layers [21:24)) scheduled. Rank 0 entered the
+gpu-turn queue and ran briefly, but the M2 GPU stayed saturated by a
+steady stream of 20-min jobs from other lanes (other-gpu-jobs,
+other-gpu-jobs, other-gpu-jobs) for the duration of the session. Rank 0's
+gpu-turn tickets came up twice; rank 1 (the macOS decode tail) was
+never able to bring its 52100 ring listener up in time before rank 0's
+turn expired, so the ring protocol never completed a 2-rank hop.
 
 The world-1 run above already proves the full PipelineRank, OpenAI
-gateway, and greedy-equality path. The 2-node run is the same code
-across the ring; with `iter=2` rank0 sends activations to rank1 on the
-pinned 2.24 Gb/s route.
+gateway, and greedy-equality path on real Metal. The 2-node run is the
+same code across the ring; the only unvalidated bit is the inter-host
+ring hop — which is just the mlx_lm distributed ring transport that
+both stacks ship, exercised nightly by mlx.launch.
+
+NOT WITH THE NEXT DAY: re-run when the M2 GPU frees and the gpu-turn
+queue clears. Same serve invocation; same ranks; same tokens.
 
 ## Design notes
 
