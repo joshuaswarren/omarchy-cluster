@@ -103,27 +103,26 @@ class Engine:
     def _boot(self):
         try:
             import mlx.core as mx
-            from mlx_lm.utils import sharded_load
             # world 1: plain full-model load. mlx ring cannot self-connect and
             # sharded_load insists on a group; a replica needs neither.
             if self.world == 1:
                 from mlx_lm.utils import load
                 self.model, self.tok = load(self.model_ref)
                 print("rank 0 replica load done: %s" % self.model_ref, flush=True)
-                self.ready.set()
-                return
-            group = mx.distributed.init(backend="ring")
-            if group is not None and group.size() != self.world:
-                raise RuntimeError("ring size %d != %d" % (group.size(), self.world))
-            print("rank 0 ring: rank=%d size=%d device=%s"
-                  % (group.rank(), group.size(), mx.default_device()), flush=True)
-            self.model, self.tok = sharded_load(self.model_ref, group, None)
-            print("rank 0 sharded_load done: %s" % self.model_ref, flush=True)
-            self.ready.set()
+            else:
+                from mlx_lm.utils import sharded_load
+                group = mx.distributed.init(backend="ring")
+                if group.size() != self.world:
+                    raise RuntimeError("ring size %d != %d" % (group.size(), self.world))
+                print("rank 0 ring: rank=%d size=%d device=%s"
+                      % (group.rank(), group.size(), mx.default_device()), flush=True)
+                self.model, self.tok = sharded_load(self.model_ref, group, None)
+                print("rank 0 sharded_load done: %s" % self.model_ref, flush=True)
         except Exception as e:  # noqa: BLE001 - surfaced via wait_ready
             self._error = "%s: %s" % (type(e).__name__, e)
             self.ready.set()
             return
+        self.ready.set()
         while True:
             messages, max_tokens, out = self._jobs.get()
             try:
