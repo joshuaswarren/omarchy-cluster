@@ -439,7 +439,10 @@ def cmd_stop(args):
         result = _stop_rank_via_agent(node, stage["pid"])
         print("stopped rank pid %s on %s: %s" % (stage["pid"], stage["node"], result))
     _sweep_listening_port(state.get("gateway_port"))
-    os.remove(path)
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass  # concurrent stop already tore the state down
 
 
 def _pick_route_ip(node_facts_dict, stages, node_name):
