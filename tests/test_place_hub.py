@@ -41,12 +41,13 @@ def test_pipeline_split_fits_and_orders_decode_tail():
     assert plan["boundaries"][0]["per_token_ms"] > 0
 
 
-def test_no_decode_excluded():
-    nodes = {"jwm1": facts(8, 8), "MacStudio": facts(100, 128)}
-    plan = planner.plan_placement(nodes, links_with("jwm1", "MacStudio"), INFO,
-                                  no_decode=["jwm1"])
-    assert [s["node"] for s in plan["stages"]] == ["MacStudio"]
-    assert plan["mode"] == "replica"
+def test_no_decode_node_can_prefill_but_cannot_be_decode_tail():
+    nodes = {"MacStudio": facts(100, 128), "jw16-linux": facts(80, 94)}
+    plan = planner.plan_placement(nodes, links_with("MacStudio", "jw16-linux"), INFO,
+                                  no_decode=["MacStudio"], max_stages=2)
+    assert plan["mode"] == "pipeline"
+    assert [stage["node"] for stage in plan["stages"]] == ["MacStudio", "jw16-linux"]
+    assert plan["decode_tail"] == "jw16-linux"
 
 
 def test_infeasible_when_model_does_not_fit():

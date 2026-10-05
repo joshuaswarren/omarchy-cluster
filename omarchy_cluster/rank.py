@@ -22,6 +22,7 @@ import queue
 import threading
 import time
 import urllib.request
+from urllib.parse import urlencode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RING_BASE_PORT = 52100
@@ -36,6 +37,14 @@ def _post_engine(engine, path, payload, timeout=600):
     data = json.dumps(payload).encode()
     req = urllib.request.Request(engine + path, data=data,
                                  headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+def _get_engine(engine, path, params, timeout=600):
+    query = urlencode({key: value for key, value in params.items()
+                       if value is not None})
+    req = urllib.request.Request(engine + path + ("?" + query if query else ""),
+                                 method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
@@ -54,7 +63,7 @@ def rank1_worker(model_ref, engine):
     last_id = None
     while True:
         try:
-            job = _post_engine(engine, "/prompt/wait", {"after": last_id}, timeout=3600)
+            job = _get_engine(engine, "/prompt/wait", {"after": last_id}, timeout=3600)
         except Exception as e:  # noqa: BLE001 - keep polling through errors
             print("rank 1 poll error: %s" % e, flush=True)
             time.sleep(2)

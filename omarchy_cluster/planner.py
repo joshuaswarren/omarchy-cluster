@@ -75,23 +75,32 @@ def plan_placement(nodes, links, info, ctx_tokens=2048, no_decode=(), max_stages
     kv_total = kv_tok * ctx_tokens
     layer_bytes = info["weights_bytes"] / max(info["layers"], 1)
 
-    # Decode tail last: order stages small->big so the biggest node decodes
-    # (proposal: decode tail on the most capable node, wired Linux ranks prefill).
-    ranks = [n for n, f in nodes.items()
-             if n not in no_decode and f.get("unified_memory", True)]
-    if not ranks:
-        return {"mode": "none", "reason": "no decode-eligible nodes"}
+    # Keep every unified-memory node available for prefill; only the final rank
+    # must be eligible for decode.
+    ranks = [n for n, f in nodes.items() if f.get("unified_memory", True)]
     ranks.sort(key=lambda n: nodes[n]["memory_total_bytes"])
+    no_decode = set(no_decode)
+    if not any(n not in no_decode for n in ranks):
+        return {"mode": "none", "reason": "no decode-eligible nodes"}
 
     L = info["layers"]
     plan = None
     if max_stages:
-        # exact request (e.g. --stages 2): the biggest N nodes, small->big
+        # exact request (e.g. --stages 2): use the requested stage count.
         counts = [min(max_stages, len(ranks))]
     else:
         counts = list(range(len(ranks), 0, -1))
     for n_stages in counts:
-        chosen = ranks[-n_stages:]
+        chosen = None
+        for tail in reversed(ranks):
+            if tail in no_decode:
+                continue
+            prefix = [n for n in ranks if n != tail]
+            if len(prefix) >= n_stages - 1:
+                chosen = prefix[-(n_stages - 1):] + [tail] if n_stages > 1 else [tail]
+                break
+        if chosen is None:
+            continue
         # proportional cut: layers per stage follow free-memory share
         free = {n: max(nodes[n]["memory_free_bytes"], 1) for n in chosen}
         total_free = sum(free.values())
