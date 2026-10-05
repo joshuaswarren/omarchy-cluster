@@ -104,11 +104,12 @@ class Engine:
         try:
             import mlx.core as mx
             from mlx_lm.utils import sharded_load
-            group = mx.distributed.init(backend="ring")
-            if group.size() != self.world:
+            group = mx.distributed.init(backend="ring") if self.world > 1 else None
+            if group is not None and group.size() != self.world:
                 raise RuntimeError("ring size %d != %d" % (group.size(), self.world))
             print("rank 0 ring: rank=%d size=%d device=%s"
-                  % (group.rank(), group.size(), mx.default_device()), flush=True)
+                  % ((group.rank(), group.size()) if group else (0, 1),
+                     mx.default_device()), flush=True)
             self.model, self.tok = sharded_load(self.model_ref, group, None)
             print("rank 0 sharded_load done: %s" % self.model_ref, flush=True)
             self.ready.set()
