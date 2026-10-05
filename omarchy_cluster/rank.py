@@ -26,20 +26,6 @@ import urllib.request
 from urllib.parse import urlencode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-RING_BASE_PORT = 52100
-
-
-def write_hostfile(path, rank_ips):
-    with open(path, "w") as f:
-        json.dump([["%s:%d" % (ip, RING_BASE_PORT)] for ip in rank_ips], f)
-
-
-def _post_engine(engine, path, payload, timeout=600):
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(engine + path, data=data,
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
 
 def _get_engine(engine, path, params, timeout=600):
     query = urlencode({key: value for key, value in params.items()
