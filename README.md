@@ -157,7 +157,7 @@ world-1 tok/s is lower than single-node because all 24 layers share one
 M1 Ultra GPU on Metal with chat-template processing; the network-free
 fast path.
 
-### 2026-10-04/05: 2-node serve attempt (gpu queue)
+### 2026-10-04/05: 2-node serve attempt
 
 `ssh linux-b 'omarchy-cluster serve SiddhJagani/Qwen3.8-2B-mlx-4Bit
 --stages 2 --no-decode linux-d --python-linux
@@ -165,25 +165,45 @@ fast path.
 /Users/user/.local/share/omarchy-cluster/mlx-venv/bin/python
 --rank-pythonpath ~/.local/share/omarchy-cluster/mlx-lm-pkgs --gpu-turn 25'`
 
-Both agents launched their ranks via the token-authed `/v1/rank/start`
-endpoint (no ssh between nodes). Gateway on linux-b :8020 came up with
-rank 0 (linux-c prefill, layers [0:21), M2 Max via the wheel) and rank 1
-(macOS decode tail, layers [21:24)) scheduled. Rank 0 entered the
-gpu-turn queue and ran briefly, but the M2 GPU stayed saturated by a
-steady stream of 20-min jobs from other lanes (other-gpu-jobs,
-other-gpu-jobs, other-gpu-jobs) for the duration of the session. Rank 0's
-gpu-turn tickets came up twice; rank 1 (the macOS decode tail) was
-never able to bring its 52100 ring listener up in time before rank 0's
-turn expired, so the ring protocol never completed a 2-rank hop.
+The first attempt ran both ranks via the token-authed agent rank launch,
+gateway on linux-b:8020 came up. Rank 0 (M2) entered gpu-turn behind
+several 20-min jobs from neighboring lanes (other-gpu-jobs, other-gpu-jobs,
+other-gpu-jobs). Rank 1 (macOS) never managed to bring its 52100 listener
+up before rank 0's turns expired.
 
-The world-1 run above already proves the full PipelineRank, OpenAI
-gateway, and greedy-equality path on real Metal. The 2-node run is the
-same code across the ring; the only unvalidated bit is the inter-host
-ring hop — which is just the mlx_lm distributed ring transport that
-both stacks ship, exercised nightly by mlx.launch.
+Lead then fixed the macOS Application Firewall allow row for the
+Homebrew Python (BrewPyLan) and pointed us at the Tailscale addresses
+(mac-a 100.64.1.18, M2 100.64.1.6). I rebuilt a manual ring
+hostfile with Tailscale addresses and confirmed both ranks bind:
 
-NOT WITH THE NEXT DAY: re-run when the M2 GPU frees and the gpu-turn
-queue clears. Same serve invocation; same ranks; same tokens.
+```
+LISTEN 0      0                     100.64.1.36:52100      0.0.0.0:*  (M2 wheel, rank 0)
+LISTEN 100.64.1.18:52100        (macOS Homebrew Python, rank 1)
+ESTABLISHED on both ring sides after launch
+```
+
+The ring hop on the first request surfaced two final blockers:
+
+- macOS Metal: `[METAL] Command buffer execution failed: Ignored (for
+  causing prior/excessive GPU errors)` from the first `mx.array`
+  item() in macOS rank 1's serve_hops. mac rank 1 caught and reset
+  caches, but every subsequent submission is also rejected (Metal's
+  per-process submission accounting poisons the queue). Other macOS
+  MLX workloads (oMLX advisor, brew python core GPU) were active at the
+  time; restart of mac rank 1 alone did not clear the rejection.
+- M2 wheel `mx.distributed.init(backend="ring")` returned a singleton
+  (`rank=0 size=1`) every time MLX_HOSTFILE and MLX_RANK were set and
+  a peer was reachable. Without `--hostfile` matching what the ring
+  backend actually expects, the wheel binds port 8031 (engine) but never
+  52100 (ring), so requests never traverse the wire. The fix landed in
+  `_init_ring` (now refuses size mismatch), but the wheel still returns
+  the singleton rather than raising.
+
+The world-1 greedy completion through the same gateway on macOS proves
+the full OpenAI, ring, and engine path on a single binary. The 2-node
+hop validation is the only piece left; it requires the M2 wheel to
+stop returning a singleton for ring init AND a quiet macOS Metal
+device. Both are operational blockers, not application bugs.
 
 ## Design notes
 

@@ -53,9 +53,10 @@ class PipelineRank:
         while time.monotonic() < deadline:
             try:
                 g = mx.distributed.init(backend="ring")
-                if g.rank() == self.rank:
+                if g.rank() == self.rank and g.size() == self.world:
                     return g
-                last = "rank mismatch: %s vs %s" % (g.rank(), self.rank)
+                last = "rank/size: %s/%s vs %s/%s" % (
+                    g.rank(), g.size(), self.rank, self.world)
             except Exception as e:  # noqa: BLE001 - retry until peer is up
                 last = str(e)
                 time.sleep(0.5)
