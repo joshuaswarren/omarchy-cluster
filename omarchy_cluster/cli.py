@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import urllib.request
 
 from . import AGENT_VERSION
 from . import discover, probe as probe_mod
@@ -21,6 +22,11 @@ def _agent_src_dir():
 
 
 # ---- agent ----
+
+def cmd_hub(args):
+    from . import hub
+    hub.main(["--port", str(args.port)])
+
 
 def cmd_agent(args):
     from . import agent
@@ -78,6 +84,21 @@ def cmd_install_agent(args):
     os.makedirs(src, exist_ok=True)
     shutil.copytree(os.path.join(_agent_src_dir(), "omarchy_cluster"), pkg_dst)
 
+    # shared cluster token: agents only accept rank control from token holders
+    tokdir = os.path.expanduser("~/.config/omarchy-cluster")
+    os.makedirs(tokdir, exist_ok=True)
+    tokpath = os.path.join(tokdir, "token")
+    if args.token_file:
+        with open(args.token_file) as f:
+            tok = f.read().strip()
+        with open(tokpath, "w") as f:
+            f.write(tok)
+    elif not os.path.exists(tokpath):
+        import secrets
+        with open(os.open(tokpath, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+            f.write(secrets.token_urlsafe(32))
+    os.chmod(tokpath, 0o600)
+
     wrapper = os.path.join(home, ".local/bin/omarchy-cluster")
     os.makedirs(os.path.dirname(wrapper), exist_ok=True)
     py = sys.executable or "python3"
@@ -106,8 +127,13 @@ def cmd_install_agent(args):
         with open(unit, "w") as f:
             f.write(_UNIT_LINUX.format(python=py, port=args.port, src=src))
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        subprocess.run(["systemctl", "--user", "enable", "--now", "omarchy-cluster-agent"],
-                       check=True)
+        r = subprocess.run(["systemctl", "--user", "restart", "omarchy-cluster-agent"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            r = subprocess.run(["systemctl", "--user", "enable", "--now",
+                                "omarchy-cluster-agent"], capture_output=True, text=True)
+        subprocess.run(["systemctl", "--user", "enable", "omarchy-cluster-agent"],
+                       capture_output=True)
         linger = subprocess.run(["loginctl", "enable-linger"], capture_output=True, text=True)
         print("systemd user unit enabled; linger: %s" %
               ("on" if linger.returncode == 0 else "FAILED (%s)" % linger.stderr.strip()))
@@ -180,6 +206,174 @@ def cmd_status(args):
         print(links_table(links))
     else:
         print("\nno links.json yet; run: omarchy-cluster probe")
+    hub_nodes = _hub_nodes(args.hub)
+    if hub_nodes is not None:
+        print("\nhub heartbeats:")
+        for name, v in sorted(hub_nodes.items()):
+            print("  %-16s %-8s age %5.1fs seq %d" % (name, "up" if v["up"] else "OUT", v["age_s"], v["seq"]))
+
+
+def _hub_nodes(hub):
+    if not hub:
+        hub = os.environ.get("OMARCHY_CLUSTER_HUB")
+    if not hub:
+        return None
+    try:
+        with urllib.request.urlopen(hub.rstrip("/") + "/v1/nodes", timeout=3) as r:
+            return json.loads(r.read())
+    except Exception as e:  # noqa: BLE001
+        print("hub unreachable (%s): %s" % (hub, e))
+        return None
+
+
+# ---- place ----
+
+def cmd_place(args):
+    from . import planner
+    nodes = {n: d["facts"] for n, d in discover.discover_nodes().items() if d.get("facts")}
+    links = probe_mod.load_links(args.links)
+    if not links:
+        sys.exit("no links.json; run omarchy-cluster probe first")
+    info = planner.model_info(args.model)
+    if not info:
+        sys.exit("model not found locally or in HF cache: %s" % args.model)
+    plan = planner.plan_placement(nodes, links, info, ctx_tokens=args.ctx,
+                                  no_decode=args.no_decode, max_stages=args.stages)
+    print(planner.plan_table(plan))
+    if getattr(args, "json", False):
+        print(json.dumps(plan, indent=2))
+    return plan
+
+
+# ---- serve ----
+
+def _launch_rank_via_agent(node, rank, model, layers, hostfile_content, args, facts_os):
+    py = args.python_mac if "macOS" in (facts_os or "") else args.python_linux
+    tok = _read_local_token()
+    if "macOS" in (facts_os or ""):
+        pp = None  # agent falls back to its own installed src
+    else:
+        pp = "~/.local/share/omarchy-cluster/src"
+        if args.rank_pythonpath:
+            pp += ":" + args.rank_pythonpath
+    payload = {"rank": rank, "model": model, "layers": layers,
+               "hostfile_content": hostfile_content,
+               "engine_port": args.engine_port,
+               "python": py,
+               "pythonpath": pp,
+               "gpu_turn_minutes": args.gpu_turn if "macOS" not in (facts_os or "") else 0}
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        "http://%s:%d/v1/rank/start" % (node["ip"], node.get("port", 8025)),
+        data=data, headers={"Content-Type": "application/json",
+                            "X-Cluster-Token": tok})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
+
+
+def _stop_rank_via_agent(node, pid):
+    tok = _read_local_token()
+    req = urllib.request.Request(
+        "http://%s:%d/v1/rank/stop" % (node["ip"], node.get("port", 8025)),
+        data=json.dumps({"pid": pid}).encode(),
+        headers={"Content-Type": "application/json", "X-Cluster-Token": tok})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
+def _read_local_token():
+    with open(os.path.expanduser("~/.config/omarchy-cluster/token")) as f:
+        return f.read().strip()
+
+
+def cmd_serve(args):
+    prev = os.path.expanduser("~/.local/state/omarchy-cluster/serve.json")
+    if os.path.exists(prev):
+        print("stopping previous serve state first")
+        try:
+            cmd_stop(args)
+        except SystemExit:
+            pass
+    plan = cmd_place(args)
+    if plan["mode"] == "none":
+        sys.exit("no feasible plan")
+    stages = plan["stages"]
+    if len(stages) > 2:
+        sys.exit("serve currently supports 2-rank pipelines (ring hop protocol); "
+                 "got %d stages" % len(stages))
+    py_mac = args.python_mac or sys.executable
+    py_linux = args.python_linux or sys.executable
+
+    hostfile = os.path.expanduser("~/.local/state/omarchy-cluster/ring-hostfile.json")
+    os.makedirs(os.path.dirname(hostfile), exist_ok=True)
+    nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
+    rank_ips = []
+    for s in stages:
+        node = nodes[s["node"]]
+        cand = _pick_route_ip(node, stages, s["node"])
+        rank_ips.append(cand)
+    with open(hostfile, "w") as f:
+        json.dump([["%s:%d" % (ip, 52100)] for ip in rank_ips], f)
+    print("ring hostfile: %s" % rank_ips)
+    with open(hostfile) as f:
+        hostfile_content = f.read()
+
+    state = {"stages": [], "gateway_port": args.port,
+             "nodes": {s["node"]: nodes[s["node"]]["ip"] for s in stages}}
+    for rank, s in enumerate(stages):
+        node = nodes[s["node"]]
+        res = _launch_rank_via_agent(node, rank, args.model,
+                                     "%d:%d" % tuple(s["layers"]),
+                                     hostfile_content, args, node["facts"].get("os"))
+        state["stages"].append({"node": node["ip"], "pid": str(res["pid"])})
+        print("rank %d on %s pid %s (agent-reported, log: %s)"
+              % (rank, node["ip"], res["pid"], res.get("log")))
+        with open(os.path.expanduser("~/.local/state/omarchy-cluster/serve.json"), "w") as f:
+            json.dump(state, f, indent=2)
+
+    engine_host = rank_ips[0]
+    local_name = platform.node().split(".")[0]
+    if stages[0]["node"] == local_name:
+        engine_host = "127.0.0.1"  # engine and gateway share this host
+    engine = "http://%s:%d" % (engine_host, args.engine_port)
+    print("gateway engine: %s" % engine)
+    from .gateway import serve as gw_serve
+    gw_serve(port=args.port, engine=engine)
+
+
+def _pick_route_ip(node_facts_dict, stages, node_name):
+    """IP of `node` on the pinned route to the other stage's node."""
+    others = [s["node"] for s in stages if s["node"] != node_name]
+    if others:
+        links = probe_mod.load_links()
+        for pair in links.get("pairs", []):
+            if {pair.get("a"), pair.get("b")} == {node_name, others[0]}:
+                p = pair.get("pinned") or {}
+                if p.get("a_node") == node_name:
+                    return p["a_ip"]
+                if p.get("b_node") == node_name:
+                    return p["b_ip"]
+    facts = node_facts_dict["facts"]
+    for ifc in facts["interfaces"]:
+        for a in ifc["ips"]:
+            return a["ip"]
+    sys.exit("no IP for %s" % node_name)
+
+
+def cmd_stop(args):
+    path = os.path.expanduser("~/.local/state/omarchy-cluster/serve.json")
+    if not os.path.exists(path):
+        sys.exit("no serve state")
+    with open(path) as f:
+        state = json.load(f)
+    for s in state.get("stages", []):
+        ip = s["node"]
+        res = _stop_rank_via_agent({"ip": ip}, s["pid"])
+        print("stopped pid %s on %s: %s" % (s["pid"], ip, res))
+    os.remove(path)
 
 
 def node_table(nodes):
@@ -215,6 +409,8 @@ def main(argv=None):
 
     p = sub.add_parser("install-agent", help="install and start the agent daemon on this node")
     p.add_argument("--port", type=int, default=8025)
+    p.add_argument("--token-file", default=None,
+                   help="provision this shared cluster token instead of generating one")
     p.set_defaults(fn=cmd_install_agent)
 
     p = sub.add_parser("discover", help="list discovered nodes")
@@ -228,7 +424,42 @@ def main(argv=None):
 
     p = sub.add_parser("status", help="show nodes and pinned routes")
     p.add_argument("--links", default=None)
+    p.add_argument("--hub", default=None, help="hub base URL for heartbeat liveness")
     p.set_defaults(fn=cmd_status)
+
+    p = sub.add_parser("place", help="compute the pipeline split for a model")
+    p.add_argument("model")
+    p.add_argument("--ctx", type=int, default=2048)
+    p.add_argument("--links", default=None)
+    p.add_argument("--no-decode", action="append", default=[],
+                   help="node name never used as a decode rank (e.g. linux-d)")
+    p.add_argument("--stages", type=int, default=None,
+                   help="force an exact pipeline stage count")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_place)
+
+    p = sub.add_parser("serve", help="plan, launch ranks, serve OpenAI on :8020")
+    p.add_argument("model")
+    p.add_argument("--ctx", type=int, default=2048)
+    p.add_argument("--links", default=None)
+    p.add_argument("--no-decode", action="append", default=[])
+    p.add_argument("--stages", type=int, default=None)
+    p.add_argument("--port", type=int, default=8020)
+    p.add_argument("--engine-port", type=int, default=8031)
+    p.add_argument("--python-mac", default=None, help="python with mlx on macOS ranks")
+    p.add_argument("--python-linux", default=None, help="python with mlx on Linux ranks")
+    p.add_argument("--rank-pythonpath", default=None,
+                   help="extra PYTHONPATH entry for ranks (e.g. mlx-lm pkg dir)")
+    p.add_argument("--gpu-turn", type=int, default=0, metavar="MINUTES",
+                   help="wrap Linux ranks in ~/bin/gpu-turn for the shared M2 GPU")
+    p.set_defaults(fn=cmd_serve)
+
+    p = sub.add_parser("stop", help="stop ranks started by serve")
+    p.set_defaults(fn=cmd_stop)
+
+    p = sub.add_parser("hub", help="run the heartbeat hub")
+    p.add_argument("--port", type=int, default=8030)
+    p.set_defaults(fn=cmd_hub)
 
     args = ap.parse_args(argv)
     args.fn(args)

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -220,6 +222,55 @@ def hub_heartbeat(hub, hb, stop):
         stop.wait(1.0)
 
 
+def _read_token():
+    try:
+        with open(os.path.expanduser("~/.config/omarchy-cluster/token")) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def rank_start(req):
+    """Spawn this node's pipeline rank. Returns the wrapper pid."""
+    state_dir = os.path.expanduser("~/.local/state/omarchy-cluster")
+    log_dir = os.path.expanduser("~/.local/share/omarchy-cluster")
+    os.makedirs(state_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    hostfile = os.path.join(state_dir, "ring-hostfile.json")
+    with open(hostfile, "w") as f:
+        f.write(req["hostfile_content"])
+    env = dict(os.environ, MLX_RANK=str(req["rank"]), MLX_HOSTFILE=hostfile,
+               HF_HUB_OFFLINE="1")
+    if req.get("pythonpath"):
+        env["PYTHONPATH"] = ":".join(
+            os.path.expanduser(p) for p in req["pythonpath"].split(":") if p)
+    else:
+        env["PYTHONPATH"] = os.path.expanduser("~/.local/share/omarchy-cluster/src")
+    cmd = []
+    if req.get("gpu_turn_minutes"):
+        cmd += [os.path.expanduser("~/bin/gpu-turn"), "-m", str(req["gpu_turn_minutes"]), "--"]
+    cmd += [req["python"], "-m", "omarchy_cluster.rank",
+            "--model", req["model"], "--layers", req["layers"],
+            "--rank", str(req["rank"]), "--hostfile", hostfile,
+            "--engine-port", str(req.get("engine_port", 8031))]
+    log = os.path.join(log_dir, "rank%d.log" % req["rank"])
+    with open(log, "w") as lf:
+        pid = subprocess.Popen(cmd, env=env, cwd=log_dir, stdout=lf,
+                               stderr=subprocess.STDOUT,
+                               start_new_session=True).pid
+    return {"pid": pid, "log": log}
+
+
+def rank_stop(req):
+    import signal
+    pid = int(req["pid"])
+    try:
+        os.killpg(pid, signal.SIGTERM)  # rank runs in its own session
+        return {"stopped": pid}
+    except OSError as e:
+        return {"stopped": pid, "error": str(e)}
+
+
 class Handler(BaseHTTPRequestHandler):
     agent = None  # AgentState
 
@@ -251,6 +302,23 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path in ("/v1/rank/start", "/v1/rank/stop"):
+            token = _read_token()
+            supplied = self.headers.get("X-Cluster-Token", "")
+            if not token or not hmac.compare_digest(token, supplied):
+                return self._json(403, {"error": "bad or missing cluster token"})
+            try:
+                req = self._body()
+            except ValueError:
+                return self._json(400, {"error": "bad json"})
+            try:
+                if self.path == "/v1/rank/start":
+                    return self._json(200, rank_start(req))
+                return self._json(200, rank_stop(req))
+            except KeyError as e:
+                return self._json(400, {"error": "missing field %s" % e})
+            except Exception as e:  # noqa: BLE001 - report failure to caller
+                return self._json(500, {"error": str(e)})
         try:
             req = self._body()
         except ValueError:
