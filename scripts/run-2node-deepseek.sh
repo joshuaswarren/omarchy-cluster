@@ -11,7 +11,7 @@ MODEL='mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit'
 PROMPT='Write a haiku about shared memory.'
 MAX_TOKENS=64
 MAC_PY=/tmp/od-mac-venv313/bin/python
-LINUX_PY=/home/joshuawarren/.local/share/mlx-omarchy/golden-main-venv/bin/python
+LINUX_PY=/home/joshuawarren/.local/share/mlx-omarchy/venv/bin/python
 REPO_DIR="${OMARCHY_CLUSTER_DIR:-/tmp/omarchy-cluster-run}"
 JW16_IP="${JW16_IP:-169.254.30.193}"
 JW16_SSH=(ssh -o IdentitiesOnly=yes -i "$HOME/.ssh/id_rsa_2025" -o HostKeyAlgorithms=ssh-ed25519 "joshuawarren@$JW16_IP")
