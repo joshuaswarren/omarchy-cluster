@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run a complete two-node completion through the OpenAI-compatible gateway.
-# rank 0: MacStudio (stock MLX); rank 1: jw16-linux (Omarchy MLX, gpu-turn).
+# rank 0: MacStudio (stock MLX); rank 1: a Linux peer (Omarchy MLX, gpu-turn).
+# PEER_NAME/PEER_IP/PEER_KEY pick the peer (default jw16-linux over Thunderbolt);
+# ENGINE_WAIT_S covers rank 1 queueing in the peer's gpu-turn FIFO.
 set -euo pipefail
 if [ "$#" -ne 0 ]; then
     printf 'usage: %s\n' "$0" >&2
@@ -11,13 +13,16 @@ MODEL='mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit'
 PROMPT='Write a haiku about shared memory.'
 MAX_TOKENS=64
 MAC_PY=/tmp/od-mac-venv313/bin/python
-LINUX_PY=/home/joshuawarren/.local/share/mlx-omarchy/venv/bin/python
+LINUX_PY="${LINUX_PY:-/home/joshuawarren/.local/share/mlx-omarchy/venv/bin/python}"
 REPO_DIR="${OMARCHY_CLUSTER_DIR:-/tmp/omarchy-cluster-run}"
-JW16_IP="${JW16_IP:-169.254.30.193}"
-JW16_SSH=(ssh -o IdentitiesOnly=yes -i "$HOME/.ssh/id_rsa_2025" -o HostKeyAlgorithms=ssh-ed25519 "joshuawarren@$JW16_IP")
+PEER_NAME="${PEER_NAME:-jw16-linux}"
+PEER_IP="${PEER_IP:-169.254.30.193}"
+ENGINE_WAIT_S="${ENGINE_WAIT_S:-300}"
+PEER_KEY="${PEER_KEY:-$HOME/.ssh/id_rsa_2025}"
+PEER_SSH=(ssh -o IdentitiesOnly=yes -i "$PEER_KEY" -o HostKeyAlgorithms=ssh-ed25519 "joshuawarren@$PEER_IP")
 
 run_cli() {
-    PYTHONPATH="$REPO_DIR" "$MAC_PY" -c 'from omarchy_cluster import discover; discover.browse=lambda *a, **k: {}; discover.read_hostfile=lambda path=None: {"MacStudio":"127.0.0.1", "jw16-linux":"'"$JW16_IP"'"}; from omarchy_cluster.cli import main; main()' "$@"
+    PYTHONPATH="$REPO_DIR" "$MAC_PY" -c 'from omarchy_cluster import discover; discover.browse=lambda *a, **k: {}; discover.read_hostfile=lambda path=None: {"MacStudio":"127.0.0.1", "'"$PEER_NAME"'":"'"$PEER_IP"'"}; from omarchy_cluster.cli import main; main()' "$@"
 }
 
 run_dir="$HOME/.local/state/omarchy-cluster"
@@ -36,7 +41,7 @@ restore_links() {
 }
 capture_rank_logs() {
     cp "$HOME/.local/share/omarchy-cluster/rank0.log" "$receipt/rank0.log" 2>/dev/null || true
-    "${JW16_SSH[@]}" 'cat ~/.local/share/omarchy-cluster/rank1.log' >"$receipt/rank1.log" 2>&1 || true
+    "${PEER_SSH[@]}" 'cat ~/.local/share/omarchy-cluster/rank1.log' >"$receipt/rank1.log" 2>&1 || true
 }
 cleanup_on_exit() {
     if [ -f "$run_dir/serve.json" ]; then run_cli stop >>"$receipt/stop.txt" 2>&1 || true; fi
@@ -48,8 +53,8 @@ cp "$route_profile" "$links_path"
 printf 'route profile: %s\n' "$route_profile" | tee "$receipt/route.txt"
 printf 'MacStudio health: ' | tee -a "$receipt/health.txt"
 curl -fsS --max-time 5 http://127.0.0.1:8025/v1/health | tee -a "$receipt/health.txt"
-printf '\nJW16 health: ' | tee -a "$receipt/health.txt"
-"${JW16_SSH[@]}" 'curl -fsS --max-time 5 http://127.0.0.1:8025/v1/health' | tee -a "$receipt/health.txt"
+printf '\n%s health: ' "$PEER_NAME" | tee -a "$receipt/health.txt"
+"${PEER_SSH[@]}" 'curl -fsS --max-time 5 http://127.0.0.1:8025/v1/health' | tee -a "$receipt/health.txt"
 printf '\n' | tee -a "$receipt/health.txt"
 run_cli status --links "$route_profile" 2>&1 | tee "$receipt/status.txt"
 
@@ -76,7 +81,7 @@ if [ "$gateway_up" -ne 1 ]; then
 fi
 
 engine_up=0
-for i in $(seq 1 300); do
+for i in $(seq 1 "$ENGINE_WAIT_S"); do
     if curl -fsS --max-time 2 http://127.0.0.1:8031/health >/dev/null 2>&1; then
         printf 'engine ready after %ss\n' "$i" | tee "$receipt/engine-ready.txt"
         engine_up=1
@@ -107,5 +112,5 @@ wait "$GW_PID" 2>/dev/null || true
 if [ -f "$run_dir/serve.json" ]; then echo 'serve state remains' >&2; exit 1; fi
 if lsof -nP -iTCP:8020 -sTCP:LISTEN; then echo ':8020 still listening' >&2; exit 1; else echo ':8020 clear'; fi
 if lsof -nP -iTCP:8031 -sTCP:LISTEN; then echo ':8031 still listening' >&2; exit 1; else echo ':8031 clear'; fi
-"${JW16_SSH[@]}" 'ps -ef | grep -E "omarchy_cluster|mlx_lm|gpu-turn" | grep -v grep || true; ss -tlnp | grep -E ":(52100|8031)\\b" || true' | tee "$receipt/jw16-stop-proof.txt"
+"${PEER_SSH[@]}" 'ps -ef | grep omarchy_cluster.rank | grep -v grep || true; ss -tlnp | grep -E ":(52100|8031)\\b" || true' | tee "$receipt/peer-stop-proof.txt"
 printf 'private receipt: %s\n' "$receipt"
