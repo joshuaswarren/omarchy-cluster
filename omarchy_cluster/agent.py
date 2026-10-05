@@ -230,18 +230,8 @@ def _read_token():
         return None
 
 
-def quiet_flag_path():
-    return os.path.expanduser("~/.config/omarchy-cluster/quiet")
-
-
-def quiet_enabled(path=None):
-    return os.path.exists(path or quiet_flag_path())
-
-
 def rank_start(req):
     """Spawn this node's pipeline rank. Returns the wrapper pid."""
-    if quiet_enabled():
-        return {"error": "quiet mode set; refusing rank start", "quiet": True}
     state_dir = os.path.expanduser("~/.local/state/omarchy-cluster")
     log_dir = os.path.expanduser("~/.local/share/omarchy-cluster")
     os.makedirs(state_dir, exist_ok=True)
@@ -327,8 +317,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/v1/health":
             return self._json(200, {"ok": True, "version": AGENT_VERSION})
-        if self.path == "/v1/quiet":
-            return self._json(200, {"quiet": quiet_enabled()})
         if self.path == "/v1/facts":
             f = self.agent.facts()
             f["heartbeat_seq"] = self.agent.hb.seq
@@ -337,24 +325,6 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path == "/v1/quiet":
-            token = _read_token()
-            supplied = self.headers.get("X-Cluster-Token", "")
-            if not token or not hmac.compare_digest(token, supplied):
-                return self._json(403, {"error": "bad or missing cluster token"})
-            try:
-                req = self._body()
-            except ValueError:
-                return self._json(400, {"error": "bad json"})
-            path = quiet_flag_path()
-            if req.get("state") == "on":
-                open(path, "a").close()
-            elif req.get("state") == "off":
-                if os.path.exists(path):
-                    os.remove(path)
-            else:
-                return self._json(400, {"error": "state must be on|off"})
-            return self._json(200, {"quiet": quiet_enabled()})
         if self.path in ("/v1/rank/start", "/v1/rank/stop"):
             token = _read_token()
             supplied = self.headers.get("X-Cluster-Token", "")
@@ -366,10 +336,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "bad json"})
             try:
                 if self.path == "/v1/rank/start":
-                    res = rank_start(req)
-                    if res.get("quiet"):
-                        return self._json(409, res)
-                    return self._json(200, res)
+                    return self._json(200, rank_start(req))
                 return self._json(200, rank_stop(req))
             except KeyError as e:
                 return self._json(400, {"error": "missing field %s" % e})
