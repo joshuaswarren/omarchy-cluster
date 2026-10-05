@@ -75,6 +75,21 @@ if [ "$gateway_up" -ne 1 ]; then
     exit 1
 fi
 
+engine_up=0
+for i in $(seq 1 300); do
+    if curl -fsS --max-time 2 http://127.0.0.1:8031/health >/dev/null 2>&1; then
+        printf 'engine ready after %ss\n' "$i" | tee "$receipt/engine-ready.txt"
+        engine_up=1
+        break
+    fi
+    sleep 1
+done
+if [ "$engine_up" -ne 1 ]; then
+    capture_rank_logs
+    cat "$receipt/gateway.log" "$receipt/rank0.log" "$receipt/rank1.log" >&2
+    exit 1
+fi
+
 curl -fsS --max-time 620 -X POST http://127.0.0.1:8020/v1/chat/completions \
     -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg m "$MODEL" --arg p "$PROMPT" --argjson t "$MAX_TOKENS" '{model:$m,messages:[{role:"user",content:$p}],max_tokens:$t,temperature:0}')" \
