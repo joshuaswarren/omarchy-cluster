@@ -336,6 +336,17 @@ def _read_local_token():
         return f.read().strip()
 
 
+def _node_quiet(node):
+    try:
+        with urllib.request.urlopen(
+                "http://%s:%d/v1/quiet" % (node["ip"], node.get("port", 8025)),
+                timeout=5) as r:
+            return bool(json.loads(r.read()).get("quiet"))
+    except Exception as e:  # noqa: BLE001 - unreachable agent cannot start ranks
+        print("WARN: %s quiet check failed (%s); treating as quiet" % (node.get("ip"), e))
+        return True
+
+
 def cmd_serve(args):
     prev = os.path.expanduser("~/.local/state/omarchy-cluster/serve.json")
     if os.path.exists(prev):
@@ -351,6 +362,12 @@ def cmd_serve(args):
     if len(stages) > 2:
         sys.exit("serve currently supports 2-rank pipelines (ring hop protocol); "
                  "got %d stages" % len(stages))
+    nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
+    for s in stages:
+        if _node_quiet(nodes[s["node"]]):
+            sys.exit("node %s has quiet mode set; refusing to start ranks "
+                     "(clear it with: omarchy-cluster quiet off --host %s)"
+                     % (s["node"], nodes[s["node"]]["ip"]))
     py_mac = args.python_mac or sys.executable
     py_linux = args.python_linux or sys.executable
 
@@ -421,6 +438,28 @@ def cmd_stop(args):
         res = _stop_rank_via_agent({"ip": ip}, s["pid"])
         print("stopped pid %s on %s: %s" % (s["pid"], ip, res))
     os.remove(path)
+
+
+def cmd_quiet(args):
+    path = os.path.expanduser("~/.config/omarchy-cluster/quiet")
+    if args.host:
+        tok = _read_local_token()
+        data = json.dumps({"state": args.state}).encode()
+        req = urllib.request.Request(
+            "http://%s:8025/v1/quiet" % args.host, data=data,
+            headers={"Content-Type": "application/json", "X-Cluster-Token": tok})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            print("%s quiet -> %s" % (args.host, json.loads(r.read())))
+        return
+    if args.state == "on":
+        open(path, "a").close()
+        print("quiet ON: this node's agent refuses rank starts")
+    elif args.state == "off":
+        if os.path.exists(path):
+            os.remove(path)
+        print("quiet OFF: rank starts accepted again")
+    else:
+        print("quiet is %s" % ("ON" if os.path.exists(path) else "OFF"))
 
 
 def node_table(nodes):
@@ -502,6 +541,11 @@ def main(argv=None):
 
     p = sub.add_parser("stop", help="stop ranks started by serve")
     p.set_defaults(fn=cmd_stop)
+
+    p = sub.add_parser("quiet", help="refuse rank starts on this node (or --host)")
+    p.add_argument("state", choices=["on", "off", "status"], nargs="?", default="status")
+    p.add_argument("--host", default=None, help="set the quiet flag on a remote agent")
+    p.set_defaults(fn=cmd_quiet)
 
     p = sub.add_parser("hub", help="run the heartbeat hub")
     p.add_argument("--port", type=int, default=8030)
