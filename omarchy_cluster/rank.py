@@ -147,11 +147,13 @@ class Engine:
         t0 = time.perf_counter()
         prompt = self.tok.apply_chat_template(messages, add_generation_prompt=True)
         response = None
+        parts = []
         for response in _stream(self.model, self.tok, prompt, max_tokens):
-            pass
+            parts.append(response.text)
         wall = time.perf_counter() - t0
-        return {"text": response.text,
-                "text_sha256": hashlib.sha256(response.text.encode()).hexdigest(),
+        text = "".join(parts)
+        return {"text": text,
+                "text_sha256": hashlib.sha256(text.encode()).hexdigest(),
                 "prompt_tokens": response.prompt_tokens,
                 "completion_tokens": response.generation_tokens,
                 "prefill_ms": 0.0,
