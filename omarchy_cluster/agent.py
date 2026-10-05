@@ -267,13 +267,28 @@ def rank_start(req):
 
 def rank_stop(req):
     import signal
+    import time as _time
     pid = int(req["pid"])
     try:
         os.killpg(pid, signal.SIGTERM)
     except ProcessLookupError:
-        pass
+        return {"stopped": pid, "escalated": False, "ports_swept": []}
     except OSError as e:
         return {"stopped": pid, "error": str(e)}
+    # A rank stuck in a distributed collective defers SIGTERM forever; escalate.
+    escalated = False
+    for _ in range(6):
+        try:
+            os.killpg(pid, 0)
+        except OSError:
+            break
+        _time.sleep(0.5)
+    else:
+        escalated = True
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except OSError:
+            pass
     ports = []
     for value in req.get("ports", []):
         try:
@@ -291,7 +306,7 @@ def rank_stop(req):
             except (ValueError, ProcessLookupError, PermissionError):
                 pass
         ports.append(port)
-    return {"stopped": pid, "ports_swept": ports}
+    return {"stopped": pid, "escalated": escalated, "ports_swept": ports}
 
 
 class Handler(BaseHTTPRequestHandler):
