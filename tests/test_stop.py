@@ -1,0 +1,233 @@
+"""cmd_stop must kill the gateway subprocess AND remote rank agents.
+
+Bug: `omarchy-cluster serve` ran `gw_serve` in-process, so a nohup'd CLI
+session survived `omarchy-cluster stop` (which only knew about rank PIDs).
+The fix: cmd_serve spawns the gateway as a detached child and writes its
+pid to serve.json; cmd_stop killpg()s that pid and sweeps anything still
+listening on the gateway port.
+"""
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from omarchy_cluster import cli
+
+STATE_DIR = "~/.local/state/omarchy-cluster"
+
+
+def _write_state(tmp_path, gateway_pid, gateway_port, stages=None):
+    path = tmp_path / "serve.json"
+    state = {
+        "stages": stages or [],
+        "gateway_pid": gateway_pid,
+        "gateway_port": gateway_port,
+        "nodes": {},
+    }
+    path.write_text(json.dumps(state))
+    return str(path)
+
+
+def _parse_args():
+    return argparse.Namespace()
+
+
+def _expanduser_only_for(state_file_path):
+    """Wrap expanduser so the rest of cmd_serve sees real paths.
+
+    Without the wrapper, monkeypatching os.path.expanduser unconditionally
+    recurses on every inner path lookup. Use the original function for
+    anything but serve.json.
+    """
+    real_expanduser = os.path.expanduser
+    target = str(state_file_path)
+    def expanduser(p):
+        if isinstance(p, str) and p.endswith("serve.json"):
+            return target
+        return real_expanduser(p)
+    return expanduser
+
+
+def test_cmd_stop_kills_recorded_gateway_pid(tmp_path, monkeypatch):
+    """cmd_stop killpg()s the gateway pid stored in serve.json."""
+    monkeypatch.setattr(cli, "_stop_rank_via_agent", lambda node, pid: {"stopped": pid})
+    path = _write_state(tmp_path, gateway_pid=os.getpid(), gateway_port=0)
+    monkeypatch.setattr(cli.os.path, "expanduser", _expanduser_only_for(path))
+    killed = {}
+
+    def fake_killpg(pid, sig):
+        killed["pid"] = pid
+        killed["sig"] = sig
+
+    monkeypatch.setattr(cli.os, "killpg", fake_killpg)
+    cli.cmd_stop(_parse_args())
+    assert killed.get("pid") == os.getpid()
+    assert killed.get("sig") == signal.SIGTERM
+    assert not os.path.exists(path)
+
+
+def test_cmd_stop_tolerates_dead_gateway_pid(tmp_path):
+    """A stale gateway_pid must not raise; cmd_stop still proceeds and removes state."""
+    script = tmp_path / "run.py"
+    script.write_text(
+        "import json, os, sys, argparse\n"
+        "sys.path.insert(0, '" + os.path.dirname(__file__) + "/..')\n"
+        "from omarchy_cluster import cli\n"
+        "tmp = '" + str(tmp_path) + "'\n"
+        "state = {'stages': [], 'gateway_pid': 999999, 'gateway_port': 0, 'nodes': {}}\n"
+        "open(tmp + '/serve.json', 'w').write(json.dumps(state))\n"
+        "def expanduser(p):\n"
+        "    return tmp + '/serve.json' if isinstance(p, str) and 'serve.json' in p else os.path.expanduser(p)\n"
+        "cli.os.path.expanduser = expanduser\n"
+        "def boom_killpg(pid, sig):\n"
+        "    raise ProcessLookupError('no such pgid')\n"
+        "cli.os.killpg = boom_killpg\n"
+        "cli._stop_rank_via_agent = lambda node, pid: {'stopped': pid}\n"
+        "cli.cmd_stop(argparse.Namespace())\n"
+        "assert not os.path.exists(tmp + '/serve.json'), 'state file not removed'\n"
+        "print('ok')\n"
+    )
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "stderr=%r stdout=%r" % (r.stderr, r.stdout)
+    assert "ok" in r.stdout
+
+
+def test_cmd_stop_sweeps_in_process_gateway(tmp_path):
+    """A pre-fix in-process gateway (ppid 1) bound to the gateway port is killed.
+
+    Spawn the listener in a SEPARATE child subprocess so cmd_stop's killpg
+    doesn't take down the test driver.
+    """
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+
+    listener_script = tmp_path / "listener.py"
+    listener_script.write_text(
+        "import time, socket\n"
+        "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
+        "import os\n"
+        # start_new_session so killpg(SIGTERM) targets this process alone
+        "httpd = ThreadingHTTPServer(('127.0.0.1', " + str(port) + "), BaseHTTPRequestHandler)\n"
+        "httpd.serve_forever()\n"
+    )
+    listener = subprocess.Popen(
+        [sys.executable, str(listener_script)],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        # wait for the listener
+        for _ in range(40):
+            time.sleep(0.1)
+            try:
+                t = socket.create_connection(("127.0.0.1", port), timeout=0.2)
+                t.close()
+                break
+            except OSError:
+                continue
+        else:
+            raise AssertionError("listener did not bind :%d" % port)
+
+        # Now run cmd_stop in another subprocess so killpg only kills the listener
+        stop_script = tmp_path / "stop.py"
+        stop_script.write_text(
+            "import json, os, sys, argparse\n"
+            "sys.path.insert(0, '" + os.path.dirname(__file__) + "/..')\n"
+            "from omarchy_cluster import cli\n"
+            "tmp = '" + str(tmp_path) + "'\n"
+            "port = " + str(port) + "\n"
+            "state = {'stages': [], 'gateway_pid': 999999, 'gateway_port': port, 'nodes': {}}\n"
+            "open(tmp + '/serve.json', 'w').write(json.dumps(state))\n"
+            "def expanduser(p):\n"
+            "    return tmp + '/serve.json' if isinstance(p, str) and 'serve.json' in p else os.path.expanduser(p)\n"
+            "cli.os.path.expanduser = expanduser\n"
+            "cli._stop_rank_via_agent = lambda node, pid: {'stopped': pid}\n"
+            "cli.cmd_stop(argparse.Namespace())\n"
+        )
+        r = subprocess.run([sys.executable, str(stop_script)],
+                           capture_output=True, text=True, timeout=15)
+        assert r.returncode == 0, "stderr=%r stdout=%r" % (r.stderr, r.stdout)
+        # wait for listener to actually exit
+        listener.wait(timeout=5)
+        # confirm port is free
+        s2 = socket.socket()
+        bound = True
+        try:
+            s2.bind(("127.0.0.1", port))
+        except OSError:
+            bound = False
+        finally:
+            s2.close()
+        assert bound, "gateway port :%d still occupied after stop (returncode=%s)" % (
+            port, listener.returncode)
+    finally:
+        if listener.poll() is None:
+            listener.terminate()
+
+
+def test_cmd_serve_spawns_gateway_as_detached_child(tmp_path, monkeypatch):
+    """cmd_serve must Popen the gateway detached, NOT call gw_serve in-process.
+
+    Pinning the gate would re-introduce the bug. Stub out enough of cmd_serve
+    to reach the gateway-spawn site and inspect what it spawned.
+    """
+    state = {
+        "stages": [
+            {"node": "nodeA", "layers": [0, 14]},
+            {"node": "nodeB", "layers": [14, 28]},
+        ],
+        "mode": "pipeline",
+    }
+    nodes = {
+        "nodeA": {"ip": "10.0.0.1", "port": 8025, "facts": {"os": "Linux"}},
+        "nodeB": {"ip": "10.0.0.2", "port": 8025, "facts": {"os": "Linux"}},
+    }
+    monkeypatch.setattr(cli, "cmd_place", lambda a: state)
+    monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **kw: nodes)
+    monkeypatch.setattr(cli, "_node_quiet", lambda node: False)
+    monkeypatch.setattr(cli, "_pick_route_ip", lambda n, s, name: n["ip"])
+    monkeypatch.setattr(cli, "_launch_rank_via_agent",
+                        lambda n, rank, model, layers, hf, args, facts_os: {"pid": 4242})
+    args = argparse.Namespace(
+        model="m", port=18020, engine_port=18031,
+        python_mac="/usr/bin/true", python_linux="/usr/bin/true",
+        rank_pythonpath=None, gpu_turn=0, ctx=2048,
+        links=None, no_decode=[], stages=None,
+    )
+    state_file = tmp_path / "serve.json"
+    monkeypatch.setattr(cli.os.path, "expanduser", _expanduser_only_for(state_file))
+    captured = {}
+
+    class FakeProc:
+        pid = 88888
+
+    def fake_popen(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["kw"] = kw
+        return FakeProc()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    cli.cmd_serve(args)
+    assert any("omarchy_cluster.gateway" in c for c in captured["cmd"])
+    # detached session guarantee
+    assert captured["kw"].get("start_new_session") is True
+    # state.json records gateway_pid
+    state_written = json.loads(state_file.read_text())
+    assert state_written.get("gateway_pid") == 88888
+    assert state_written.get("gateway_port") == 18020
+
+def test_two_node_script_rejects_arguments():
+    script = os.path.join(os.path.dirname(__file__), "..",
+                          "scripts", "run-2node-deepseek.sh")
+    result = subprocess.run(["bash", script, "--help"],
+                            capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "usage:" in result.stderr
