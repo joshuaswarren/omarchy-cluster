@@ -353,3 +353,13 @@ def test_host_layers_stay_on_the_host_cpu_and_are_not_charged_to_devices():
     cmd = lce.server_cmd("llama-server", "m.gguf", 8032, 2048, 8, rpc=["a:1", "b:2"],
                          split=[2.0, 1.0], ngl=7)
     assert cmd[cmd.index("-ngl") + 1] == "7"
+
+
+def test_tensor_split_charges_the_real_layer_total_not_n_times_the_largest():
+    """GLM-5.3-Flash: 46 layers, largest 4.71 GB, 156.81 GB in all. Charging
+    46 x 4.71 = 217 GB refused a model whose layers hold 155.6 GB."""
+    info = {"n_layer": 46, "layer_bytes": int(4.71 * GB), "other_bytes": int(1.19 * GB),
+            "total_bytes": int(156.81 * GB), "kv_bytes_per_token_layer": 2048}
+    assert lce.tensor_split(info, [50 * GB, 86 * GB, 57 * GB, 8 * GB], 4096) == [50.0, 86.0, 57.0, 8.0]
+    with pytest.raises(ValueError):
+        lce.tensor_split(info, [100 * GB, 50 * GB], 4096)  # 150 GB < ~155.6 GB of layers

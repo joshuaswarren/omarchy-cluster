@@ -170,8 +170,12 @@ def tensor_split(info, caps_bytes, ctx_tokens, host_layers=0):
     Raises when the offloaded layers plus their KV cache exceed the summed budgets.
     The embeddings, lm_head and the first `host_layers` layers stay on the host CPU
     (mmapped from the GGUF, so they can page from disk) and are not charged here."""
-    n = info["n_layer"] - host_layers
-    need = n * (info["layer_bytes"] + info["kv_bytes_per_token_layer"] * ctx_tokens)
+    n_all = info["n_layer"]
+    n = n_all - host_layers
+    # average real layer size: MoE models have uneven layers (dense first layers), so
+    # n x the largest layer overstates the need (GLM-5.3-Flash: 217 GB vs 155.6 GB).
+    layer = (info["total_bytes"] - info["other_bytes"]) / n_all if info.get("total_bytes") else info["layer_bytes"]
+    need = n * (layer + info["kv_bytes_per_token_layer"] * ctx_tokens)
     if need > sum(caps_bytes):
         raise ValueError("%d offloaded layers need %.1f GB; the RPC devices have %.1f GB (%s)" % (
             n, need / 1e9, sum(caps_bytes) / 1e9, ", ".join("%.1f" % (c / 1e9) for c in caps_bytes)))
