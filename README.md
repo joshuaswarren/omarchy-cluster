@@ -1,24 +1,46 @@
 # omarchy-cluster
 
-Run one local MLX model across the Apple Silicon machines on your network: a
-Mac on macOS and Macs on Omarchy Linux, in any mix. The machines measure each
-other, decide which node runs which layers, run mlx-lm's pipeline in lockstep,
-and serve the whole cluster as one OpenAI-compatible endpoint.
+omarchy-cluster runs one local model across the machines on your network: Macs
+on macOS, Macs on Omarchy Linux, even an iPhone. Any manufacturer, any OS, in
+one run. The machines measure each other, decide which node runs which layers,
+and serve the cluster as one OpenAI-compatible endpoint.
 
-The point is memory. GLM-4.5-Air (106B parameters, 60.1 GB at 4 bits) does not
-fit on a 64 GB MacBook Pro M1 Max running Omarchy. Split across that laptop and
-a Mac Studio on macOS, it runs: 15 layers on the laptop (Vulkan), 31 on the Mac
-Studio (Metal), 0.87 tokens per second, with both machines agreeing on every
-token. The Mac Studio has 128 GB and could hold this model alone if it were
-idle; in this run it was also serving other models and had 50 to 66 GB free,
-and the split left at least 22 percent of its memory free.
+The point is the hardware you already own. Omarchy's promise has always been
+that the machine in front of you is still great: install Omarchy Linux and give
+it a second life. omarchy-cluster carries that promise to local models. The
+MacBook you wrote off as too old for modern models cannot hold a 106B model. It
+can hold 15 of its layers while a bigger machine holds the other 31. Use the
+machines you own together and you can run models too big for any one of them.
+Even a split too slow for chat can keep working on your coding projects in the
+background.
+
+On real hardware, 2026-10-06: GLM-4.5-Air (106B parameters, 60.1 GB at 4 bits)
+split across a 128 GB Mac Studio on macOS (Metal, 31 layers) and a 64 GB
+MacBook Pro M1 Max on Omarchy Linux (Vulkan, 15 layers) over Thunderbolt. It
+ran at 0.87 tokens per second, with both machines agreeing on every token. Two
+Omarchy Linux Macs split a smaller model and produced byte-identical text to
+one machine alone. An iPhone 15 Pro Max served layers to an Omarchy Linux host
+as a llama.cpp node. A three node probe measured every pair, including Linux
+pairs, and pinned the fastest routes in 42.6 seconds.
 
 A split does not make a model faster than one machine that can hold it. For a
 model that fits on the Mac Studio, the Mac Studio alone is faster (see the
 second table). Use a split when the model is too big for any one machine you
-have.
+have. The idle Mac Studio could hold this model by itself. In this run it was
+also serving other models and had 50 to 66 GB free. The split left at least 22
+percent of its memory free.
 
-Recording of the GLM-4.5-Air run: [docs/demo.cast](docs/demo.cast)
+exo, the closest comparison, runs its Linux nodes on CPU; omarchy-cluster runs
+Vulkan on Omarchy Linux. See the FAQ below.
+
+Try it on a node (Omarchy Linux; macOS install below):
+
+```sh
+python3 -m venv ~/.local/share/omarchy-cluster/venv && ~/.local/share/omarchy-cluster/venv/bin/pip install git+https://github.com/joshuaswarren/omarchy-cluster.git && ~/.local/share/omarchy-cluster/venv/bin/omarchy-cluster install-agent
+```
+
+Then connect two machines and serve a model: Quickstart below. The GLM-4.5-Air
+run is recorded in [docs/demo.cast](docs/demo.cast)
 (`asciinema play docs/demo.cast`).
 
 ## Measured on real hardware
@@ -27,88 +49,98 @@ All runs greedy (temperature 0), prompt "Write a haiku about shared memory.",
 2026-10-06. "Agree" means rank 1 logged the same text SHA-256 as the text the
 gateway returned.
 
-Capacity: a model that does not fit on the Linux machine.
+Capacity: a model that does not fit on the Omarchy machine.
 
 | Model | Weights | Nodes | Layers per node | Decode | Prefill, 13 tokens |
 |---|---|---|---|---|---|
-| GLM-4.5-Air-4bit (glm4_moe, 46 layers) | 60.1 GB | Mac Studio M1 Ultra 128 GB (macOS, Metal) + MacBook Pro M1 Max 64 GB (Omarchy, Vulkan), Thunderbolt | 31 + 15 | 0.87 and 0.86 tok/s, 64 tokens, agree; 0.83 in the recording | 15.5 s, 13.2 s, 16.1 s |
+| GLM-4.5-Air-4bit (glm4_moe, 46 layers) | 60.1 GB | Mac Studio M1 Ultra 128 GB + MacBook Pro M1 Max 64 GB, Thunderbolt | 31 + 15 | 0.87 and 0.86 tok/s, 64 tokens, agree | 15.5 s, 13.2 s, 16.1 s |
 
-Per token, the laptop's 15 layers take about 1.1 s and the Mac Studio's 31
-layers about 45 ms. Today the omarchy-mlx Vulkan path runs a GLM-4.5-Air layer
-at about 74 ms and Metal at about 1.5 ms, so the Linux machine sets the speed.
+The recording of this run shows 0.83 tok/s. Per token, the laptop's 15 layers
+take about 1.1 s and the Mac Studio's 31 layers about 45 ms. The omarchy-mlx
+Vulkan path runs a GLM-4.5-Air layer at about 74 ms and Metal at about 1.5 ms,
+so the Omarchy machine sets the speed.
 
 Speed: DeepSeek-Coder-V2-Lite-Instruct-4bit (27 layers, fits on one machine).
+Short names below: the Studio is the Mac Studio M1 Ultra 128 GB (macOS,
+Metal). The laptops are MacBook Pros on Omarchy Linux (Vulkan).
 
-| Nodes | Link | Layers per node | Decode |
+| Machines | Link | Layers per node | Decode |
 |---|---|---|---|
-| Mac Studio M1 Ultra alone (macOS, Metal) | | 27 | 68.2 and 67.6 tok/s |
-| MacBook Pro M1 Max alone (Omarchy, Vulkan) | | 27 | 2.45 tok/s (earlier omarchy-mlx build) |
-| MacBook Pro M1 16 GB + MacBook Pro M1 Max, both Omarchy (Vulkan) | 2.4 Gb/s wired | 1 + 26, chosen automatically | 1.79 and 1.80 tok/s, agree, text identical to the M1 Max alone |
-| Mac Studio + MacBook Pro M1 Max (Omarchy, Vulkan) | Thunderbolt, 12 Gb/s | 26 + 1, chosen automatically | 46.4 and 48.0 tok/s, agree |
-| Mac Studio + MacBook Pro M2 Max (Omarchy, Vulkan), 2026-10-05 | 2.2 Gb/s wired | 26 + 1, chosen automatically | median 52.5 tok/s (52.2 to 55.4), agree |
-| same two machines | same | 14 + 13 (naive even split) | 5.6 to 9.6 tok/s |
+| Studio alone | | 27 | 68.2 and 67.6 tok/s |
+| M1 Max alone | | 27 | 2.45 tok/s (earlier omarchy-mlx build) |
+| M1 16 GB + M1 Max | 2.4 Gb/s wired | 1 + 26, chosen automatically | 1.79 and 1.80 tok/s, agree |
+| Studio + M1 Max | Thunderbolt, 12 Gb/s | 26 + 1, chosen automatically | 46.4 and 48.0 tok/s, agree |
+| Studio + M2 Max, 2026-10-05 | 2.2 Gb/s wired | 26 + 1, chosen automatically | median 52.5 tok/s (52.2 to 55.4), agree |
+| same two machines | same | 14 + 13, a naive even split | 5.6 to 9.6 tok/s |
 | same two machines | same | 24 + 3 | 28.6 to 31.0 tok/s |
 
 The ring exchange between machines costs under 0.5 ms per token. Almost all of
 a token's time is the layers on the slower node, which is why the planner puts
 as few layers there as memory allows.
 
-Tokens: both ranks always agree, because only rank 0 samples and sends each
+Both ranks always agree on tokens, because only rank 0 samples and sends each
 token to the other rank. A split on one backend gives the same text as one
-machine: the two Omarchy laptops produced byte-identical text to the M1 Max
-alone. The text of a Metal plus Vulkan split is not always the text of a
-single Mac: hidden states differ between the Metal and Vulkan
-paths by up to 1 bf16 ulp on the prompt we checked, and that can flip a
-near-tie token. In the runs
-above the Mac Studio alone wrote "Threads in code, ...", the split wrote
-"Threads in harmony, ...". Each backend is deterministic run to run.
+machine. The two Omarchy laptops produced byte-identical text to the M1 Max
+alone. The text of a Metal plus Vulkan split is not always the text of a single
+Mac. Hidden states differ between the Metal and Vulkan paths by up to 1 bf16
+ulp on the prompt we checked. That can flip a near-tie token. In the runs above
+the Mac Studio alone wrote "Threads in code, ...", the split wrote "Threads in
+harmony, ...". Each backend is deterministic run to run.
 
-macOS note: other GPU work on a Mac (another model server, a browser, a chat
-app) can slow that node's decode several-fold. The contention watch in
-`GET /status` reports it. During this release a model server on the Mac Studio
-cut the small-model split from about 46 to about 22 tok/s while it was busy.
+Other GPU work on a Mac (another model server, a browser, a chat app) can slow
+that node's decode several-fold. The contention watch in `GET /status` reports
+it. During this release a model server on the Mac Studio cut the small-model
+split from about 46 to about 22 tok/s while it was busy.
 
 ## What it does
 
-- `omarchy-cluster discover`: find nodes over mDNS (`_omarchy-cluster._tcp`,
-  Avahi on Linux, dns-sd on macOS), with a plain-text hosts file override.
-- `omarchy-cluster probe`: measure RTT and bandwidth for every node pair and
-  every interface route, and pin the fastest decode-eligible route per pair.
-  Wi-Fi and overlay routes (Tailscale) are probed but never used for decode.
-- `omarchy-cluster place MODEL`: check the model fits: every stage must hold
-  at least one layer in 90 percent of its free memory, and all stages together
-  must hold every layer. Prints each node's layer cap.
-- `omarchy-cluster serve MODEL`: plan, launch a pipeline rank on each node
-  through its token-authed agent (no node-to-node ssh), and start an
-  OpenAI-compatible gateway on :8020. Each rank measures its decode ms per
-  layer at start and all ranks agree on the same split, or `--split N0,N1`
-  sets it. A request with `"timing": true` reports per-step ring wait and
-  compute.
-- `omarchy-cluster stop`: stop the gateway and every rank, sweep the ports.
-- `omarchy-cluster status`, `hub`: node table with pinned routes, and a 1 Hz
-  heartbeat hub.
+The `discover` command finds nodes over mDNS (`_omarchy-cluster._tcp`, Avahi
+on Linux, dns-sd on macOS), with a plain-text hosts file override.
+
+The `probe` command measures RTT and bandwidth for every node pair and every
+interface route, and pins the fastest decode-eligible route per pair, including
+Linux pairs. Wi-Fi and overlay routes (Tailscale) are probed but never used for
+decode.
+
+The `place MODEL` command checks that the model fits: every stage must hold at
+least one layer in 90 percent of its free memory, and all stages together must
+hold every layer. It prints each node's layer cap.
+
+The `serve MODEL` command plans, launches a pipeline rank on each node through
+its token-authed agent (no node-to-node ssh), and starts an OpenAI-compatible
+gateway on :8020. Each rank measures its decode ms per layer at start, and all
+ranks agree on the same split; `--split N0,N1` sets it by hand. A request with
+`"timing": true` reports per-step ring wait and compute. The `--engine
+llamacpp` option serves a GGUF model through llama-server instead, including an
+iPhone as an RPC node over USB.
+
+The `stop` command stops the gateway and every rank, and sweeps the ports. The
+`status` and `hub` commands print the node table with pinned routes and a 1 Hz
+heartbeat hub.
 
 The control plane is Python stdlib only. MLX is needed only on nodes that run
 layers.
 
 ## Requirements
 
-- Macs on macOS: stock MLX and mlx-lm.
-- Macs on Linux: Omarchy M+ with omarchy-mlx (MLX on the GPU through its
-  Vulkan backend). Its Vulkan backend runs 4-bit and 8-bit quantized models;
-  5-bit and 6-bit MoE models fail on Linux nodes today.
-- Python 3.9 or newer.
-- Avahi on Linux and dns-sd on macOS (present by default on both).
-- All nodes on one LAN or Thunderbolt link.
-- A model mlx-lm can pipeline: the deepseek_v2/v3, glm4_moe, glm4_moe_lite and
-  ministral3 families. qwen2/qwen3 are not pipeline models upstream; run those
-  on one node (`--stages 1`).
+Macs on macOS need stock MLX and mlx-lm. Macs on Omarchy Linux need Omarchy M+
+with omarchy-mlx, MLX on the GPU through its Vulkan backend. That Vulkan
+backend runs 4-bit and 8-bit quantized models; 5-bit and 6-bit MoE models fail
+on these nodes. The llama.cpp engine (`--engine llamacpp`) needs llama.cpp on
+the host, plus the rpc-server app built from `ios/` for an iPhone node (see
+`ios/README.md`). Python 3.9 or newer is needed on every node. Avahi on Linux
+and dns-sd on macOS are present by default on both. All nodes sit on one LAN or
+Thunderbolt link.
+
+The model must be one mlx-lm can pipeline: the deepseek_v2/v3, glm4_moe,
+glm4_moe_lite and ministral3 families. qwen2/qwen3 are not pipeline models
+upstream; run those on one node (`--stages 1`).
 
 ## Install
 
 One command per node. Use a venv that persists: the agent starts from it at
-every boot, so a venv under /tmp breaks after a reboot (`install-agent`
-refuses one).
+every boot, so a venv under /tmp breaks after a reboot (`install-agent` refuses
+one).
 
 On Omarchy. The agent is plain Python; ranks run in omarchy-mlx's Python,
 whether omarchy-mlx is a user or a package install:
@@ -131,14 +163,14 @@ present, else the Python the agent runs in. `serve --python-mac` and
 
 ## Quickstart: two machines
 
-All nodes need the same token. From the machine that will run the gateway:
+All nodes need the same token. Copy it to the second node:
 
 ```sh
 scp ~/.config/omarchy-cluster/token node2:~/.config/omarchy-cluster/token
 ssh node2 omarchy-cluster install-agent --token-file ~/.config/omarchy-cluster/token
 ```
 
-Then, on the gateway machine:
+Then, on the machine that will run the gateway:
 
 ```sh
 omarchy-cluster discover        # both nodes appear
@@ -148,7 +180,7 @@ omarchy-cluster place mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit
 omarchy-cluster serve mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit
 ```
 
-`serve` prints the plan, starts the ranks through each node's agent, and
+`serve` prints the plan and starts the ranks through each node's agent, and it
 leaves the gateway on :8020. Each node loads only its own layers from its
 Hugging Face cache, so download the model on every node first
 (`hf download mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit`).
@@ -161,12 +193,13 @@ curl -s http://127.0.0.1:8020/v1/chat/completions \
        "max_tokens":64,"temperature":0}'
 ```
 
-Stop everything with `omarchy-cluster stop`. Logs: `~/.local/share/omarchy-cluster/`
-(`gateway.log` on the gateway machine, `rank0.log`/`rank1.log` on each node).
+Stop everything with `omarchy-cluster stop`. Logs are in
+`~/.local/share/omarchy-cluster/`: `gateway.log` on the gateway machine,
+`rank0.log` and `rank1.log` on each node.
 
 For a model bigger than one node, pick the split yourself so a machine you use
-for other work keeps free memory, for example
-`serve mlx-community/GLM-4.5-Air-4bit --split 31,15` (rank 0 gets 31 layers).
+for other work keeps free memory, for example `serve
+mlx-community/GLM-4.5-Air-4bit --split 31,15` (rank 0 gets 31 layers).
 
 ## OpenAI-compatible endpoint
 
@@ -196,70 +229,94 @@ message.
 ## How the split is chosen
 
 At rank start, each rank times one-token decode steps through 1 and 4 of the
-model's layers in a child process and keeps the fastest ms per layer it has
+model's layers in a child process. It keeps the fastest ms per layer it has
 seen on that node. Every rank runs the same chooser: one layer per rank, the
 rest on the cheapest ranks up to their memory caps. A burst of other GPU work
-cannot steal the split, because a stored measurement is only ever replaced by
-a faster one (delete `~/.local/state/omarchy-cluster/layer-ms.json` after a
-real slowdown).
+cannot steal the split, because a stored measurement is only ever replaced by a
+faster one. Delete `~/.local/state/omarchy-cluster/layer-ms.json` after a real
+slowdown.
 
 ## Limits
 
-- Two ranks. The planner can plan more stages, but `serve` runs two.
-- One request at a time. Concurrent requests queue; they add no throughput.
-- Pipeline-model families only (see Requirements).
-- `place` sizes stages from free memory, not from the Vulkan allocation limit.
-  On a 16 GB M1 on Omarchy, Vulkan allocations failed at about 8.5 GB, so
-  DeepSeek-Coder-V2-Lite-4bit did not load there whole. Give such a node fewer
-  layers with `--split`.
-- `probe` does not pin a route between two Linux nodes yet; pin it in
-  `~/.local/state/omarchy-cluster/links.json` or use a Mac in the pair.
-- Plain HTTP with one shared token on your LAN: a homelab trust model, no TLS,
-  no per-user auth.
-- A node slowed by other GPU work is detected and reported, not preempted.
+Two ranks: the planner can plan more stages, but `serve` runs two. One request
+at a time: concurrent requests queue, and they add no throughput.
+Pipeline-model families only (see Requirements). `place` sizes stages from free
+memory, not from the Vulkan allocation limit. On a 16 GB M1 on Omarchy, Vulkan
+allocations failed at about 8.5 GB, so DeepSeek-Coder-V2-Lite-4bit did not load
+there whole. Give such a node fewer layers with `--split`. Plain HTTP with one
+shared token on your LAN: a homelab trust model, no TLS, no per-user auth. A
+node slowed by other GPU work is detected and reported, not preempted.
 
-## An iPhone as a node (experiment, llama.cpp RPC)
+## How is this different from exo?
 
-This is not part of the MLX pipeline above. It uses llama.cpp's RPC backend.
+exo is the closest project, and strong at what it targets: Macs clustered with
+MLX on Metal, RDMA over Thunderbolt 5, automatic discovery, tensor parallelism.
+On GPU support its README states: "On macOS, exo uses the GPU. On Linux, exo
+currently runs on CPU."
+(https://github.com/exo-explore/exo#hardware-accelerator-support)
 
-An iPhone 15 Pro Max (A17 Pro, 8 GB, iOS 27) ran llama.cpp's `rpc-server` as an app.
-An M1 Max laptop on Omarchy Linux sent model layers to it over USB. The app was built,
-signed and installed from Linux, with no Mac and no Xcode. The phone GPU runs through Metal;
-the shader source ships inside the app and the phone compiles it at start.
+omarchy-cluster runs Metal on macOS and Vulkan on Omarchy Linux, and its probe
+pins the fastest route on every pair, Linux pairs included. Proven on this
+hardware: a Mac Studio on macOS and a MacBook Pro on Omarchy Linux run one 106B
+model together. The split was 31 + 15 layers at 0.87 tok/s, with every token
+agreeing. Two Omarchy Linux Macs split a model with byte-identical text to one
+machine.
 
-The phone is a capacity node, not a speedup. Each phone layer costs about 0.8 ms per token,
-against about 0.5 ms on the laptop CPU, so no split beats the laptop alone for a model the
-laptop holds. Prefill is the phone's strength: with all 28 layers of Qwen3-1.7B on the phone
-GPU, it processes a 128-token prompt at 345 tok/s.
+## An iPhone as a node (llama.cpp RPC)
 
-Qwen3-1.7B Q4_K_M, decode of 64 tokens, lm_head kept on the laptop:
+This is not part of the MLX pipeline above. It uses llama.cpp's RPC backend,
+through `omarchy-cluster serve MODEL --engine llamacpp`. The app source and its
+build live under `ios/` (see `ios/README.md`).
+
+An iPhone 15 Pro Max (A17 Pro, 8 GB, iOS 27) ran llama.cpp's `rpc-server` as an
+app. An M1 Max laptop on Omarchy Linux sent model layers to it over USB. The
+app was built, signed and installed from Omarchy Linux, with no Mac and no
+Xcode. The phone GPU runs through Metal; the shader source ships inside the app
+and the phone compiles it at start.
+
+The phone is a capacity node, not a speedup. Each phone layer costs about 0.8
+ms per token, against about 0.5 ms on the laptop CPU, so no split beats the
+laptop alone for a model the laptop holds. Prefill is the phone's strength:
+with all 28 layers of Qwen3-1.7B on the phone GPU, it processes a 128-token
+prompt at 424 tok/s, faster than the laptop CPU (349 tok/s).
+
+Qwen3-1.7B Q4_K_M, 64-token decode, lm_head on the laptop:
 
 | Setup | Decode tok/s |
 |---|---:|
 | Laptop alone (CPU) | 71.1 |
-| Laptop + phone GPU, 7 of 28 layers on the phone | 35.5 |
-| Laptop + phone GPU, 14 layers | 31.6 |
-| Laptop + phone GPU, 14 layers, `OMP_WAIT_POLICY=ACTIVE` on the laptop (separate run) | 45.0 |
-| Laptop + phone GPU, 28 layers | 21.1 |
-| Laptop + phone CPU, 14 layers | 30.0 |
+| Phone GPU, 7 of 28 layers on the phone | 35.5 |
+| Phone GPU, 14 layers | 31.6 |
+| Phone GPU, 14 layers, `OMP_WAIT_POLICY=ACTIVE` (separate run) | 45.0 |
+| Phone GPU, 28 layers | 21.1 |
+| Phone GPU, 28 layers, `OMP_WAIT_POLICY=ACTIVE` (separate run) | 35.1 |
+| Phone CPU, 14 layers | 30.0 |
 
-With the phone on its CPU, greedy output is byte-identical to the laptop alone at 7, 14 and
-28 phone layers. On the phone GPU, output matches at 7 layers; at full offload the mean KL
-divergence against the laptop is 0.008 and the top token agrees 96 percent of the time.
+The lm_head stayed on the laptop in every row. With all 28 layers on the phone,
+a token costs about 23 ms on the phone and about 7 ms on the laptop. The phone
+part reads about 1 GB of weights per token, close to the phone's memory
+bandwidth.
 
-Limits: about 2.2 GB of layers ran well on the 8 GB phone; 4.4 GB pushed iOS into memory
-pressure. Speculative decoding with the draft model on the phone was slower (6.6 tok/s) than
-with the draft on the laptop (25.1 tok/s).
+With the phone on its CPU, greedy output is byte-identical to the laptop alone
+at 7, 14 and 28 phone layers. On the phone GPU, output matches at 7 layers. At
+full offload, the mean KL divergence against the laptop is 0.008 and the top
+token agrees 96 percent of the time.
+
+About 2.2 GB of layers ran well on the 8 GB phone; 4.4 GB pushed iOS into
+memory pressure. Speculative decoding with the draft model on the phone was
+slower (6.6 tok/s) than with the draft on the laptop (25.1 tok/s).
 
 Details, sources and raw data: `receipts/2026-10-06-iphone-rpc-node/`.
 
-## Development
+## Contributing
+
+PRs welcome. The tests need no GPU or network:
 
 ```sh
 python3 -m pytest tests/
 ```
 
-37 tests, stdlib only, no GPU or network needed.
+54 tests, stdlib only.
 
 ## License
 
