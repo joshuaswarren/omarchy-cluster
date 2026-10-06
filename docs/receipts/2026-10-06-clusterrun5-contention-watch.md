@@ -58,3 +58,13 @@ re-split. The watch makes bursts visible; the useful fix is on macstudio
 Not done: a fresh M2 run of `[20,7]` during a burst. Main cancelled my M2
 hold for higher-priority work. Claude Helper also read 0-18 GPU ms/s from
 03:10 to 03:14Z, so a burst was not guaranteed to occur.
+
+Real-pair run of the watch: not completed. At 03:57Z I queued the production
+runner (no SPLIT, `GPU_TURN=3`, `ENGINE_WAIT_S=5400`). Rank 1 waited in the
+M2 gpu-turn queue past 15 min, and rank 0 exited on its 900 s boot limit
+(`RuntimeError: engine boot timed out`). When rank 1's turn came, its
+calibration all_gather failed with `[ring] connection to a peer was lost`.
+The runner was stopped cleanly and nothing was left on either host. `78184de`
+removes the 900 s limit, so the runner's ENGINE_WAIT_S or
+`omarchy-cluster stop` bounds the wait. Not re-run before the deadline. The
+watch's real-pair check (overhead and a trip on macstudio + M2) is still open.
