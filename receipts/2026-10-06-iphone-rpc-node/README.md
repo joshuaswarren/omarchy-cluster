@@ -63,6 +63,30 @@ Metal ran: pp128 59.64, tg32 11.00 t/s (the laptop alone 72.96 / 19.01). With al
 phone, 18 layers (about 2.2 GB) worked and 36 layers did not. The 5461 MiB that Metal reports is
 not usable headroom.
 
+### Phone alone: all 28 layers on the phone GPU
+
+`src/metal-latency.sh`, 19:10Z, laptop load average 1.7, `OMP_WAIT_POLICY=ACTIVE` on the laptop,
+`llama-bench -t 8 -p 128 -n 64 -r 5`:
+
+| Placement | pp128 t/s | tg64 t/s |
+|---|---:|---:|
+| 28 layers on phone, lm_head on the laptop | 424.44 ± 6.64 | 35.13 ± 1.07 |
+| everything on phone (`-ngl 99`), logits return over USB | 413.49 ± 5.51 | 26.97 ± 3.41 |
+
+The same placement ran at 21.06 t/s in the quiet-window table with the default OpenMP policy.
+Traced per-token cost (median ms):
+
+| Phone layers | laptop side | send | phone compute + RTT |
+|---:|---:|---:|---:|
+| 1 | 14.71 | 0.47 | 1.79 |
+| 28 | 7.39 | 0.47 | 23.28 |
+
+The fixed cost of a phone Metal step is small (1.79 ms for one layer, including the 0.6 ms
+round trip). 28 layers read about 1 GB of weights in 23 ms, about 43 GB/s, which is close to the
+phone's memory bandwidth. With the lm_head on the phone and on-phone sampling (`-bs`), only a
+token id returns, but greedy decode ran at 30.38 t/s against 32.24 t/s with the lm_head on the
+laptop. The two `-ngl 99` outputs (with and without `-bs`) are byte-identical to each other.
+
 Speculative decoding, Qwen3-8B Q4_K_M target on the laptop CPU, Qwen3-0.6B Q8_0 draft, 128 tokens, 3 drafted per step:
 
 | Setup | t/s | accept |
@@ -119,7 +143,8 @@ server on a worker thread. It also disables the idle timer.
 - The laptop needs about 0.5 ms per layer of this model (14.1 ms / 28 layers, sampling included). The
   phone needs about 0.8 ms per layer at batch 1, on CPU or Metal (11.2 to 12.3 ms for 14 layers).
   A split cannot beat the laptop alone for a model that the laptop holds.
-- At batch 128 the phone GPU matches the laptop (pp128 345 vs 349 t/s with all 28 layers on the phone).
+- At batch 128 the phone GPU is faster than the laptop CPU: pp128 424 vs 349 t/s with all 28 layers
+  on the phone (laptop OpenMP workers awake; 345 t/s with the default policy).
 - The laptop side of a split token took 18 ms with the default OpenMP policy, against 14 ms for a
   whole token on the laptop alone. `OMP_WAIT_POLICY=ACTIVE` removes most of that (44.95 t/s at 14 phone
   layers instead of 31.64).
@@ -128,8 +153,10 @@ server on a worker thread. It also disables the idle timer.
 
 ## Files
 
-- `src/`: app source, build scripts, measurement scripts. `final.sh` produced the tables.
-- `data/final-1813/`: raw llama-bench tables, greedy outputs, logs and model hashes.
+- `src/`: app source, build scripts, measurement scripts. `final.sh` produced the quiet-window
+  tables; `metal-latency.sh` produced the phone-alone numbers.
+- `data/final-1813/`, `data/metal-lat-1910/`: raw llama-bench tables, greedy outputs, logs and
+  model hashes. `data/traces/`: per-command RPC timing traces (`src/trace-summary.py` reads them).
 
 Model sha256 prefixes: Qwen3-1.7B-Q4_K_M d2387ca2dbfee2ff, Qwen3-8B-Q4_K_M d98cdcbd03e17ce4,
 Qwen3-0.6B-Q8_0 9465e63a22add535. llama.cpp commit 65840ed, RPC protocol 7.0.0.
