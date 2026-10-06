@@ -164,31 +164,34 @@ def rpc_layers(info, host_free_bytes, rpc_cap_bytes, ctx_tokens, force=None):
                         rpc_cap_bytes / 1e9))
 
 
-def tensor_split(info, caps_bytes, ctx_tokens):
+def tensor_split(info, caps_bytes, ctx_tokens, host_layers=0):
     """--tensor-split weights for N RPC devices: each device's memory budget, so the
     layers spread in proportion and none gets more than its share of the total.
-    Raises when all layers plus their KV cache exceed the summed budgets. The
-    embeddings and lm_head stay on the host CPU and are not charged here."""
-    need = info["n_layer"] * (info["layer_bytes"] + info["kv_bytes_per_token_layer"] * ctx_tokens)
+    Raises when the offloaded layers plus their KV cache exceed the summed budgets.
+    The embeddings, lm_head and the first `host_layers` layers stay on the host CPU
+    (mmapped from the GGUF, so they can page from disk) and are not charged here."""
+    n = info["n_layer"] - host_layers
+    need = n * (info["layer_bytes"] + info["kv_bytes_per_token_layer"] * ctx_tokens)
     if need > sum(caps_bytes):
-        raise ValueError("layers need %.1f GB; the RPC devices have %.1f GB (%s)" % (
-            need / 1e9, sum(caps_bytes) / 1e9, ", ".join("%.1f" % (c / 1e9) for c in caps_bytes)))
+        raise ValueError("%d offloaded layers need %.1f GB; the RPC devices have %.1f GB (%s)" % (
+            n, need / 1e9, sum(caps_bytes) / 1e9, ", ".join("%.1f" % (c / 1e9) for c in caps_bytes)))
     return [round(c / 1e9, 2) for c in caps_bytes]
 
 
 def server_cmd(llama_server, model, port, ctx_tokens, threads, rpc=None, n_rpc_layers=0,
-               split=None):
-    """llama-server argv. With `split`, `rpc` is a list of N endpoints and every layer
-    is spread over RPC0..RPCn by those weights. Otherwise layers go to one RPC device
-    only when n_rpc_layers > 0 (llama.cpp offloads the LAST n layers). The lm_head
-    always stays here. `-dev RPC...` keeps a local GPU backend from taking layers."""
+               split=None, ngl=999):
+    """llama-server argv. With `split`, `rpc` is a list of N endpoints and the last
+    `ngl` layers (all by default) spread over RPC0..RPCn by those weights. Otherwise
+    layers go to one RPC device only when n_rpc_layers > 0 (llama.cpp offloads the
+    LAST n layers). The lm_head always stays here. `-dev RPC...` keeps a local GPU
+    backend from taking layers."""
     cmd = [llama_server, "-m", model, "--host", "127.0.0.1", "--port", str(port),
            "-c", str(ctx_tokens), "-t", str(threads)]
     if split is not None:
         if not rpc or len(rpc) != len(split):
             raise ValueError("%d tensor-split weights for %d RPC endpoints" % (len(split), len(rpc or [])))
         cmd += ["--rpc", ",".join(rpc), "-dev", ",".join("RPC%d" % i for i in range(len(rpc))),
-                "-ngl", "999", "--tensor-split", ",".join("%g" % w for w in split),
+                "-ngl", str(ngl), "--tensor-split", ",".join("%g" % w for w in split),
                 "-ot", LM_HEAD_ON_HOST]
     elif n_rpc_layers:
         if not rpc:
@@ -308,13 +311,15 @@ def main(argv=None):
     ap.add_argument("--rpc-layers", type=int, default=0)
     ap.add_argument("--tensor-split", default=None,
                     help="weights for the --rpc endpoints; spreads every layer over them")
+    ap.add_argument("--ngl", type=int, default=999,
+                    help="with --tensor-split: offload the last N layers (the rest stay on this CPU)")
     ap.add_argument("--load-timeout", type=float, default=3600.0,
                     help="seconds to wait for llama-server (RPC loads stream the weights)")
     args = ap.parse_args(argv)
     if args.tensor_split:
         cmd = server_cmd(args.llama_server, args.model, args.server_port, args.ctx, args.threads,
                          rpc=args.rpc.split(",") if args.rpc else None,
-                         split=[float(w) for w in args.tensor_split.split(",")])
+                         split=[float(w) for w in args.tensor_split.split(",")], ngl=args.ngl)
     else:
         cmd = server_cmd(args.llama_server, args.model, args.server_port, args.ctx,
                          args.threads, args.rpc, args.rpc_layers)

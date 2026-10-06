@@ -342,3 +342,14 @@ def test_rpc_node_accepts_a_raw_endpoint_with_a_budget():
     assert cli._parse_rpc_nodes(["10.0.0.9:50052=3.5"]) == [("10.0.0.9:50052", int(3.5 * GB))]
     with pytest.raises(SystemExit):
         cli._parse_rpc_nodes(["10.0.0.9:50052"])
+
+
+def test_host_layers_stay_on_the_host_cpu_and_are_not_charged_to_devices():
+    """A model a little bigger than every device together still runs: the first K
+    layers stay on the host CPU, mmapped from the GGUF (paged from disk)."""
+    info = {"n_layer": 10, "layer_bytes": 4 * GB, "other_bytes": 1 * GB,
+            "total_bytes": 41 * GB, "kv_bytes_per_token_layer": 1000}
+    assert lce.tensor_split(info, [20 * GB, 10 * GB], 2048, host_layers=3) == [20.0, 10.0]
+    cmd = lce.server_cmd("llama-server", "m.gguf", 8032, 2048, 8, rpc=["a:1", "b:2"],
+                         split=[2.0, 1.0], ngl=7)
+    assert cmd[cmd.index("-ngl") + 1] == "7"

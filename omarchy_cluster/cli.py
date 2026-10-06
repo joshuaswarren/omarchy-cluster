@@ -537,7 +537,7 @@ def _serve_llamacpp_nodes(args, info):
         free = nodes[name]["facts"].get("memory_free_bytes") or 0
         caps.append(budget or int(free * llamacpp_engine.HOST_FIT_FRACTION))
     try:
-        weights = llamacpp_engine.tensor_split(info, caps, args.ctx)
+        weights = llamacpp_engine.tensor_split(info, caps, args.ctx, host_layers=args.host_layers)
     except ValueError as e:
         sys.exit(str(e))
     print("%s: %d layers, %.2f GB in %d shard(s) over %s" % (
@@ -572,7 +572,8 @@ def _serve_llamacpp_nodes(args, info):
     cmd = [sys.executable, "-m", "omarchy_cluster.llamacpp_engine", "--model", args.model,
            "--llama-server", args.llama_server, "--port", str(args.engine_port),
            "--server-port", str(args.engine_port + 1), "--ctx", str(args.ctx),
-           "--rpc", ",".join(eps), "--tensor-split", ",".join("%g" % w for w in weights)]
+           "--rpc", ",".join(eps), "--tensor-split", ",".join("%g" % w for w in weights),
+           "--ngl", str(info["n_layer"] - args.host_layers)]
     engine, log = _spawn(cmd, "llamacpp-engine.log")
     state["local_pids"].append(engine.pid)
     _write_state(state)
@@ -728,6 +729,9 @@ def main(argv=None):
     p.add_argument("--rpc-binary", action="append", default=[], metavar="NAME=PATH",
                    help="llamacpp: ggml-rpc-server path on NAME (default: the node's PATH)")
     p.add_argument("--rpc-node-port", type=int, default=50060, help="llamacpp: rpc-server port on each node")
+    p.add_argument("--host-layers", type=int, default=0,
+                   help="llamacpp with --rpc-node: keep the first N layers on this host's CPU, "
+                        "mmapped from the GGUF (pages from disk when RAM runs out)")
     p.add_argument("--ctx", type=int, default=2048)
     p.add_argument("--links", default=None)
     p.add_argument("--no-decode", action="append", default=[])
