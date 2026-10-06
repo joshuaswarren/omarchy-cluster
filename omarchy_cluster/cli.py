@@ -397,14 +397,17 @@ def cmd_serve(args):
     engine = "http://%s:%d" % (engine_host, args.engine_port)
     print("gateway engine: %s" % engine)
     gateway_code = "from omarchy_cluster.gateway import serve; serve(port=%d, engine=%r)" % (args.port, engine)
-    gateway = subprocess.Popen([sys.executable, "-c", gateway_code],
-                               start_new_session=True,
-                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
+    gw_log = os.path.expanduser("~/.local/share/omarchy-cluster/gateway.log")
+    os.makedirs(os.path.dirname(gw_log), exist_ok=True)
+    with open(gw_log, "w") as lf:
+        gateway = subprocess.Popen([sys.executable, "-c", gateway_code],
+                                   start_new_session=True,
+                                   stdin=subprocess.DEVNULL, stdout=lf,
+                                   stderr=subprocess.STDOUT)
     state["gateway_pid"] = gateway.pid
     with open(os.path.expanduser("~/.local/state/omarchy-cluster/serve.json"), "w") as f:
         json.dump(state, f, indent=2)
-    print("gateway pid: %s" % gateway.pid)
+    print("gateway pid: %s (log: %s)" % (gateway.pid, gw_log))
 
 
 def _sweep_listening_port(port):

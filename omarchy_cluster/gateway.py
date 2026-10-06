@@ -69,6 +69,8 @@ class Gateway(BaseHTTPRequestHandler):
                 res = json.loads(r.read())
         except Exception as e:  # noqa: BLE001
             return self._json(502, {"error": "engine: %s" % e})
+        if "error" in res:
+            return self._json(502, {"error": "engine: %s" % res["error"]})
         now = int(time.time())
         common = {
             "id": "chatcmpl-omarchy-%d" % now,

@@ -316,3 +316,46 @@ def test_rank_start_without_python_uses_this_nodes_mlx_python(tmp_path, monkeypa
     monkeypatch.setattr(agent, "RANK_PYTHONS", ())
     agent.rank_start(req)
     assert seen["cmd"][0] == sys.executable  # nothing else installed: the agent's own python
+
+
+def test_gateway_returns_engine_error_as_502_not_empty_reply():
+    """The engine answers {"error": ...} when generation raises. The gateway
+    used to KeyError on it and drop the connection (curl: empty reply)."""
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from omarchy_cluster import gateway
+
+    class Engine(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = json.dumps({"error": "RuntimeError: boom"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    eng = ThreadingHTTPServer(("127.0.0.1", 0), Engine)
+    gateway.Gateway.engine = "http://127.0.0.1:%d" % eng.server_address[1]
+    gw = ThreadingHTTPServer(("127.0.0.1", 0), gateway.Gateway)
+    for s in (eng, gw):
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+    try:
+        rq = urllib.request.Request(
+            "http://127.0.0.1:%d/v1/chat/completions" % gw.server_address[1],
+            data=json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode(),
+            headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(rq, timeout=10)
+            raise AssertionError("expected HTTP 502")
+        except urllib.error.HTTPError as e:
+            assert e.code == 502
+            assert "boom" in json.loads(e.read())["error"]
+    finally:
+        eng.shutdown()
+        gw.shutdown()
