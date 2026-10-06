@@ -186,3 +186,29 @@ def test_watch_ignores_sub_ms_ratios():
     w = rank._Watch(None, factor=3.0, n=2)
     assert not any(w.add(ms) for ms in (0.07, 0.33, 0.33, 0.33, 4.0, 4.0))
     assert [w.add(ms) for ms in (6.0, 6.0)] == [False, True]
+
+
+def test_stream_completes_every_recv_on_the_host_before_gpu_work(monkeypatch):
+    """A GPU queue must never wait on the network: rank 0's Metal command
+    buffer waited on recv_like while the Linux rank ran a 15-layer prefill and
+    macOS killed it (kIOGPUCommandBufferCallbackErrorTimeout); the Vulkan
+    watchdog fires the same way. So _stream evaluates every recv_like result
+    on the host, also without timing marks. Prefill all_gathers stay lazy."""
+    evald = []
+    dist = SimpleNamespace(recv_like=lambda x, *a, **k: ("recv", x),
+                           send=lambda x, *a, **k: ("send", x),
+                           all_gather=lambda x, *a, **k: ("gather", x))
+    mx = SimpleNamespace(distributed=dist, eval=lambda *a: evald.extend(a))
+
+    def stream_generate(model, tokenizer, prompt, **kw):
+        h = mx.distributed.recv_like("h0", 1)  # prefill forward on rank 0
+        mx.distributed.all_gather(h)
+        yield SimpleNamespace(text="a")
+
+    monkeypatch.setitem(sys.modules, "mlx", SimpleNamespace(core=mx))
+    monkeypatch.setitem(sys.modules, "mlx.core", mx)
+    monkeypatch.setitem(sys.modules, "mlx_lm", SimpleNamespace(stream_generate=stream_generate))
+    assert [r.text for r in rank._stream(None, None, [1], 4)] == ["a"]
+    assert ("recv", "h0") in evald
+    assert not [a for a in evald if isinstance(a, tuple) and a[0] == "gather"]
+    assert dist.recv_like("x") == ("recv", "x")  # original ops restored

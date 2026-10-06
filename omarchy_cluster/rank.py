@@ -225,13 +225,17 @@ def _stream(model, tokenizer, prompt, max_tokens, marks=None, every=1, on_sample
     serialise it). `on_sample` gets each sampled forward's marks. Prefill
     forwards are never forced: a chunked prefill leaves its all_gather
     unevaluated on every rank, so forcing it on one rank alone (rank 0's
-    watch) runs a collective the other ranks never join and the ring hangs."""
+    watch) runs a collective the other ranks never join and the ring hangs.
+    Every recv_like result is evaluated on the host, sampled or not: a GPU
+    queue that waits on the network trips the Metal command-buffer timeout or
+    the Vulkan timeline watchdog when the peer is slow (a long prefill). The
+    recv is point-to-point and needed by this rank's forward anyway, so this
+    only moves the wait from the GPU to the host."""
     import mlx.core as mx
     from mlx_lm import stream_generate
     kw = {"max_tokens": max_tokens, "sampler": getattr(model, "omarchy_sampler", None)}
     if marks is None:
-        yield from stream_generate(model, tokenizer, prompt, **kw)
-        return
+        marks = []
     dist = mx.distributed
     saved = {name: getattr(dist, name) for name in _RING_OPS}
     state = {"n": 0, "first": len(marks), "tokens": 0}
@@ -241,6 +245,8 @@ def _stream(model, tokenizer, prompt, max_tokens, marks=None, every=1, on_sample
             sampled = state["tokens"] > 0 and state["n"] % every == 0
             if not sampled:
                 y = op(x, *a, **k)
+                if name == "recv_like":
+                    mx.eval(y)
             else:
                 mx.eval(x)
                 marks.append((name + "<", time.perf_counter()))
