@@ -2,7 +2,9 @@
 # Run a complete two-node completion through the OpenAI-compatible gateway.
 # rank 0: MacStudio (stock MLX); rank 1: a Linux peer (Omarchy MLX, gpu-turn).
 # PEER_NAME/PEER_IP/PEER_KEY pick the peer (default jw16-linux over Thunderbolt);
-# ENGINE_WAIT_S covers rank 1 queueing in the peer's gpu-turn FIFO.
+# ENGINE_WAIT_S covers rank 1 queueing in the peer's gpu-turn FIFO. SPLIT sets
+# per-rank layer counts (serve --split); GPU_TURN=0 when the caller already holds
+# the peer's GPU lock.
 set -euo pipefail
 if [ "$#" -ne 0 ]; then
     printf 'usage: %s\n' "$0" >&2
@@ -60,7 +62,7 @@ run_cli status --links "$route_profile" 2>&1 | tee "$receipt/status.txt"
 
 run_cli serve "$MODEL" --stages 2 --no-decode MacStudio \
     --python-mac "$MAC_PY" --python-linux "$LINUX_PY" \
-    --port 8020 --engine-port 8031 --gpu-turn 20 \
+    --port 8020 --engine-port 8031 --gpu-turn "${GPU_TURN:-20}" ${SPLIT:+--split "$SPLIT"} \
     >"$receipt/gateway.log" 2>&1 &
 GW_PID=$!
 printf 'gateway supervisor pid=%s\n' "$GW_PID" | tee "$receipt/supervisor.txt"

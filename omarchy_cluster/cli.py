@@ -380,8 +380,7 @@ def cmd_serve(args):
              "nodes": {s["node"]: nodes[s["node"]]["ip"] for s in stages}}
     for rank, s in enumerate(stages):
         node = nodes[s["node"]]
-        res = _launch_rank_via_agent(node, rank, args.model,
-                                     "%d:%d" % tuple(s["layers"]),
+        res = _launch_rank_via_agent(node, rank, args.model, args.split or "",
                                      hostfile_content, args, node["facts"].get("os"))
         state["stages"].append({"node": node["ip"], "pid": str(res["pid"])})
         print("rank %d on %s pid %s (agent-reported, log: %s)"
@@ -540,6 +539,9 @@ def main(argv=None):
                    help="extra PYTHONPATH entry for ranks (e.g. mlx-lm pkg dir)")
     p.add_argument("--gpu-turn", type=int, default=0, metavar="MINUTES",
                    help="wrap Linux ranks in ~/bin/gpu-turn for the shared M2 GPU")
+    p.add_argument("--split", default=None, metavar="N0,N1",
+                   help="decoder layers per rank in rank order (rank 0 runs the last "
+                        "layers); default even. Put fewer on a slower rank.")
     p.set_defaults(fn=cmd_serve)
 
     p = sub.add_parser("stop", help="stop ranks started by serve")

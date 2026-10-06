@@ -199,7 +199,7 @@ def test_cmd_serve_spawns_gateway_as_detached_child(tmp_path, monkeypatch):
         model="m", port=18020, engine_port=18031,
         python_mac="/usr/bin/true", python_linux="/usr/bin/true",
         rank_pythonpath=None, gpu_turn=0, ctx=2048,
-        links=None, no_decode=[], stages=None,
+        links=None, no_decode=[], stages=None, split=None,
     )
     state_file = tmp_path / "serve.json"
     monkeypatch.setattr(cli.os.path, "expanduser", _expanduser_only_for(state_file))
