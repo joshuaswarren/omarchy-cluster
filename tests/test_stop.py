@@ -181,8 +181,8 @@ def test_cmd_serve_spawns_gateway_as_detached_child(tmp_path, monkeypatch):
     """
     state = {
         "stages": [
-            {"node": "nodeA", "layers": [0, 14]},
-            {"node": "nodeB", "layers": [14, 28]},
+            {"node": "nodeA", "max_layers": 27},
+            {"node": "nodeB", "max_layers": 27},
         ],
         "mode": "pipeline",
     }

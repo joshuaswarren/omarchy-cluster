@@ -1,20 +1,18 @@
-"""Placement planner: memory- and bandwidth-weighted pipeline split.
+"""Placement planner: which nodes form the pipeline, and the layer split.
 
-Implements build task 4's `place` from the heterogeneous-inference proposal:
-order ranks so the decode tail runs on the biggest node, cut layers so every
-stage's weights + KV fit its rank's free memory, and weigh each boundary by
-the pinned route's measured bandwidth and RTT.
+`place` orders ranks so the decode tail runs on the biggest node, checks that
+every stage can hold at least one layer and that together they hold the model
+(weights + KV) in free memory, and weighs each boundary by the pinned route's
+measured bandwidth and RTT. The split itself is chosen at rank start
+(`choose_split`) from each rank's measured ms per layer.
 """
 from __future__ import annotations
 
 import json
 import os
 
-# ponytail: rank capability proxy is free memory (bigger unified memory ~= bigger
-# chip ~= faster); replace with measured per-layer times when mx exists on the
-# planner host.
-
 BYTES_PER_KV_ELEMENT = 2  # KV stays fp16/bf16 even for 4-bit weights
+DEFAULT_CTX_TOKENS = 2048
 
 
 def find_model_path(model_ref):
@@ -61,6 +59,27 @@ def kv_bytes_per_token(info):
     return 2 * info["layers"] * info["kv_heads"] * info["head_dim"] * BYTES_PER_KV_ELEMENT
 
 
+def max_layers(free_bytes, info, ctx_tokens=DEFAULT_CTX_TOKENS):
+    """Decoder layers (weights + KV for ctx_tokens) that fit in 90 % of free_bytes."""
+    per_layer = (info["weights_bytes"] + kv_bytes_per_token(info) * ctx_tokens) / max(info["layers"], 1)
+    return int(free_bytes * 0.9 // per_layer)
+
+
+def choose_split(layer_ms, caps, n_layers):
+    """Per-rank layer counts (rank order) that minimise the decode step, the
+    sum over ranks of layers x measured ms per layer: every rank keeps one
+    layer and the rest go to the cheapest ranks first, up to each rank's
+    layer cap. None when the caps cannot hold n_layers."""
+    size = len(layer_ms)
+    if n_layers < size or min(caps) < 1 or sum(caps) < n_layers:
+        return None
+    split, left = [1] * size, n_layers - size
+    for r in sorted(range(size), key=lambda r: (layer_ms[r], r)):
+        split[r] += min(left, caps[r] - 1)
+        left -= split[r] - 1
+    return split
+
+
 def _pinned_route(links, a, b):
     for pair in links.get("pairs", []):
         names = {pair.get("a"), pair.get("b")}
@@ -69,11 +88,9 @@ def _pinned_route(links, a, b):
     return None
 
 
-def plan_placement(nodes, links, info, ctx_tokens=2048, no_decode=(), max_stages=None):
+def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=(), max_stages=None):
     """nodes: {name: facts}; links: links dict. Returns the plan dict."""
     kv_tok = kv_bytes_per_token(info)
-    kv_total = kv_tok * ctx_tokens
-    layer_bytes = info["weights_bytes"] / max(info["layers"], 1)
 
     # Keep every unified-memory node available for prefill; only the final rank
     # must be eligible for decode.
@@ -101,29 +118,11 @@ def plan_placement(nodes, links, info, ctx_tokens=2048, no_decode=(), max_stages
                 break
         if chosen is None:
             continue
-        # proportional cut: layers per stage follow free-memory share
-        free = {n: max(nodes[n]["memory_free_bytes"], 1) for n in chosen}
-        total_free = sum(free.values())
-        cuts, acc = [0], 0.0
-        for n in chosen[:-1]:
-            acc += free[n] / total_free
-            cuts.append(min(L - 1, max(1, round(acc * L))))
-        cuts = sorted(set(cuts + [L]))
-        if len(cuts) - 1 != n_stages:
+        caps = {n: max_layers(nodes[n]["memory_free_bytes"], info, ctx_tokens) for n in chosen}
+        if min(caps.values()) < 1 or sum(caps.values()) < L:
             continue
-        stages = []
+        stages = [{"node": n, "max_layers": min(caps[n], L - n_stages + 1)} for n in chosen]
         ok = True
-        for i, n in enumerate(chosen):
-            a, b = cuts[i], cuts[i + 1]
-            stage_w = (b - a) * layer_bytes
-            stage_kv = kv_total * (b - a) / L
-            if stage_w + stage_kv > nodes[n]["memory_free_bytes"] * 0.9:
-                ok = False
-                break
-            stages.append({"node": n, "layers": [a, b],
-                           "weights_bytes": int(stage_w), "kv_bytes": int(stage_kv)})
-        if not ok:
-            continue
         boundaries = []
         for i in range(n_stages - 1):
             route = _pinned_route(links, stages[i]["node"], stages[i + 1]["node"])
@@ -150,8 +149,8 @@ def plan_placement(nodes, links, info, ctx_tokens=2048, no_decode=(), max_stages
         break
     if plan is None:
         plan = {"mode": "none",
-                "reason": "no feasible split: every candidate stage overflowed free memory "
-                          "or lacked a measured pinned route"}
+                "reason": "no feasible plan: the candidate stages cannot hold the model in "
+                          "free memory, or a boundary lacks a measured pinned route"}
     return plan
 
 
@@ -162,11 +161,11 @@ def plan_table(plan):
              % (plan["mode"].upper(), plan["model"], plan["layers"],
                 plan["kv_bytes_per_token"] / 1024)]
     for i, s in enumerate(plan["stages"]):
-        lines.append("  rank %d  %-16s layers [%3d:%3d)  weights %5.2f GB  kv@%dt %4.2f GB%s"
-                     % (i, s["node"], s["layers"][0], s["layers"][1],
-                        s["weights_bytes"] / 1e9, plan["ctx_tokens"],
-                        s["kv_bytes"] / 1e9,
-                        "  (decode tail)" if s["node"] == plan["decode_tail"] else ""))
+        lines.append("  rank %d  %-16s fits up to %d layers%s"
+                     % (i, s["node"], s["max_layers"],
+                        "  (engine; samples, runs the last layers)" if i == 0 else ""))
+    if plan["mode"] == "pipeline":
+        lines.append("  split: chosen at rank start from measured ms/layer (serve --split overrides)")
     for b in plan["boundaries"]:
         lines.append("  boundary %s -> %s via %s  %.1f Gb/s rtt %.2f ms  ~%.3f ms/token"
                      % (b["from"], b["to"], b["route"], b["gbps"], b["rtt_ms"],

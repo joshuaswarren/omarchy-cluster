@@ -44,25 +44,18 @@ def _poll_job(engine, last_id):
     return job
 
 
-def _pipeline_split(self, group, counts=None):
-    """PipelineMixin.pipeline with ml-explore/mlx-lm 6c5d3a298 (#1816), plus
-    optional per-rank layer `counts` (rank order; rank 0 runs the last layers).
-
-    mlx-lm 0.31.3 starts rank r at (size-r-1) * its own layer count, so an
-    uneven split drops a layer (DeepSeek-V2-Lite: 27 layers / 2 ranks run
-    0-12 and 14-26; layer 13 never runs and greedy output diverges)."""
+def _pipeline_split(self, group, counts):
+    """PipelineMixin.pipeline with per-rank layer `counts` (rank order; rank 0
+    runs the last layers). Replaces mlx-lm 0.31.3's split, which starts rank r
+    at (size-r-1) * its own layer count and so drops a layer on an uneven
+    split (fixed upstream in ml-explore/mlx-lm 6c5d3a298, #1816)."""
     self.pipeline_rank = group.rank()
     self.pipeline_size = group.size()
-    if counts:
-        split = list(counts)
-        if len(split) != self.pipeline_size or sum(split) != len(self.layers) or min(split) < 1:
-            raise ValueError("layer split %s does not cover %d layers on %d ranks"
-                             % (split, len(self.layers), self.pipeline_size))
-    else:
-        base, extra = divmod(len(self.layers), self.pipeline_size)
-        split = [base + (r < extra) for r in range(self.pipeline_size)]
-    self.start_idx = sum(split[self.pipeline_rank + 1:])
-    self.end_idx = self.start_idx + split[self.pipeline_rank]
+    if len(counts) != self.pipeline_size or sum(counts) != len(self.layers) or min(counts) < 1:
+        raise ValueError("layer split %s does not cover %d layers on %d ranks"
+                         % (counts, len(self.layers), self.pipeline_size))
+    self.start_idx = sum(counts[self.pipeline_rank + 1:])
+    self.end_idx = self.start_idx + counts[self.pipeline_rank]
     self.layers = self.layers[: self.end_idx]
     self.layers[: self.start_idx] = [None] * self.start_idx
 
@@ -70,11 +63,94 @@ def _pipeline_split(self, group, counts=None):
 def _sharded_load(model_ref, group, counts=None):
     from mlx_lm.models.pipeline import PipelineMixin
     from mlx_lm.utils import sharded_load
-    # ponytail: overrides mlx-lm's split on every rank; drop the #1816 part once both hosts run an mlx-lm release containing it
+    counts = counts or _measured_split(model_ref, group)
     PipelineMixin.pipeline = lambda self, g: _pipeline_split(self, g, counts)
     model, tokenizer = sharded_load(model_ref, group, None)
     _share_token(model)
     return model, tokenizer
+
+
+def _layer_ms(model, n=4, steps=8):
+    """This node's decode ms per decoder layer: 1-token steps through 1 and
+    through n of the model's last layers (KV prefilled with 16 tokens),
+    alternated, fastest of `steps` each. The slope leaves out the embed and
+    sync cost every step pays once; alternating and taking the fastest keep
+    bursts of other GPU work from landing on one side only."""
+    import mlx.core as mx
+    from mlx_lm.models.cache import KVCache
+    inner = model.model
+    layers = inner.layers[-n:]
+    mx.eval(inner.embed_tokens.parameters(), [layer.parameters() for layer in layers])
+    caches = [KVCache() for _ in layers]
+    h = inner.embed_tokens(mx.arange(1000, 1016)[None])
+    for layer, cache in zip(layers, caches):
+        h = layer(h, "causal", cache)
+    mx.eval(h)
+
+    def step_s(k):
+        t0 = time.perf_counter()
+        h = inner.embed_tokens(mx.array([[1000]]))
+        for layer, cache in zip(layers[:k], caches[:k]):
+            h = layer(h, None, cache)
+        mx.eval(h)
+        return time.perf_counter() - t0
+
+    pairs = [(step_s(1), step_s(n)) for _ in range(steps + 2)][2:]  # first 2 compile kernels
+    one, many = min(p[0] for p in pairs), min(p[1] for p in pairs)
+    return 1000 * max(many - one, 0.0) / (n - 1)
+
+
+def _fastest_layer_ms(key, ms, path="~/.local/state/omarchy-cluster/layer-ms.json"):
+    """The fastest positive ms/layer this node has measured for `key`, this
+    start included. Other GPU work on a node can last through a whole
+    calibration (ClusterRun5: mac-a measured 9.7 ms/layer, above the M2's
+    8.0, and the split flipped to 1,26); the split must follow capability.
+    ponytail: never forgets a faster past; delete the file after a slowdown."""
+    path = os.path.expanduser(path)
+    try:
+        with open(path) as f:
+            seen = json.load(f)
+    except (OSError, ValueError):
+        seen = {}
+    known = [v for v in (ms, seen.get(key)) if v and v > 0]
+    if not known:
+        return ms
+    best = min(known)
+    if best != seen.get(key):
+        seen[key] = best
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(seen, f, indent=1)
+    return best
+
+
+def _measured_split(model_ref, group):
+    """Every rank measures its ms per layer and its layer cap (free memory),
+    all_gathers both, and runs planner.choose_split on the same numbers.
+    The measurement runs in a child process: in-process, rank 0's later Metal
+    decode ran ~12x slower in 9 of 13 sessions (ClusterRun5)."""
+    import subprocess
+    import sys
+    import mlx.core as mx
+    from . import facts, planner
+    info = planner.model_info(model_ref)
+    if not info:
+        raise RuntimeError("model not in the local HF cache: %s" % model_ref)
+    cap = planner.max_layers(facts.memory_free_bytes(), info)
+    out = subprocess.run(
+        [sys.executable, "-c", "import sys; from mlx_lm.utils import load; "
+         "from omarchy_cluster.rank import _layer_ms; print(_layer_ms(load(sys.argv[1], lazy=True)[0]))",
+         model_ref], capture_output=True, text=True, check=True).stdout
+    now = float(out.split()[-1])
+    ms = _fastest_layer_ms("%s %s" % (sys.executable, model_ref), now)
+    rows = mx.distributed.all_gather(mx.array([[ms, cap]], mx.float32), group=group,
+                                     stream=mx.cpu).tolist()
+    split = planner.choose_split([r[0] for r in rows], [int(r[1]) for r in rows], info["layers"])
+    print("rank %d measured %.2f ms/layer (fastest seen %.2f), cap %d layers; all ranks %s -> split %s"
+          % (group.rank(), now, ms, cap, rows, split), flush=True)
+    if split is None:
+        raise RuntimeError("ranks cannot hold %d layers: %s" % (info["layers"], rows))
+    return split
 
 
 def _share_token(model):
@@ -354,7 +430,8 @@ def main(argv=None):
     ap.add_argument("--model", required=True)
     ap.add_argument("--layers", default=None,
                     help="per-rank layer counts in rank order, e.g. 24,3 (rank 0 runs "
-                         "the last layers); empty = even split")
+                         "the last layers); empty = measure ms/layer on every rank and "
+                         "choose (planner.choose_split)")
     ap.add_argument("--hostfile", default=os.environ.get("MLX_HOSTFILE"))
     ap.add_argument("--rank", type=int, default=int(os.environ.get("MLX_RANK", -1)))
     ap.add_argument("--engine-port", type=int, default=8031)

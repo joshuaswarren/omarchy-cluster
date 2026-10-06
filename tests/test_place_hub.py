@@ -24,21 +24,42 @@ INFO = {"ref": "m", "path": "/x", "layers": 28, "hidden": 2048, "kv_heads": 8,
         "head_dim": 128, "weights_bytes": int(1.2e9)}
 
 
-def test_pipeline_split_fits_and_orders_decode_tail():
+def test_pipeline_plan_orders_decode_tail_and_caps_stages_by_free_memory():
     nodes = {"mac-a": facts(100, 128), "linux-b": facts(80, 94)}
     plan = planner.plan_placement(nodes, links_with("mac-a", "linux-b"), INFO)
     assert plan["mode"] == "pipeline"
     assert plan["decode_tail"] == "mac-a"  # biggest memory takes the tail
-    assert plan["stages"][0]["node"] == "linux-b"
-    a0, b0 = plan["stages"][0]["layers"]
-    a1, b1 = plan["stages"][1]["layers"]
-    assert (a0, b1) == (0, 28) and b0 == a1  # contiguous cover
-    for s in plan["stages"]:
-        assert s["weights_bytes"] + s["kv_bytes"] < facts(*[0, 0])["memory_free_bytes"] + 1e18
-        assert s["weights_bytes"] + s["kv_bytes"] <= 0.9 * (
-            nodes[s["node"]]["memory_free_bytes"])
+    assert [s["node"] for s in plan["stages"]] == ["linux-b", "mac-a"]
+    # each stage may take every layer but one (the other rank keeps one)
+    assert [s["max_layers"] for s in plan["stages"]] == [27, 27]
     assert plan["boundaries"][0]["gbps"] == 2.2
     assert plan["boundaries"][0]["per_token_ms"] > 0
+
+
+def test_plan_infeasible_when_stages_together_cannot_hold_the_model():
+    per_layer_gb = (INFO["weights_bytes"] + planner.kv_bytes_per_token(INFO) * 2048) / 28 / 1e9
+    small = per_layer_gb * 10 / 0.9  # free memory for 10 layers per node
+    nodes = {"a": facts(small, 1), "b": facts(small, 2)}
+    assert planner.plan_placement(nodes, links_with("a", "b"), INFO, max_stages=2)["mode"] == "none"
+    nodes = {"a": facts(small * 2, 1), "b": facts(small, 2)}
+    assert planner.plan_placement(nodes, links_with("a", "b"), INFO, max_stages=2)["mode"] == "pipeline"
+
+
+def test_choose_split_puts_layers_on_the_cheapest_rank_up_to_its_cap():
+    # measured: mac-a 1.0 ms/layer, linux-b 8.2 ms/layer (ClusterRun5)
+    assert planner.choose_split([1.0, 8.2], [120, 200], 27) == [26, 1]
+    assert planner.choose_split([8.2, 1.0], [120, 200], 27) == [1, 26]
+    assert planner.choose_split([1.0, 8.2], [20, 200], 27) == [20, 7]  # memory cap binds
+    assert planner.choose_split([2.0, 1.0, 3.0], [5, 10, 30], 27) == [5, 10, 12]
+    assert planner.choose_split([1.0, 1.0], [30, 30], 27) == [26, 1]  # tie: lower rank first
+    assert planner.choose_split([1.0, 8.2], [10, 10], 27) is None
+    assert planner.choose_split([1.0, 8.2], [27, 0], 27) is None
+
+
+def test_max_layers_counts_weights_and_kv_per_layer():
+    per_layer = (INFO["weights_bytes"] + planner.kv_bytes_per_token(INFO) * 2048) / 28
+    assert planner.max_layers(per_layer * 10 / 0.9 + 1, INFO) == 10
+    assert planner.max_layers(per_layer * 10 / 0.9 - 1, INFO) == 9
 
 
 def test_no_decode_node_can_prefill_but_cannot_be_decode_tail():

@@ -83,7 +83,7 @@ def test_step_ms_splits_decode_steps_and_skips_prefill():
             ms["all_gather<all_gather>"], ms["all_gather>recv_like<"]) == (30.0, 5.0, 1.0, 4.0)
 
 
-def _split(n_layers, size, counts=None):
+def _split(n_layers, size, counts):
     ran = []
     for r in range(size):
         model = SimpleNamespace(layers=list(range(n_layers)))
@@ -94,12 +94,11 @@ def _split(n_layers, size, counts=None):
 
 def test_pipeline_split_runs_every_layer_exactly_once():
     """mlx-lm 0.31.3 dropped layer 13 of 27 on 2 ranks; ranks run layers in reverse rank order."""
-    for n_layers, size, counts in [(27, 2, None), (27, 4, None), (26, 2, None), (5, 4, None),
-                                   (27, 2, [24, 3]), (27, 2, [1, 26]), (27, 3, [20, 5, 2])]:
-        ran = _split(n_layers, size, counts)
-        assert sum(reversed(ran), []) == list(range(n_layers)), (n_layers, size, ran)
-        if counts:
-            assert [len(r) for r in ran] == counts
+    for n_layers, counts in [(27, [14, 13]), (27, [24, 3]), (27, [1, 26]), (27, [20, 5, 2]),
+                             (5, [2, 1, 1, 1])]:
+        ran = _split(n_layers, len(counts), counts)
+        assert sum(reversed(ran), []) == list(range(n_layers)), (n_layers, counts, ran)
+        assert [len(r) for r in ran] == counts
 
 
 def test_pipeline_split_rejects_counts_that_drop_layers():
@@ -109,3 +108,15 @@ def test_pipeline_split_rejects_counts_that_drop_layers():
         except ValueError:
             continue
         raise AssertionError("accepted %s" % counts)
+
+
+def test_fastest_layer_ms_keeps_a_contention_burst_from_flipping_the_split(tmp_path):
+    """ClusterRun5 r18: mac-a measured 9.7 ms/layer during other GPU work,
+    above the M2's 8.0, and the split flipped to 1,26."""
+    path = str(tmp_path / "layer-ms.json")
+    assert rank._fastest_layer_ms("mac m", 0.6, path) == 0.6
+    assert rank._fastest_layer_ms("mac m", 9.7, path) == 0.6  # burst: keep the capability
+    assert rank._fastest_layer_ms("mac m", 0.5, path) == 0.5
+    assert rank._fastest_layer_ms("m2 m", 8.0, path) == 8.0  # keys are independent
+    assert rank._fastest_layer_ms("mac m", 0.0, path) == 0.5  # a clamped 0 is noise, not a record
+    assert rank._fastest_layer_ms("new m", 0.0, path) == 0.0
