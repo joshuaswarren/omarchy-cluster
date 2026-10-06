@@ -57,18 +57,33 @@ def _agent_addr(nodes, name):
     return node["ip"], node.get("port", DEFAULT_HTTP_PORT)
 
 
-def measure_route(route, nodes, seconds=10.0, use_iperf=True):
-    """Measure one route. Control plane always runs from this CLI host."""
+def check_live(route, nodes):
+    """RTT from a's agent to b over this route. False (and an "unreachable" error) when
+    no TCP connect succeeds; the agent gives up after one connect timeout."""
+    a_ip, a_port = _agent_addr(nodes, route["a_node"])
+    b_port = _agent_addr(nodes, route["b_node"])[1]
+    rtt = post(a_ip, a_port, "/v1/rtt",
+               {"ip": route["b_ip"], "port": b_port, "bind_ip": route["a_ip"]}, timeout=15)
+    route["rtt_tcp_ms"] = rtt.get("tcp_ms")
+    route["rtt_udp_ms"] = rtt.get("udp_ms")
+    if route["rtt_tcp_ms"] is None:
+        route.setdefault("errors", []).append("unreachable")
+        return False
+    return True
+
+
+def measure_route(route, nodes, seconds=3.0, use_iperf=True):
+    """Liveness, then bandwidth both ways if the route is up. Control plane runs from this CLI host."""
+    if check_live(route, nodes):
+        measure_bandwidth(route, nodes, seconds, use_iperf)
+    return route
+
+
+def measure_bandwidth(route, nodes, seconds=3.0, use_iperf=True):
     a_ip, a_port = _agent_addr(nodes, route["a_node"])
     b_ip, b_port = _agent_addr(nodes, route["b_node"])
     a_facts = nodes[route["a_node"]].get("facts") or {}
     b_facts = nodes[route["b_node"]].get("facts") or {}
-
-    rtt = post(a_ip, a_port, "/v1/rtt",
-               {"ip": route["b_ip"], "port": b_port, "bind_ip": route["a_ip"]}, timeout=30)
-    route["rtt_tcp_ms"] = rtt.get("tcp_ms")
-    route["rtt_udp_ms"] = rtt.get("udp_ms")
-
     mac_involved = "macOS" in (a_facts.get("os") or "") or "macOS" in (b_facts.get("os") or "")
     iperf = (use_iperf and not mac_involved
              and a_facts.get("tools", {}).get("iperf3")
@@ -179,10 +194,14 @@ def pin_pair(routes):
     return ranked[0] if ranked else None
 
 
-def probe_all(nodes, seconds=10.0, names=None):
-    """Probe every node pair; returns the links dict."""
+def probe_all(nodes, seconds=3.0, names=None):
+    """Probe every node pair; returns the links dict. Liveness for every route of every
+    pair runs in parallel; bandwidth then runs one route at a time (parallel tests would
+    share NICs and skew each other), on live decode-eligible routes only, or on the live
+    routes of a pair that has no eligible one."""
+    from concurrent.futures import ThreadPoolExecutor
     keys = sorted(names or nodes.keys())
-    pairs = []
+    pairs, todo = [], []
     for i, a in enumerate(keys):
         for b in keys[i + 1:]:
             fa, fb = nodes[a].get("facts"), nodes[b].get("facts")
@@ -191,12 +210,27 @@ def probe_all(nodes, seconds=10.0, names=None):
                               "pinned": None})
                 continue
             routes = candidate_routes(fa, fb)
-            for r in routes:
-                try:
-                    measure_route(r, nodes, seconds=seconds)
-                except Exception as e:  # noqa: BLE001 - record and keep probing
-                    r.setdefault("errors", []).append(str(e))
-            pairs.append({"a": a, "b": b, "routes": routes, "pinned": pin_pair(routes)})
+            pairs.append({"a": a, "b": b, "routes": routes, "pinned": None})
+            todo += routes
+
+    def live(r):
+        try:
+            return check_live(r, nodes)
+        except Exception as e:  # noqa: BLE001 - record and keep probing
+            r.setdefault("errors", []).append(str(e))
+            return False
+
+    with ThreadPoolExecutor(max_workers=max(1, min(64, len(todo)))) as ex:
+        up = {id(r) for r, ok in zip(todo, ex.map(live, todo)) if ok}
+    for pair in pairs:
+        alive = [r for r in pair["routes"] if id(r) in up]
+        for r in [r for r in alive if r["eligible_for_decode"]] or alive:
+            try:
+                measure_bandwidth(r, nodes, seconds)
+            except Exception as e:  # noqa: BLE001 - record and keep probing
+                r.setdefault("errors", []).append(str(e))
+        if not pair.get("error"):
+            pair["pinned"] = pin_pair(pair["routes"])
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "seconds_per_test": seconds, "pairs": pairs}
 

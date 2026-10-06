@@ -93,7 +93,7 @@ def tcp_rtt(host, port=DEFAULT_HTTP_PORT, bind_ip=None, count=3, timeout=2.0):
             s.connect((host, port))
             times.append((time.perf_counter() - t0) * 1000.0)
         except OSError:
-            pass
+            break  # a dead route costs one timeout, not `count` of them
         finally:
             s.close()
     return median(times)
@@ -178,7 +178,7 @@ def sink_serve(port=DEFAULT_SINK_PORT, seconds=10.0):
 def iperf_client(dst_ip, bind_ip, seconds, port=DEFAULT_IPERF_PORT):
     # Some iperf3 3.22 builds reject client-side -1 and -P and may lack
     # --connect-timeout; every one of those is a default value anyway.
-    cmd = ["iperf3", "-c", dst_ip, "-B", bind_ip, "-t", str(int(seconds)), "-J"]
+    cmd = ["iperf3", "-c", dst_ip, "-p", str(port), "-B", bind_ip, "-t", str(int(seconds)), "-J"]
     for extra in (["--connect-timeout", "2000"], []):
         try:
             p = subprocess.run(cmd + extra, capture_output=True,

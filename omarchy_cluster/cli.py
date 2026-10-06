@@ -590,7 +590,8 @@ def main(argv=None):
     p.set_defaults(fn=cmd_discover)
 
     p = sub.add_parser("probe", help="measure every pair/route, write links.json")
-    p.add_argument("--seconds", type=float, default=10.0)
+    p.add_argument("--seconds", type=float, default=3.0,
+                   help="bandwidth test length per direction (default 3)")
     p.add_argument("--out", default=None)
     p.set_defaults(fn=cmd_probe)
 

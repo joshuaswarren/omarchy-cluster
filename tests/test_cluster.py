@@ -107,3 +107,53 @@ def test_links_roundtrip(tmp_path):
     assert probe.save_links(links, out) == out
     assert probe.load_links(out) == links
     assert probe.load_links(str(tmp_path / "missing.json")) is None
+
+
+def test_iperf_client_targets_the_port_the_server_listens_on(monkeypatch):
+    """iperf_server listens on DEFAULT_IPERF_PORT; a client without -p dialled iperf3's
+    default 5201, every Linux<->Linux round failed, and Linux pairs never pinned."""
+    from omarchy_cluster import agent
+    seen = {}
+
+    def run(cmd, **kw):
+        seen["cmd"] = cmd
+        out = {"end": {"sum_sent": {"bits_per_second": 2e9}, "sum_received": {"bits_per_second": 2e9}}}
+        return type("P", (), {"returncode": 0, "stdout": json.dumps(out)})()
+
+    monkeypatch.setattr(agent.subprocess, "run", run)
+    assert agent.iperf_client("10.10.2.2", "10.10.2.1", 1)["gbps_sent"] == 2.0
+    i = seen["cmd"].index("-p")
+    assert seen["cmd"][i + 1] == str(agent.DEFAULT_IPERF_PORT)
+
+
+def test_probe_checks_routes_in_parallel_and_skips_dead_and_spare_routes(monkeypatch):
+    """Liveness for every route runs at once (a dead route costs one connect timeout,
+    not two 48 s bandwidth rounds); bandwidth runs only on live decode-eligible routes."""
+    import threading
+    dead = ifc("eno2", "10.10.9.9")
+    facts = {"os": "Arch Linux", "tools": {"iperf3": True}}
+    nodes = {"a": {"ip": "10.0.0.1", "port": 8025, "facts": dict(facts, name="a", interfaces=[ETH_A, WLAN])},
+             "b": {"ip": "10.0.0.2", "port": 8025, "facts": dict(facts, name="b", interfaces=[ETH_B, dead])}}
+    together = threading.Barrier(4, timeout=5)  # 4 routes; only parallel liveness gets past it
+    bw = []
+
+    def post(ip, port, path, payload, timeout=60):
+        if path == "/v1/rtt":
+            together.wait()
+            alive = payload["ip"] != "10.10.9.9"
+            return {"tcp_ms": 0.3 if alive else None, "udp_ms": 0.3 if alive else None}
+        if path == "/v1/iperf-server":
+            return {"ok": True}
+        if path == "/v1/iperf-client":
+            bw.append((payload["bind_ip"], payload["ip"]))
+            return {"ok": True, "gbps_sent": 2.0, "gbps_received": 2.0}
+        raise AssertionError("unexpected %s" % path)
+
+    monkeypatch.setattr(probe, "post", post)
+    monkeypatch.setattr(probe.time, "sleep", lambda s: None)
+    links = probe.probe_all(nodes, seconds=0.01)
+    pair = links["pairs"][0]
+    assert (pair["pinned"]["a_ip"], pair["pinned"]["b_ip"]) == ("10.10.2.1", "10.10.2.2")
+    assert sorted(bw) == [("10.10.2.1", "10.10.2.2"), ("10.10.2.2", "10.10.2.1")]
+    dead_routes = [r for r in pair["routes"] if r["b_ip"] == "10.10.9.9"]
+    assert len(dead_routes) == 2 and all("unreachable" in r.get("errors", []) for r in dead_routes)
