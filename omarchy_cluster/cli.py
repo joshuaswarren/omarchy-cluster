@@ -353,6 +353,8 @@ def cmd_serve(args):
             cmd_stop(args)
         except SystemExit:
             pass
+    if args.engine == "llamacpp":
+        return _serve_llamacpp(args)
     plan = cmd_place(args)
     if plan["mode"] == "none":
         sys.exit("no feasible plan")
@@ -396,18 +398,77 @@ def cmd_serve(args):
         engine_host = "127.0.0.1"
     engine = "http://%s:%d" % (engine_host, args.engine_port)
     print("gateway engine: %s" % engine)
-    gateway_code = "from omarchy_cluster.gateway import serve; serve(port=%d, engine=%r)" % (args.port, engine)
-    gw_log = os.path.expanduser("~/.local/share/omarchy-cluster/gateway.log")
-    os.makedirs(os.path.dirname(gw_log), exist_ok=True)
-    with open(gw_log, "w") as lf:
-        gateway = subprocess.Popen([sys.executable, "-c", gateway_code],
-                                   start_new_session=True,
-                                   stdin=subprocess.DEVNULL, stdout=lf,
-                                   stderr=subprocess.STDOUT)
-    state["gateway_pid"] = gateway.pid
+    _start_gateway(state, args.port, engine)
+
+
+def _write_state(state):
     with open(os.path.expanduser("~/.local/state/omarchy-cluster/serve.json"), "w") as f:
         json.dump(state, f, indent=2)
+
+
+def _spawn(cmd, log_name):
+    """Start a local child in its own process group, logging to log_name."""
+    log = os.path.expanduser("~/.local/share/omarchy-cluster/" + log_name)
+    os.makedirs(os.path.dirname(log), exist_ok=True)
+    with open(log, "w") as lf:
+        child = subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
+                                 stdout=lf, stderr=subprocess.STDOUT)
+    return child, log
+
+
+def _start_gateway(state, port, engine):
+    gateway_code = "from omarchy_cluster.gateway import serve; serve(port=%d, engine=%r)" % (port, engine)
+    gateway, gw_log = _spawn([sys.executable, "-c", gateway_code], "gateway.log")
+    state["gateway_pid"] = gateway.pid
+    _write_state(state)
     print("gateway pid: %s (log: %s)" % (gateway.pid, gw_log))
+
+
+def _serve_llamacpp(args):
+    """GGUF model on this host through llama-server. A USB iPhone running the
+    rpc-server app gets the last layers only when the model does not fit here."""
+    from . import facts, iosnode, llamacpp_engine
+    info = llamacpp_engine.gguf_info(args.model)
+    phone = None
+    if args.ios_bundle:
+        phones = iosnode.list_devices(args.pm3)
+        phone = phones[0] if phones else None
+        print("usb iPhone: %s" % (phone["name"] if phone else "none"))
+    cap = int(args.phone_cap_gb * 1e9) if phone else 0
+    try:
+        k = llamacpp_engine.rpc_layers(info, facts.memory_free_bytes(), cap, args.ctx,
+                                       force=args.rpc_layers)
+    except ValueError as e:
+        sys.exit(str(e))
+    print("%s: %d layers, %.2f GB; %d on the iPhone" % (
+        os.path.basename(args.model), info["n_layer"], info["total_bytes"] / 1e9, k))
+    os.makedirs(os.path.expanduser("~/.local/state/omarchy-cluster"), exist_ok=True)
+    state = {"engine": "llamacpp", "stages": [], "local_pids": [], "gateway_port": args.port,
+             "engine_port": args.engine_port}
+    rpc = None
+    if k:
+        if not phone:
+            sys.exit("%d layers need the iPhone but no USB iPhone was found "
+                     "(pass --ios-bundle with the app plugged in)" % k)
+        fwd = iosnode.start_forward(phone["udid"], args.rpc_port, iosnode.RPC_PORT, args.pm3)
+        state["local_pids"].append(fwd.pid)
+        _write_state(state)
+        iosnode.launch(args.ios_bundle, iosnode.RPC_PORT, pm3=args.pm3)
+        rpc = "127.0.0.1:%d" % args.rpc_port
+        print("iPhone rpc-server: %s" % iosnode.wait_rpc("127.0.0.1", args.rpc_port))
+    cmd = [sys.executable, "-m", "omarchy_cluster.llamacpp_engine", "--model", args.model,
+           "--llama-server", args.llama_server, "--port", str(args.engine_port),
+           "--server-port", str(args.engine_port + 1), "--ctx", str(args.ctx),
+           "--rpc-layers", str(k)]
+    if rpc:
+        cmd += ["--rpc", rpc]
+    engine, log = _spawn(cmd, "llamacpp-engine.log")
+    state["local_pids"].append(engine.pid)
+    _write_state(state)
+    engine_url = "http://127.0.0.1:%d" % args.engine_port
+    llamacpp_engine.wait_http(engine_url + "/health")
+    print("llama.cpp engine pid %s (log: %s)" % (engine.pid, log))
+    _start_gateway(state, args.port, engine_url)
 
 
 def _sweep_listening_port(port):
@@ -427,11 +488,12 @@ def cmd_stop(args):
         sys.exit("no serve state")
     with open(path) as f:
         state = json.load(f)
-    gateway_pid = state.get("gateway_pid")
-    if gateway_pid:
+    for pid in [state.get("gateway_pid")] + state.get("local_pids", []):
+        if not pid:
+            continue
         try:
-            os.killpg(int(gateway_pid), signal.SIGTERM)
-            print("stopped gateway process group %s" % gateway_pid)
+            os.killpg(int(pid), signal.SIGTERM)
+            print("stopped local process group %s" % pid)
         except ProcessLookupError:
             pass
     for stage in state.get("stages", []):
@@ -530,7 +592,21 @@ def main(argv=None):
     p.set_defaults(fn=cmd_place)
 
     p = sub.add_parser("serve", help="plan, launch ranks, serve OpenAI on :8020")
-    p.add_argument("model")
+    p.add_argument("model", help="MLX model (HF id or path), or a .gguf file with --engine llamacpp")
+    p.add_argument("--engine", choices=("mlx", "llamacpp"), default="mlx",
+                   help="mlx: pipeline ranks across nodes; llamacpp: llama-server on this "
+                        "host, plus a USB iPhone RPC device when the model does not fit here")
+    p.add_argument("--llama-server", default="llama-server", help="llama-server binary (llamacpp)")
+    p.add_argument("--ios-bundle", default=None,
+                   help="bundle id of the rpc-server app on a USB iPhone (llamacpp); "
+                        "without it the iPhone is not used")
+    p.add_argument("--pm3", default="pymobiledevice3",
+                   help="pymobiledevice3 command, e.g. \"python3 -m pymobiledevice3\"")
+    p.add_argument("--phone-cap-gb", type=float, default=2.2,
+                   help="model + KV GB the iPhone may hold (2.2 measured on an 8 GB phone)")
+    p.add_argument("--rpc-layers", type=int, default=None,
+                   help="force this many of the last layers onto the iPhone (llamacpp)")
+    p.add_argument("--rpc-port", type=int, default=50052, help="local port of the USB forward")
     p.add_argument("--ctx", type=int, default=2048)
     p.add_argument("--links", default=None)
     p.add_argument("--no-decode", action="append", default=[])

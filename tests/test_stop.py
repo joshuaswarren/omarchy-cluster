@@ -197,7 +197,7 @@ def test_cmd_serve_spawns_gateway_as_detached_child(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_launch_rank_via_agent",
                         lambda n, rank, model, layers, hf, args, facts_os: {"pid": 4242})
     args = argparse.Namespace(
-        model="m", port=18020, engine_port=18031,
+        model="m", engine="mlx", port=18020, engine_port=18031,
         python_mac="/usr/bin/true", python_linux="/usr/bin/true",
         rank_pythonpath=None, gpu_turn=0, ctx=2048,
         links=None, no_decode=[], stages=None, split=None,
