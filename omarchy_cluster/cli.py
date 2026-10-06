@@ -279,6 +279,12 @@ def _hub_nodes(hub):
 def cmd_place(args):
     from . import planner
     nodes = {n: d["facts"] for n, d in discover.discover_nodes().items() if d.get("facts")}
+    if getattr(args, "nodes", None):
+        keep = {n.strip() for n in args.nodes.split(",") if n.strip()}
+        missing = keep - set(nodes)
+        if missing:
+            sys.exit("node(s) not discovered: %s" % ", ".join(sorted(missing)))
+        nodes = {n: d for n, d in nodes.items() if n in keep}
     links = probe_mod.load_links(args.links)
     if not links:
         sys.exit("no links.json; run omarchy-cluster probe first")
@@ -561,6 +567,8 @@ def main(argv=None):
     p.add_argument("--links", default=None)
     p.add_argument("--no-decode", action="append", default=[],
                    help="node name never used as a decode rank (e.g. a node shared with other GPU work)")
+    p.add_argument("--nodes", default=None, metavar="N1,N2",
+                   help="use exactly these discovered nodes (default: every node found)")
     p.add_argument("--stages", type=int, default=None,
                    help="force an exact pipeline stage count")
     p.add_argument("--json", action="store_true")
@@ -571,6 +579,7 @@ def main(argv=None):
     p.add_argument("--ctx", type=int, default=2048)
     p.add_argument("--links", default=None)
     p.add_argument("--no-decode", action="append", default=[])
+    p.add_argument("--nodes", default=None, metavar="N1,N2")
     p.add_argument("--stages", type=int, default=None)
     p.add_argument("--port", type=int, default=8020)
     p.add_argument("--engine-port", type=int, default=8031)
