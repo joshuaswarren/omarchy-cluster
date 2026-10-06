@@ -156,6 +156,24 @@ def test_watch_flags_the_contended_rank_after_n_slow_sampled_steps(monkeypatch):
     assert st["parts"]["rank0"]["contended"] is False and len(st["events"]) == 1
 
 
+def test_watch_with_explicit_split_flags_a_burst_present_from_the_start(monkeypatch, tmp_path):
+    """--split 26,1 started inside contention (mac-a loopback, synthetic
+    GPU contender): the fastest step seen was itself slow, so nothing tripped.
+    Rank 0's own reference now comes from its node's fastest-seen ms/layer."""
+    monkeypatch.setattr(rank.Engine, "_boot", lambda self: None)
+    real = rank._fastest_layer_ms
+    monkeypatch.setattr(rank, "_fastest_layer_ms",
+                        lambda key, ms, path=None: real(key, ms, str(tmp_path / "layer-ms.json")))
+    import sys
+    rank._fastest_layer_ms("%s model" % sys.executable, 0.39)
+    engine = rank.Engine("model", 2)
+    engine._start_watch([26, 1], None)
+    for t in range(4):
+        engine._sample(_forward(float(t), 0.1, 168.0))
+    assert engine.status()["parts"]["rank0"]["contended"] is True
+    assert engine.status()["parts"]["rank0"]["ref_ms"] == 10.14
+
+
 def test_watch_without_calibration_uses_the_fastest_step_seen():
     w = rank._Watch(None, factor=3.0, n=2)
     assert [w.add(ms) for ms in (40.0, 20.0, 70.0, 70.0, 70.0, 10.0, 70.0)] == [

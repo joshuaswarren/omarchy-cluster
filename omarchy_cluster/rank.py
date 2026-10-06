@@ -405,11 +405,18 @@ class Engine:
         return res
 
     def _start_watch(self, split, layer_ms):
-        """Expected ms per step part from calibration (None with --split)."""
+        """Expected ms per step part from calibration. With --split there is
+        none; rank 0 then uses its node's fastest-seen ms/layer (layer-ms.json)
+        so a serve that starts during contention still flags it, and ranks
+        1.. fall back to the fastest step seen."""
+        import sys
         own = up = None
         if layer_ms:
             own = split[0] * layer_ms[0]
             up = sum(c * m for c, m in zip(split[1:], layer_ms[1:]))
+        else:
+            best = _fastest_layer_ms("%s %s" % (sys.executable, self.model_ref), 0.0)
+            own = split[0] * best if best > 0 else None
         self._watch = {"rank0": _Watch(own), "rank1+": _Watch(up)}
         with self._status_lock:
             self._status.update(split=split, layer_ms=layer_ms)
