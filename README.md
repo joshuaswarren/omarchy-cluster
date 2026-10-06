@@ -44,6 +44,7 @@ Speed: DeepSeek-Coder-V2-Lite-Instruct-4bit (27 layers, fits on one machine).
 |---|---|---|---|
 | Mac Studio M1 Ultra alone (macOS, Metal) | | 27 | 68.2 and 67.6 tok/s |
 | MacBook Pro M1 Max alone (Omarchy, Vulkan) | | 27 | 2.45 tok/s (earlier omarchy-mlx build) |
+| MacBook Pro M1 16 GB + MacBook Pro M1 Max, both Omarchy (Vulkan) | 2.4 Gb/s wired | 1 + 26, chosen automatically | 1.79 and 1.80 tok/s, agree, text identical to the M1 Max alone |
 | Mac Studio + MacBook Pro M1 Max (Omarchy, Vulkan) | Thunderbolt, 12 Gb/s | 26 + 1, chosen automatically | 46.4 and 48.0 tok/s, agree |
 | Mac Studio + MacBook Pro M2 Max (Omarchy, Vulkan), 2026-10-05 | 2.2 Gb/s wired | 26 + 1, chosen automatically | median 52.5 tok/s (52.2 to 55.4), agree |
 | same two machines | same | 14 + 13 (naive even split) | 5.6 to 9.6 tok/s |
@@ -54,8 +55,10 @@ a token's time is the layers on the slower node, which is why the planner puts
 as few layers there as memory allows.
 
 Tokens: both ranks always agree, because only rank 0 samples and sends each
-token to the other rank. The text of a Metal plus Vulkan split is not always
-the text of a single Mac: hidden states differ between the Metal and Vulkan
+token to the other rank. A split on one backend gives the same text as one
+machine: the two Omarchy laptops produced byte-identical text to the M1 Max
+alone. The text of a Metal plus Vulkan split is not always the text of a
+single Mac: hidden states differ between the Metal and Vulkan
 paths by up to 1 bf16 ulp on the prompt we checked, and that can flip a
 near-tie token. In the runs
 above the Mac Studio alone wrote "Threads in code, ...", the split wrote
