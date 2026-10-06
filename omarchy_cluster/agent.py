@@ -164,12 +164,12 @@ def sink_serve(port=DEFAULT_SINK_PORT, seconds=10.0):
 
 
 def iperf_client(dst_ip, bind_ip, seconds, port=DEFAULT_IPERF_PORT):
-    cmd = ["iperf3", "-c", dst_ip, "-B", bind_ip, "-t", str(int(seconds)),
-           "-1", "-J", "-P", "1"]
-    # --connect-timeout vanished in some iperf3 3.22 builds; retry without it
+    # Some iperf3 3.22 builds reject client-side -1 and -P and may lack
+    # --connect-timeout; every one of those is a default value anyway.
+    cmd = ["iperf3", "-c", dst_ip, "-B", bind_ip, "-t", str(int(seconds)), "-J"]
     for extra in (["--connect-timeout", "2000"], []):
         try:
-            p = subprocess.run(cmd[:2] + extra + cmd[2:], capture_output=True,
+            p = subprocess.run(cmd + extra, capture_output=True,
                                text=True, timeout=seconds + 25)
         except (OSError, subprocess.SubprocessError):
             return None
