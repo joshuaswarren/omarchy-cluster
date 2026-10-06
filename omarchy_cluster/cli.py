@@ -495,14 +495,17 @@ def _serve_llamacpp(args):
 
 
 def _parse_rpc_nodes(values):
-    """`--rpc-node NAME[=GB]` values -> [(name, budget bytes or None)]."""
+    """`--rpc-node NAME[=GB]` or `HOST:PORT=GB` values -> [(name, budget bytes or None)].
+    HOST:PORT is an rpc-server started by something else; it needs a budget."""
     out = []
     for v in values:
         name, _, gb = v.partition("=")
+        if ":" in name and not gb:
+            sys.exit("--rpc-node %s: an existing HOST:PORT endpoint needs =GB" % v)
         try:
             out.append((name, int(float(gb) * 1e9) if gb else None))
         except ValueError:
-            sys.exit("--rpc-node %s: expected NAME or NAME=GB" % v)
+            sys.exit("--rpc-node %s: expected NAME, NAME=GB or HOST:PORT=GB" % v)
     return out
 
 
@@ -526,6 +529,9 @@ def _serve_llamacpp_nodes(args, info):
     local = platform.node().split(".")[0]
     caps, eps = [], []
     for name, budget in wanted:
+        if ":" in name:
+            caps.append(budget)
+            continue
         if name not in nodes:
             sys.exit("--rpc-node %s: not discovered (have %s)" % (name, ", ".join(sorted(nodes))))
         free = nodes[name]["facts"].get("memory_free_bytes") or 0
@@ -541,6 +547,14 @@ def _serve_llamacpp_nodes(args, info):
     state = {"engine": "llamacpp", "stages": [], "local_pids": [], "gateway_port": args.port,
              "engine_port": args.engine_port}
     for name, _ in wanted:
+        if ":" in name:  # started elsewhere: just check it answers
+            host, port = name.rsplit(":", 1)
+            eps.append(name)
+            try:
+                print("rpc-server %s: %s" % (name, iosnode.wait_rpc(host, int(port), deadline_s=30.0)))
+            except OSError as e:
+                sys.exit("rpc-server %s did not answer: %s" % (name, e))
+            continue
         node = nodes[name]
         res = _agent_post(node, "/v1/rpc/start", {"binary": binaries.get(name),
                                                   "port": args.rpc_node_port})

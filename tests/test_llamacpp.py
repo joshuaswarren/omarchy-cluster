@@ -319,3 +319,12 @@ def test_rpc_node_args_parse_names_and_optional_gb():
         ("mac-a", 50 * GB), ("linux-b", None), ("linux-c", int(7.5 * GB))]
     with pytest.raises(SystemExit):
         cli._parse_rpc_nodes(["bad=x"])
+
+
+def test_rpc_node_accepts_a_raw_endpoint_with_a_budget():
+    """An rpc-server some other tool started (CUDA box, USB-forwarded phone) joins as
+    HOST:PORT=GB; there are no agent facts for it, so the budget is required."""
+    from omarchy_cluster import cli
+    assert cli._parse_rpc_nodes(["10.0.0.9:50052=3.5"]) == [("10.0.0.9:50052", int(3.5 * GB))]
+    with pytest.raises(SystemExit):
+        cli._parse_rpc_nodes(["10.0.0.9:50052"])
