@@ -124,9 +124,10 @@ def test_cmd_stop_sweeps_in_process_gateway(tmp_path):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:
-        # wait for the listener
-        for _ in range(40):
+        # wait for the listener; a cold interpreter on a CI macOS runner can take several seconds
+        for _ in range(300):
             time.sleep(0.1)
+            assert listener.poll() is None, "listener exited early (rc=%s)" % listener.returncode
             try:
                 t = socket.create_connection(("127.0.0.1", port), timeout=0.2)
                 t.close()
@@ -134,7 +135,7 @@ def test_cmd_stop_sweeps_in_process_gateway(tmp_path):
             except OSError:
                 continue
         else:
-            raise AssertionError("listener did not bind :%d" % port)
+            raise AssertionError("listener did not bind :%d in 30 s" % port)
 
         # Now run cmd_stop in another subprocess so killpg only kills the listener
         stop_script = tmp_path / "stop.py"
