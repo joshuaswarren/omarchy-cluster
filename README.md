@@ -100,7 +100,10 @@ on Linux, dns-sd on macOS), with a plain-text hosts file override.
 The `probe` command measures RTT and bandwidth for every node pair and every
 interface route, and pins the fastest decode-eligible route per pair, including
 Linux pairs. Wi-Fi and overlay routes (Tailscale) are probed but never used for
-decode.
+decode. Each node's agent also reports whether MCDMA (RDMA) is available. `probe`
+records for every pair whether MCDMA could carry its traffic. Routes still use
+TCP. On the machines measured here, every node reports MCDMA as unavailable:
+RDMA is off on the Mac, and the Linux nodes have no InfiniBand device.
 
 The `place MODEL` command checks that the model fits: every stage must hold at
 least one layer in 90 percent of its free memory, and all stages together must
@@ -110,9 +113,16 @@ The `serve MODEL` command plans, launches a pipeline rank on each node through
 its token-authed agent (no node-to-node ssh), and starts an OpenAI-compatible
 gateway on :8020. Each rank measures its decode ms per layer at start, and all
 ranks agree on the same split; `--split N0,N1` sets it by hand. A request with
-`"timing": true` reports per-step ring wait and compute. The `--engine
-llamacpp` option serves a GGUF model through llama-server instead, including an
-iPhone as an RPC node over USB.
+`"timing": true` reports per-step ring wait and compute.
+
+The `--engine llamacpp` option serves a GGUF model through llama-server on the
+gateway machine and spreads its layers over llama.cpp RPC servers. Each
+`--rpc-node NAME=GB` has that node's agent start an RPC server: Metal on macOS,
+Vulkan or CPU on Linux. The layers split in proportion to those budgets.
+`--rpc-node HOST:PORT=GB` adds an RPC server started some other way, such as an
+iPhone over USB or a CUDA machine. `--host-layers N` keeps the first N layers on
+the gateway machine's CPU, read from the GGUF on disk. That runs a model a
+little bigger than all the RPC nodes together.
 
 The `stop` command stops the gateway and every rank, and sweeps the ports. The
 `status` and `hub` commands print the node table with pinned routes and a 1 Hz
@@ -127,8 +137,9 @@ Macs on macOS need stock MLX and mlx-lm. Macs on Omarchy Linux need Omarchy M+
 with omarchy-mlx, MLX on the GPU through its Vulkan backend. That Vulkan
 backend runs 4-bit and 8-bit quantized models; 5-bit and 6-bit MoE models fail
 on these nodes. The llama.cpp engine (`--engine llamacpp`) needs llama.cpp on
-the host, plus the rpc-server app built from `ios/` for an iPhone node (see
-`ios/README.md`). Python 3.9 or newer is needed on every node. Avahi on Linux
+the gateway machine. Each RPC node needs `ggml-rpc-server`, built with
+`-DGGML_RPC=ON` at the same llama.cpp version. An iPhone node needs the
+rpc-server app built from `ios/` (see `ios/README.md`). Python 3.9 or newer is needed on every node. Avahi on Linux
 and dns-sd on macOS are present by default on both. All nodes sit on one LAN or
 Thunderbolt link.
 
@@ -201,6 +212,16 @@ For a model bigger than one node, pick the split yourself so a machine you use
 for other work keeps free memory, for example `serve
 mlx-community/GLM-4.5-Air-4bit --split 31,15` (rank 0 gets 31 layers).
 
+For a GGUF model over more than two machines, use the llama.cpp engine. Only
+the gateway machine needs the GGUF file. Each RPC server receives its layers
+over the network at load and caches them for the next load:
+
+```sh
+omarchy-cluster serve ~/models/model-00001-of-00004.gguf --engine llamacpp \
+  --rpc-node mac-studio=50 --rpc-node linux-a=57 --rpc-node linux-b=8 \
+  --rpc-binary linux-a=$HOME/src/llama.cpp/build/bin/ggml-rpc-server
+```
+
 ## OpenAI-compatible endpoint
 
 The gateway speaks chat completions on `http://gateway-node:8020/v1`. With
@@ -238,8 +259,9 @@ slowdown.
 
 ## Limits
 
-Two ranks: the planner can plan more stages, but `serve` runs two. One request
-at a time: concurrent requests queue, and they add no throughput.
+The MLX engine runs two ranks: the planner can plan more stages, but `serve`
+runs two. The llama.cpp engine takes any number of RPC nodes. One request at a
+time: concurrent requests queue, and they add no throughput.
 Pipeline-model families only (see Requirements). `place` sizes stages from free
 memory, not from the Vulkan allocation limit. On a 16 GB M1 on Omarchy, Vulkan
 allocations failed at about 8.5 GB, so DeepSeek-Coder-V2-Lite-4bit did not load
@@ -261,6 +283,24 @@ hardware: a Mac Studio on macOS and a MacBook Pro on Omarchy Linux run one 106B
 model together. The split was 31 + 15 layers at 0.87 tok/s, with every token
 agreeing. Two Omarchy Linux Macs split a model with byte-identical text to one
 machine.
+
+## How is this different from MCDMA or TensorFold?
+
+They work at different layers. MCDMA is a transport. Its README says "MCDMA
+provides the RDMA driver and verbs transport." and "Installing MCDMA alone does
+not connect an inference engine to this path."
+(https://github.com/ashhart/MCDMA)
+
+TensorFold is a server. Its README says "TensorFold serves language models on
+Apple Silicon and NVIDIA GPUs through an OpenAI-compatible API." For
+GLM-5.3-Flash it lists "MLX on a 256 GB Mac, CUDA with two ranks".
+(https://github.com/ashhart/TensorFold)
+
+omarchy-cluster is the layer above both. It spreads one model over several
+machines that each hold only part of it. It serves them as one endpoint. Today
+it moves data over TCP on the fastest probed route. MCDMA would be a faster
+transport under it. Each agent already detects MCDMA and `probe` records which
+pairs could use it.
 
 ## An iPhone as a node (llama.cpp RPC)
 
