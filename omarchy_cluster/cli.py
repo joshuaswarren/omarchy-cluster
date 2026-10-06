@@ -360,10 +360,6 @@ def cmd_serve(args):
     if len(stages) > 2:
         sys.exit("serve currently supports 2-rank pipelines (ring hop protocol); "
                  "got %d stages" % len(stages))
-    nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
-    py_mac = args.python_mac or sys.executable
-    py_linux = args.python_linux or sys.executable
-
     hostfile = os.path.expanduser("~/.local/state/omarchy-cluster/ring-hostfile.json")
     os.makedirs(os.path.dirname(hostfile), exist_ok=True)
     nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
@@ -539,8 +535,10 @@ def main(argv=None):
     p.add_argument("--stages", type=int, default=None)
     p.add_argument("--port", type=int, default=8020)
     p.add_argument("--engine-port", type=int, default=8031)
-    p.add_argument("--python-mac", default=None, help="python with mlx on macOS ranks")
-    p.add_argument("--python-linux", default=None, help="python with mlx on Linux ranks")
+    p.add_argument("--python-mac", default=None,
+                   help="python with mlx on macOS ranks (default: each node's agent picks its own)")
+    p.add_argument("--python-linux", default=None,
+                   help="python with mlx on Linux ranks (default: each node's agent picks its own)")
     p.add_argument("--rank-pythonpath", default=None,
                    help="extra PYTHONPATH entry for ranks (e.g. mlx-lm pkg dir)")
     p.add_argument("--gpu-turn", type=int, default=0, metavar="MINUTES",

@@ -288,3 +288,31 @@ def test_listener_pids_without_lsof_uses_proc_only_if_present(monkeypatch):
     assert agent.listener_pids(8020) == [4242]
     monkeypatch.setattr(agent.os.path, "isdir", lambda p: False)
     assert agent.listener_pids(8020) == []
+
+
+def test_rank_start_without_python_uses_this_nodes_mlx_python(tmp_path, monkeypatch):
+    """serve sends python=None when no --python-mac/--python-linux is given;
+    the agent must pick its own node's interpreter (Linux venv paths differ
+    per machine), never pass None to Popen."""
+    from omarchy_cluster import agent
+    venv_py = tmp_path / "venv" / "bin" / "python"
+    venv_py.parent.mkdir(parents=True)
+    venv_py.write_text("#!/bin/sh\n")
+    venv_py.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OMARCHY_CLUSTER_PYTHON", str(venv_py))
+    seen = {}
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            seen["cmd"] = cmd
+            self.pid = 4242
+
+    monkeypatch.setattr(agent.subprocess, "Popen", FakePopen)
+    req = {"rank": 1, "model": "m", "layers": "", "hostfile_content": "[]", "python": None}
+    assert agent.rank_start(req)["pid"] == 4242
+    assert seen["cmd"][0] == str(venv_py)
+    monkeypatch.delenv("OMARCHY_CLUSTER_PYTHON")
+    monkeypatch.setattr(agent, "RANK_PYTHONS", ())
+    agent.rank_start(req)
+    assert seen["cmd"][0] == sys.executable  # nothing else installed: the agent's own python

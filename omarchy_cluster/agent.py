@@ -8,6 +8,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -21,6 +22,17 @@ DEFAULT_HTTP_PORT = 8025
 DEFAULT_SINK_PORT = 8026
 DEFAULT_UDP_PORT = 8027
 DEFAULT_IPERF_PORT = 5210
+# Where omarchy-mlx puts an MLX python (user install, then the package); checked after
+# $OMARCHY_CLUSTER_PYTHON and before the agent's own interpreter.
+RANK_PYTHONS = ("~/.local/share/mlx-omarchy/venv/bin/python", "/usr/lib/omarchy-mlx/venv/bin/python")
+
+
+def default_rank_python():
+    """This node's python for ranks when serve did not name one."""
+    for p in (os.environ.get("OMARCHY_CLUSTER_PYTHON"),) + RANK_PYTHONS:
+        if p and os.access(os.path.expanduser(p), os.X_OK):
+            return os.path.expanduser(p)
+    return sys.executable
 
 
 def median(xs):
@@ -254,7 +266,7 @@ def rank_start(req):
     cmd = []
     if req.get("gpu_turn_minutes"):
         cmd += [os.path.expanduser("~/bin/gpu-turn"), "-m", str(req["gpu_turn_minutes"]), "--"]
-    cmd += [req["python"], "-m", "omarchy_cluster.rank",
+    cmd += [req.get("python") or default_rank_python(), "-m", "omarchy_cluster.rank",
             "--model", req["model"], "--layers", req["layers"],
             "--rank", str(req["rank"]), "--hostfile", hostfile,
             "--engine-port", str(req.get("engine_port", 8031))]
