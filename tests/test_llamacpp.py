@@ -231,3 +231,91 @@ def test_rpc_hello_speaks_the_rpc_handshake():
     assert got["hello"][0] == iosnode.RPC_CMD_HELLO
     assert struct.unpack("<Q", got["hello"][1:9])[0] == iosnode.RPC_CONN_CAPS_SIZE
     assert got["count"] == bytes([iosnode.RPC_CMD_DEVICE_COUNT]) + bytes(8)
+
+
+def write_gguf(path, meta, tensors):
+    """GGUF v3 file with the given (key, vtype, raw) metadata and (name, bytes) tensors."""
+    out = b"GGUF" + struct.pack("<IQQ", 3, len(tensors), len(meta))
+    for key, vtype, raw in meta:
+        out += _gguf_string(key) + struct.pack("<I", vtype) + raw
+    offset = 0
+    for name, size in tensors:
+        out += _gguf_string(name) + struct.pack("<I", 1) + struct.pack("<Q", size)
+        out += struct.pack("<IQ", 0, offset)
+        offset += size
+    out += bytes(-len(out) % 32) + bytes(offset)
+    with open(path, "wb") as f:
+        f.write(out)
+
+
+def test_gguf_info_sums_tensors_across_every_shard(tmp_path):
+    """Big GGUFs ship as -0000N-of-0000M shards; the first is often only metadata.
+    Sizing only that file made a 120 GB model look like 9 MB."""
+    split = lambda no: [("split.no", 2, struct.pack("<H", no)),  # noqa: E731
+                        ("split.count", 2, struct.pack("<H", 2))]
+    meta = [("general.architecture", 8, _gguf_string("qwen3")),
+            ("qwen3.block_count", 4, struct.pack("<I", 3)),
+            ("qwen3.attention.head_count", 4, struct.pack("<I", 16)),
+            ("qwen3.attention.head_count_kv", 4, struct.pack("<I", 8)),
+            ("qwen3.attention.key_length", 4, struct.pack("<I", 128)),
+            ("qwen3.embedding_length", 4, struct.pack("<I", 2048))] + split(0)
+    first = tmp_path / "m-00001-of-00002.gguf"
+    write_gguf(str(first), meta, [("token_embd.weight", 320), ("blk.0.attn_q.weight", 64),
+                                  ("blk.0.ffn_up.weight", 96)])
+    write_gguf(str(tmp_path / "m-00002-of-00002.gguf"), split(1),
+               [("blk.1.attn_q.weight", 64), ("blk.1.ffn_up.weight", 96),
+                ("blk.2.attn_q.weight", 64), ("blk.2.ffn_up.weight", 96),
+                ("output_norm.weight", 32)])
+    info = lce.gguf_info(str(first))
+    assert (info["n_layer"], info["layer_bytes"], info["other_bytes"]) == (3, 160, 352)
+    assert info["total_bytes"] == 3 * 160 + 352
+    assert info["shards"] == 2
+
+
+def test_tensor_split_weights_devices_by_memory_and_refuses_what_cannot_fit():
+    info = {"n_layer": 10, "layer_bytes": 4 * GB, "other_bytes": 1 * GB,
+            "total_bytes": 41 * GB, "kv_bytes_per_token_layer": 1000}
+    weights = lce.tensor_split(info, [30 * GB, 10 * GB, 5 * GB], 2048)
+    assert weights == [30.0, 10.0, 5.0]
+    with pytest.raises(ValueError):
+        lce.tensor_split(info, [20 * GB, 10 * GB], 2048)  # 10 x ~4 GB layers need ~40 GB
+
+
+def test_server_cmd_spreads_all_layers_over_n_rpc_devices():
+    cmd = lce.server_cmd("llama-server", "m.gguf", 8032, 2048, 8,
+                         rpc=["10.0.0.1:50060", "10.0.0.2:50060"], split=[3.0, 1.0])
+    assert cmd[cmd.index("--rpc") + 1] == "10.0.0.1:50060,10.0.0.2:50060"
+    assert cmd[cmd.index("-dev") + 1] == "RPC0,RPC1"
+    assert cmd[cmd.index("-ngl") + 1] == "999"
+    assert cmd[cmd.index("--tensor-split") + 1] == "3,1"
+    assert cmd[cmd.index("-ot") + 1] == r"^output\.weight=CPU"
+    with pytest.raises(ValueError):
+        lce.server_cmd("llama-server", "m.gguf", 8032, 2048, 8, rpc=["a:1"], split=[1.0, 2.0])
+
+
+def test_agent_starts_rpc_server_with_cache_on_all_interfaces(tmp_path, monkeypatch):
+    from omarchy_cluster import agent
+    seen = {}
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            seen["cmd"], seen["kw"] = cmd, kw
+            self.pid = 777
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(agent.subprocess, "Popen", FakePopen)
+    res = agent.rpc_start({"binary": "/opt/llama/ggml-rpc-server", "port": 50060, "threads": 8})
+    assert res["pid"] == 777
+    assert seen["cmd"] == ["/opt/llama/ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-c", "-t", "8"]
+    assert seen["kw"]["start_new_session"] is True
+    monkeypatch.setenv("OMARCHY_CLUSTER_RPC_SERVER", "/x/rpc")
+    agent.rpc_start({"port": 50061})
+    assert seen["cmd"][:5] == ["/x/rpc", "-H", "0.0.0.0", "-p", "50061"]
+
+
+def test_rpc_node_args_parse_names_and_optional_gb():
+    from omarchy_cluster import cli
+    assert cli._parse_rpc_nodes(["mac-a=50", "linux-b", "linux-c=7.5"]) == [
+        ("mac-a", 50 * GB), ("linux-b", None), ("linux-c", int(7.5 * GB))]
+    with pytest.raises(SystemExit):
+        cli._parse_rpc_nodes(["bad=x"])

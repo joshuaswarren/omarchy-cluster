@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -63,13 +64,9 @@ class _Reader:
         raise ValueError("unknown GGUF value type %d" % vtype)
 
 
-def gguf_info(path):
-    """Layer count and byte sizes from a GGUF header (single-file models).
-
-    Tensor sizes come from the gaps between data offsets, so no quant-type table
-    is needed. Returns n_layer, layer_bytes (largest block), other_bytes
-    (embeddings, output, norms), total_bytes and kv_bytes_per_token_layer
-    (f16 K and V)."""
+def _header(path):
+    """(metadata, tensor name -> byte size) of one GGUF file. Sizes come from the gaps
+    between data offsets, so no quant-type table is needed."""
     file_size = os.path.getsize(path)
     with open(path, "rb") as f:
         r = _Reader(f)
@@ -93,15 +90,37 @@ def gguf_info(path):
             tensors.append((r.unpack("<Q"), name))
         align = int(meta.get("general.alignment", 32))
         data_start = (f.tell() + align - 1) // align * align
-    arch = meta.get("general.architecture", "")
-    if "%s.block_count" % arch not in meta:
-        raise ValueError("%s: no general.architecture/block_count metadata" % path)
-    n_layer = int(meta["%s.block_count" % arch])
     tensors.sort()
     sizes = {}
     for i, (offset, name) in enumerate(tensors):
         end = tensors[i + 1][0] if i + 1 < len(tensors) else file_size - data_start
         sizes[name] = end - offset
+    return meta, sizes
+
+
+def _shard_paths(path, count):
+    m = re.search(r"-(\d{5})-of-(\d{5})\.gguf$", path)
+    if count <= 1:
+        return [path]
+    if not m or int(m.group(2)) != count:
+        raise ValueError("%s: split.count %d but the name is not -NNNNN-of-%05d.gguf"
+                         % (path, count, count))
+    return [path[:m.start()] + "-%05d-of-%05d.gguf" % (i, count) for i in range(1, count + 1)]
+
+
+def gguf_info(path):
+    """Layer count and byte sizes from GGUF headers; for a split model pass the first
+    shard and every shard is read. Returns n_layer, layer_bytes (largest block),
+    other_bytes (embeddings, output, norms), total_bytes, shards and
+    kv_bytes_per_token_layer (f16 K and V)."""
+    meta, sizes = _header(path)
+    shards = _shard_paths(path, int(meta.get("split.count", 1)))
+    for p in shards[1:]:
+        sizes.update(_header(p)[1])
+    arch = meta.get("general.architecture", "")
+    if "%s.block_count" % arch not in meta:
+        raise ValueError("%s: no general.architecture/block_count metadata" % path)
+    n_layer = int(meta["%s.block_count" % arch])
     per_layer = [0] * n_layer
     other = 0
     for name, size in sizes.items():
@@ -118,7 +137,7 @@ def gguf_info(path):
     k_dim = int(meta.get("%s.attention.key_length" % arch, n_embd // n_head))
     v_dim = int(meta.get("%s.attention.value_length" % arch, k_dim))
     return {"arch": arch, "n_layer": n_layer, "layer_bytes": max(per_layer),
-            "other_bytes": other, "total_bytes": sum(sizes.values()),
+            "other_bytes": other, "total_bytes": sum(sizes.values()), "shards": len(shards),
             "kv_bytes_per_token_layer": int(n_kv_head) * (k_dim + v_dim) * 2}
 
 
@@ -145,14 +164,33 @@ def rpc_layers(info, host_free_bytes, rpc_cap_bytes, ctx_tokens, force=None):
                         rpc_cap_bytes / 1e9))
 
 
-def server_cmd(llama_server, model, port, ctx_tokens, threads, rpc=None, n_rpc_layers=0):
-    """llama-server argv. Layers go to the RPC device only when n_rpc_layers > 0;
-    llama.cpp offloads the LAST n layers, and the lm_head always stays here.
-    `-dev RPC0` restricts offload to the RPC device, so a llama-server built with
-    a local GPU backend cannot take those layers instead."""
+def tensor_split(info, caps_bytes, ctx_tokens):
+    """--tensor-split weights for N RPC devices: each device's memory budget, so the
+    layers spread in proportion and none gets more than its share of the total.
+    Raises when all layers plus their KV cache exceed the summed budgets. The
+    embeddings and lm_head stay on the host CPU and are not charged here."""
+    need = info["n_layer"] * (info["layer_bytes"] + info["kv_bytes_per_token_layer"] * ctx_tokens)
+    if need > sum(caps_bytes):
+        raise ValueError("layers need %.1f GB; the RPC devices have %.1f GB (%s)" % (
+            need / 1e9, sum(caps_bytes) / 1e9, ", ".join("%.1f" % (c / 1e9) for c in caps_bytes)))
+    return [round(c / 1e9, 2) for c in caps_bytes]
+
+
+def server_cmd(llama_server, model, port, ctx_tokens, threads, rpc=None, n_rpc_layers=0,
+               split=None):
+    """llama-server argv. With `split`, `rpc` is a list of N endpoints and every layer
+    is spread over RPC0..RPCn by those weights. Otherwise layers go to one RPC device
+    only when n_rpc_layers > 0 (llama.cpp offloads the LAST n layers). The lm_head
+    always stays here. `-dev RPC...` keeps a local GPU backend from taking layers."""
     cmd = [llama_server, "-m", model, "--host", "127.0.0.1", "--port", str(port),
            "-c", str(ctx_tokens), "-t", str(threads)]
-    if n_rpc_layers:
+    if split is not None:
+        if not rpc or len(rpc) != len(split):
+            raise ValueError("%d tensor-split weights for %d RPC endpoints" % (len(split), len(rpc or [])))
+        cmd += ["--rpc", ",".join(rpc), "-dev", ",".join("RPC%d" % i for i in range(len(rpc))),
+                "-ngl", "999", "--tensor-split", ",".join("%g" % w for w in split),
+                "-ot", LM_HEAD_ON_HOST]
+    elif n_rpc_layers:
         if not rpc:
             raise ValueError("layers placed on an RPC device but no --rpc endpoint")
         cmd += ["--rpc", rpc, "-dev", "RPC0", "-ngl", str(n_rpc_layers), "-ot", LM_HEAD_ON_HOST]
@@ -264,26 +302,36 @@ def main(argv=None):
     ap.add_argument("--server-port", type=int, default=8032)
     ap.add_argument("--ctx", type=int, default=2048)
     ap.add_argument("--threads", type=int, default=os.cpu_count() or 4)
-    ap.add_argument("--rpc", default=None)
-    ap.add_argument("--rpc-layers", type=int, required=True)
+    ap.add_argument("--rpc", default=None, help="endpoint, or a comma list with --tensor-split")
+    ap.add_argument("--rpc-layers", type=int, default=0)
+    ap.add_argument("--tensor-split", default=None,
+                    help="weights for the --rpc endpoints; spreads every layer over them")
+    ap.add_argument("--load-timeout", type=float, default=3600.0,
+                    help="seconds to wait for llama-server (RPC loads stream the weights)")
     args = ap.parse_args(argv)
-    cmd = server_cmd(args.llama_server, args.model, args.server_port, args.ctx,
-                     args.threads, args.rpc, args.rpc_layers)
+    if args.tensor_split:
+        cmd = server_cmd(args.llama_server, args.model, args.server_port, args.ctx, args.threads,
+                         rpc=args.rpc.split(",") if args.rpc else None,
+                         split=[float(w) for w in args.tensor_split.split(",")])
+    else:
+        cmd = server_cmd(args.llama_server, args.model, args.server_port, args.ctx,
+                         args.threads, args.rpc, args.rpc_layers)
     print("llama-server: %s" % " ".join(cmd), flush=True)
     server = subprocess.Popen(cmd, env=server_env(), stdin=subprocess.DEVNULL)
     server_url = "http://127.0.0.1:%d" % args.server_port
     try:
-        wait_http(server_url + "/health", proc=server)
+        wait_http(server_url + "/health", deadline_s=args.load_timeout, proc=server)
     except (TimeoutError, RuntimeError):
         server.terminate()
         server.wait(10)
         raise
     EngineHandler.server_url = server_url
-    EngineHandler.status = {"engine": "llama.cpp", "model": args.model,
-                            "rpc": args.rpc, "rpc_layers": args.rpc_layers}
+    EngineHandler.status = {"engine": "llama.cpp", "model": args.model, "rpc": args.rpc,
+                            "rpc_layers": args.rpc_layers, "tensor_split": args.tensor_split}
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), EngineHandler)
     srv.daemon_threads = True
-    print("llama.cpp engine on :%d (rpc layers %d)" % (args.port, args.rpc_layers), flush=True)
+    print("llama.cpp engine on :%d (rpc %s, split %s)" % (args.port, args.rpc, args.tensor_split),
+          flush=True)
     try:
         srv.serve_forever()
     finally:

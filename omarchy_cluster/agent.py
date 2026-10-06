@@ -309,6 +309,25 @@ def _signal_all(pids, sig):
             pass
 
 
+def rpc_start(req):
+    """Spawn a llama.cpp RPC server (ggml-rpc-server) for `serve --engine llamacpp
+    --rpc-node`. Binds all interfaces, with -c so a later load reuses weights the
+    server already received. Binary: req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH."""
+    log_dir = os.path.expanduser("~/.local/share/omarchy-cluster")
+    os.makedirs(log_dir, exist_ok=True)
+    binary = req.get("binary") or os.environ.get("OMARCHY_CLUSTER_RPC_SERVER") or "ggml-rpc-server"
+    cmd = [binary, "-H", "0.0.0.0", "-p", str(int(req.get("port", 50060))), "-c"]
+    if req.get("threads"):
+        cmd += ["-t", str(int(req["threads"]))]
+    if req.get("device"):
+        cmd += ["-d", str(req["device"])]
+    log = os.path.join(log_dir, "rpc-server.log")
+    with open(log, "w") as lf:
+        pid = subprocess.Popen(cmd, cwd=log_dir, stdout=lf, stderr=subprocess.STDOUT,
+                               stdin=subprocess.DEVNULL, start_new_session=True).pid
+    return {"pid": pid, "log": log, "cmd": cmd}
+
+
 def rank_stop(req):
     import signal
     import time as _time
@@ -426,7 +445,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path in ("/v1/rank/start", "/v1/rank/stop"):
+        if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start"):
             token = _read_token()
             supplied = self.headers.get("X-Cluster-Token", "")
             if not token or not hmac.compare_digest(token, supplied):
@@ -438,6 +457,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if self.path == "/v1/rank/start":
                     return self._json(200, rank_start(req))
+                if self.path == "/v1/rpc/start":
+                    return self._json(200, rpc_start(req))
                 return self._json(200, rank_stop(req))
             except KeyError as e:
                 return self._json(400, {"error": "missing field %s" % e})

@@ -440,6 +440,8 @@ def _serve_llamacpp(args):
         info = llamacpp_engine.gguf_info(args.model)
     except (OSError, ValueError) as e:
         sys.exit("cannot read GGUF %s: %s" % (args.model, e))
+    if args.rpc_node:
+        return _serve_llamacpp_nodes(args, info)
     phone = None
     if args.ios_bundle:
         try:
@@ -492,6 +494,83 @@ def _serve_llamacpp(args):
     _start_gateway(state, args.port, engine_url)
 
 
+def _parse_rpc_nodes(values):
+    """`--rpc-node NAME[=GB]` values -> [(name, budget bytes or None)]."""
+    out = []
+    for v in values:
+        name, _, gb = v.partition("=")
+        try:
+            out.append((name, int(float(gb) * 1e9) if gb else None))
+        except ValueError:
+            sys.exit("--rpc-node %s: expected NAME or NAME=GB" % v)
+    return out
+
+
+def _agent_post(node, path, payload, timeout=30):
+    req = urllib.request.Request(
+        "http://%s:%d%s" % (node["ip"], node.get("port", 8025), path),
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "X-Cluster-Token": _read_local_token()})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def _serve_llamacpp_nodes(args, info):
+    """GGUF on this host's llama-server, every layer spread over llama.cpp RPC servers
+    that each named node's agent starts (this host too, if listed). Weights per node:
+    --rpc-node NAME=GB, else 90 percent of the node's free memory."""
+    from . import iosnode, llamacpp_engine
+    wanted = _parse_rpc_nodes(args.rpc_node)
+    binaries = dict(v.split("=", 1) for v in args.rpc_binary)
+    nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
+    local = platform.node().split(".")[0]
+    caps, eps = [], []
+    for name, budget in wanted:
+        if name not in nodes:
+            sys.exit("--rpc-node %s: not discovered (have %s)" % (name, ", ".join(sorted(nodes))))
+        free = nodes[name]["facts"].get("memory_free_bytes") or 0
+        caps.append(budget or int(free * llamacpp_engine.HOST_FIT_FRACTION))
+    try:
+        weights = llamacpp_engine.tensor_split(info, caps, args.ctx)
+    except ValueError as e:
+        sys.exit(str(e))
+    print("%s: %d layers, %.2f GB in %d shard(s) over %s" % (
+        os.path.basename(args.model), info["n_layer"], info["total_bytes"] / 1e9, info["shards"],
+        ", ".join("%s %.1f GB" % (n, c / 1e9) for (n, _), c in zip(wanted, caps))))
+    os.makedirs(os.path.expanduser("~/.local/state/omarchy-cluster"), exist_ok=True)
+    state = {"engine": "llamacpp", "stages": [], "local_pids": [], "gateway_port": args.port,
+             "engine_port": args.engine_port}
+    for name, _ in wanted:
+        node = nodes[name]
+        res = _agent_post(node, "/v1/rpc/start", {"binary": binaries.get(name),
+                                                  "port": args.rpc_node_port})
+        state["stages"].append({"node": node["ip"], "pid": str(res["pid"]), "port": args.rpc_node_port})
+        _write_state(state)
+        ip = "127.0.0.1" if name == local else _pick_route_ip(
+            node, [{"node": local}, {"node": name}], name)
+        eps.append("%s:%d" % (ip, args.rpc_node_port))
+        try:
+            hello = iosnode.wait_rpc(ip, args.rpc_node_port, deadline_s=120.0)
+        except OSError as e:
+            sys.exit("rpc-server on %s (%s) did not answer; log %s on that node: %s"
+                     % (name, eps[-1], res.get("log"), e))
+        print("rpc-server %s at %s: %s" % (name, eps[-1], hello))
+    cmd = [sys.executable, "-m", "omarchy_cluster.llamacpp_engine", "--model", args.model,
+           "--llama-server", args.llama_server, "--port", str(args.engine_port),
+           "--server-port", str(args.engine_port + 1), "--ctx", str(args.ctx),
+           "--rpc", ",".join(eps), "--tensor-split", ",".join("%g" % w for w in weights)]
+    engine, log = _spawn(cmd, "llamacpp-engine.log")
+    state["local_pids"].append(engine.pid)
+    _write_state(state)
+    engine_url = "http://127.0.0.1:%d" % args.engine_port
+    try:
+        llamacpp_engine.wait_http(engine_url + "/health", deadline_s=3600.0, proc=engine)
+    except (TimeoutError, RuntimeError) as e:
+        sys.exit("llama.cpp engine failed (log: %s): %s" % (log, e))
+    print("llama.cpp engine pid %s (log: %s)" % (engine.pid, log))
+    _start_gateway(state, args.port, engine_url)
+
+
 def _sweep_listening_port(port):
     if not port:
         return
@@ -519,7 +598,7 @@ def cmd_stop(args):
             pass
     for stage in state.get("stages", []):
         node = {"ip": stage["node"],
-                "ports": [52100, state.get("engine_port", 8031)]}
+                "ports": [52100, state.get("engine_port", 8031)] + ([stage["port"]] if stage.get("port") else [])}
         result = _stop_rank_via_agent(node, stage["pid"])
         print("stopped rank pid %s on %s: %s" % (stage["pid"], stage["node"], result))
     _sweep_listening_port(state.get("gateway_port"))
@@ -533,7 +612,7 @@ def _pick_route_ip(node_facts_dict, stages, node_name):
     """IP of `node` on the pinned route to the other stage's node."""
     others = [s["node"] for s in stages if s["node"] != node_name]
     if others:
-        links = probe_mod.load_links()
+        links = probe_mod.load_links() or {}  # no probe run yet: use the node's first address
         for pair in links.get("pairs", []):
             if {pair.get("a"), pair.get("b")} == {node_name, others[0]}:
                 p = pair.get("pinned") or {}
@@ -629,6 +708,12 @@ def main(argv=None):
     p.add_argument("--rpc-layers", type=int, default=None,
                    help="force this many of the last layers onto the iPhone (llamacpp)")
     p.add_argument("--rpc-port", type=int, default=50052, help="local port of the USB forward")
+    p.add_argument("--rpc-node", action="append", default=[], metavar="NAME[=GB]",
+                   help="llamacpp: run a llama.cpp RPC server on this discovered node (repeat; "
+                        "include this host to use it too); layers spread by GB, default 90%% of free")
+    p.add_argument("--rpc-binary", action="append", default=[], metavar="NAME=PATH",
+                   help="llamacpp: ggml-rpc-server path on NAME (default: the node's PATH)")
+    p.add_argument("--rpc-node-port", type=int, default=50060, help="llamacpp: rpc-server port on each node")
     p.add_argument("--ctx", type=int, default=2048)
     p.add_argument("--links", default=None)
     p.add_argument("--no-decode", action="append", default=[])
