@@ -1,4 +1,3 @@
-<!-- UNVOICED: draft wording, voice pass pending before publication. -->
 # omarchy-cluster
 
 Run one local MLX model across the Apple Silicon machines on your network: a
