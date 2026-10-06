@@ -37,12 +37,12 @@ node-loss handling).
   blocked on macstudio, verified 2026-10-04). Writes `links.json`, pins the
   fastest route per pair (bottleneck direction, RTT tiebreak), and marks
   Wi-Fi and Tailscale routes ineligible for decode ranks.
-- `omarchy-cluster place MODEL` — memory- and bandwidth-weighted pipeline
-  split across discovered nodes. Reads `links.json` for boundaries, layers
-  by free-memory share, fails closed when a stage's weights + KV won't
-  fit or its pinned route is unmeasured. `--stages N` forces an exact N-rank
-  pipeline; `--no-decode NAME` excludes a node from decode eligibility
-  (D1: jwm1).
+- `omarchy-cluster place MODEL` — picks the pipeline nodes and checks they
+  hold the model: every stage must fit at least one layer (weights + KV in
+  90 % of free memory) and together all layers; each boundary needs a
+  measured pinned route from `links.json`. Prints each stage's layer cap.
+  `--stages N` forces an exact N-rank pipeline; `--no-decode NAME` excludes
+  a node from decode eligibility (D1: jwm1).
 - `omarchy-cluster serve MODEL` — plans, then asks each node's agent to
   launch its own rank over the shared ring hostfile
   (`_omarchy-cluster._tcp` is the service type; the JSON file is
@@ -51,8 +51,13 @@ node-loss handling).
   `~/bin/gpu-turn` (M2 shared GPU is FCFS, 30 min max per turn).
   Ranks run mlx-lm's pipeline: rank 0 runs the last layers and samples;
   rank 1 long-polls rank 0's engine for each job's token ids.
-  `--split N0,N1` sets decoder layers per rank (rank order, default even);
-  put fewer layers on the slower rank. A request with `"timing": true`
+  The split is measured at rank start: each rank times decode steps through
+  1 and 4 of the model's layers (in a child process), keeps the fastest
+  ms/layer the node has seen in `~/.local/state/omarchy-cluster/layer-ms.json`
+  (delete it after a real slowdown), the ranks all_gather (ms/layer, layer
+  cap), and every rank runs the same `planner.choose_split`: one layer per
+  rank, the rest on the cheapest ranks up to their caps. `--split N0,N1`
+  (rank order) overrides it. A request with `"timing": true`
   returns `timings.step_ms` (per decode step: ring wait vs compute) and
   `poll_ms`; rank 1 logs its own `step_ms`.
 - `omarchy-cluster stop` — stops the detached gateway, terminates every process in each rank's session on its agent, and sweeps listeners on the gateway, engine, and rank ports.
@@ -119,15 +124,15 @@ agent pid, launchd respawned it and `/v1/facts` answered again within 4 s
 macstudio (pinned build oracle) or jw14m2 (fresh from its Thunderbolt
 test).
 
-### 2026-10-04: planner output
+### 2026-10-06: planner output
 
 ```
-$ omarchy-cluster place SiddhJagani/Qwen3.8-2B-mlx-4Bit --stages 2 --no-decode jwm1-linux
-PIPELINE: SiddhJagani/Qwen3.8-2B-mlx-4Bit (24 layers, KV 48.0 KB/token)
-  rank 0  jw14m2-linux     layers [  0: 14)  weights  0.62 GB  kv@2048t 0.06 GB
-  rank 1  MacStudio        layers [ 14: 24)  weights  0.44 GB  kv@2048t 0.04 GB  (decode tail)
-  boundary jw14m2-linux -> MacStudio via en0:192.168.10.15 -> enu1:192.168.10.218
-                           2.2 Gb/s rtt 0.33 ms  ~0.360 ms/token
+$ omarchy-cluster place mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit --stages 2 --no-decode MacStudio
+PIPELINE: mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit (27 layers, KV 216.0 KB/token)
+  rank 0  MacStudio        fits up to 26 layers  (engine; samples, runs the last layers)
+  rank 1  jw14m2-linux     fits up to 26 layers
+  split: chosen at rank start from measured ms/layer (serve --split overrides)
+  boundary MacStudio -> jw14m2-linux via en0:192.168.10.15 -> enu1:192.168.10.218  2.2 Gb/s rtt 0.41 ms  ~0.439 ms/token
 ```
 
 ### 2026-10-04: gateway end-to-end (world-1 on macstudio, 2026-10-04)

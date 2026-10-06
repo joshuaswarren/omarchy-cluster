@@ -514,7 +514,7 @@ def main(argv=None):
     p.add_argument("--hub", default=None, help="hub base URL for heartbeat liveness")
     p.set_defaults(fn=cmd_status)
 
-    p = sub.add_parser("place", help="compute the pipeline split for a model")
+    p = sub.add_parser("place", help="choose pipeline nodes and check they hold the model")
     p.add_argument("model")
     p.add_argument("--ctx", type=int, default=2048)
     p.add_argument("--links", default=None)
@@ -541,7 +541,7 @@ def main(argv=None):
                    help="wrap Linux ranks in ~/bin/gpu-turn for the shared M2 GPU")
     p.add_argument("--split", default=None, metavar="N0,N1",
                    help="decoder layers per rank in rank order (rank 0 runs the last "
-                        "layers); default even. Put fewer on a slower rank.")
+                        "layers); default: chosen at rank start from measured ms/layer")
     p.set_defaults(fn=cmd_serve)
 
     p = sub.add_parser("stop", help="stop ranks started by serve")
