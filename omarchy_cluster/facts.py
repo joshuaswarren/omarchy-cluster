@@ -11,19 +11,23 @@ import subprocess
 
 from . import AGENT_VERSION
 
-# Apple Silicon device-tree target codes -> marketing names.
+# Apple Silicon device-tree target codes -> marketing names (Asahi SoC naming).
 CHIP_NAMES = {
     "t8103": "Apple M1",
-    "t6000": "Apple M1 Ultra",
+    "t6000": "Apple M1 Pro",
     "t6001": "Apple M1 Max",
-    "t6002": "Apple M1 Ultra (2x)",
+    "t6002": "Apple M1 Ultra",
     "t6020": "Apple M2 Pro",
     "t6021": "Apple M2 Max",
     "t6022": "Apple M2 Ultra",
-    "t6030": "Apple M3 Max",
-    "t6031": "Apple M3 Pro",
-    "t6034": "Apple M4 Max",
+    "t6030": "Apple M3 Pro",
+    "t6031": "Apple M3 Max",
+    "t6034": "Apple M3 Max",
 }
+
+# MCDMA (RDMA transport, github.com/ashhart/MCDMA) detection inputs.
+IB_ROOT = "/sys/class/infiniband"
+MCDMA_PEER = "~/.local/libexec/mcdma"
 
 
 def _run(cmd, timeout=6):
@@ -216,6 +220,47 @@ def interfaces():
     return _linux_interfaces()
 
 
+def mcdma():
+    """MCDMA (RDMA) on this node: {"available", "reason", "devices"}. Detection only.
+    macOS: Apple Thunderbolt RDMA enabled (`rdma_ctl status`) with an rdma_en* interface.
+    Linux: an ACTIVE port under /sys/class/infiniband and the MCDMA peer tool."""
+    if platform.system() == "Darwin":
+        if not shutil.which("rdma_ctl"):
+            return {"available": False, "reason": "no rdma_ctl", "devices": []}
+        status = _run(["rdma_ctl", "status"]).strip() or "unknown"
+        devs = [i for i in _run(["ifconfig", "-l"]).split() if i.startswith("rdma_en")]
+        if status != "enabled":
+            return {"available": False, "reason": "rdma_ctl status: %s" % status, "devices": devs}
+        if not devs:
+            return {"available": False, "reason": "rdma enabled but no rdma_en interface", "devices": []}
+        return {"available": True, "reason": "rdma_ctl enabled", "devices": devs}
+    try:
+        names = sorted(os.listdir(IB_ROOT))
+    except OSError:
+        names = []
+    if not names:
+        return {"available": False, "reason": "no /sys/class/infiniband devices", "devices": []}
+    active = []
+    for d in names:
+        ports = os.path.join(IB_ROOT, d, "ports")
+        try:
+            plist = sorted(os.listdir(ports))
+        except OSError:
+            continue
+        for port in plist:
+            try:
+                with open(os.path.join(ports, port, "state")) as f:
+                    if "ACTIVE" in f.read():
+                        active.append("%s/%s" % (d, port))
+            except OSError:
+                pass
+    if not active:
+        return {"available": False, "reason": "no ACTIVE infiniband port", "devices": []}
+    if not os.access(os.path.expanduser(MCDMA_PEER), os.X_OK):
+        return {"available": False, "reason": "no MCDMA peer tool at %s" % MCDMA_PEER, "devices": active}
+    return {"available": True, "reason": "ACTIVE port and peer tool", "devices": active}
+
+
 def collect_facts():
     return {
         "agent_version": AGENT_VERSION,
@@ -230,4 +275,5 @@ def collect_facts():
         "interfaces": interfaces(),
         "boot_id": boot_id(),
         "tools": {"iperf3": bool(shutil.which("iperf3"))},
+        "transports": {"mcdma": mcdma()},
     }

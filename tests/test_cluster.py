@@ -157,3 +157,52 @@ def test_probe_checks_routes_in_parallel_and_skips_dead_and_spare_routes(monkeyp
     assert sorted(bw) == [("10.10.2.1", "10.10.2.2"), ("10.10.2.2", "10.10.2.1")]
     dead_routes = [r for r in pair["routes"] if r["b_ip"] == "10.10.9.9"]
     assert len(dead_routes) == 2 and all("unreachable" in r.get("errors", []) for r in dead_routes)
+
+
+def _mcdma_env(monkeypatch, system, outputs, ib_root="/nonexistent", peer="/nonexistent/mcdma"):
+    from omarchy_cluster import facts
+    monkeypatch.setattr(facts.platform, "system", lambda: system)
+    monkeypatch.setattr(facts.shutil, "which", lambda b: "/usr/bin/" + b if b in outputs else None)
+    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: outputs.get(cmd[0], ""))
+    monkeypatch.setattr(facts, "IB_ROOT", ib_root)
+    monkeypatch.setattr(facts, "MCDMA_PEER", peer)
+    return facts
+
+
+def test_mcdma_on_macos_needs_rdma_enabled_and_an_rdma_interface(monkeypatch):
+    f = _mcdma_env(monkeypatch, "Darwin", {"rdma_ctl": "disabled\n", "ifconfig": "lo0 en0 en2"})
+    assert f.mcdma() == {"available": False, "reason": "rdma_ctl status: disabled", "devices": []}
+    f = _mcdma_env(monkeypatch, "Darwin", {"rdma_ctl": "enabled\n", "ifconfig": "lo0 en2 rdma_en2"})
+    assert f.mcdma() == {"available": True, "reason": "rdma_ctl enabled", "devices": ["rdma_en2"]}
+    f = _mcdma_env(monkeypatch, "Darwin", {"ifconfig": "lo0"})
+    assert f.mcdma()["reason"] == "no rdma_ctl"
+
+
+def test_mcdma_on_linux_needs_an_active_port_and_the_peer_tool(tmp_path, monkeypatch):
+    f = _mcdma_env(monkeypatch, "Linux", {}, ib_root=str(tmp_path / "ib"))
+    assert f.mcdma() == {"available": False, "reason": "no /sys/class/infiniband devices", "devices": []}
+    port = tmp_path / "ib" / "mlx5_0" / "ports" / "1"
+    port.mkdir(parents=True)
+    (port / "state").write_text("1: DOWN\n")
+    assert f.mcdma()["reason"] == "no ACTIVE infiniband port"
+    (port / "state").write_text("4: ACTIVE\n")
+    assert f.mcdma()["reason"].startswith("no MCDMA peer tool")
+    peer = tmp_path / "mcdma"
+    peer.write_text("#!/bin/sh\n")
+    peer.chmod(0o755)
+    f = _mcdma_env(monkeypatch, "Linux", {}, ib_root=str(tmp_path / "ib"), peer=str(peer))
+    assert f.mcdma() == {"available": True, "reason": "ACTIVE port and peer tool", "devices": ["mlx5_0/1"]}
+
+
+def test_probe_marks_mcdma_eligible_only_when_both_ends_report_it():
+    up = {"transports": {"mcdma": {"available": True, "reason": "rdma_ctl enabled", "devices": ["rdma_en2"]}}}
+    down = {"transports": {"mcdma": {"available": False, "reason": "rdma_ctl status: disabled", "devices": []}}}
+    assert probe.mcdma_pair(up, up) == {"eligible": True, "reason": "both ends report MCDMA"}
+    assert probe.mcdma_pair(up, down) == {"eligible": False, "reason": "b: rdma_ctl status: disabled"}
+    assert probe.mcdma_pair({}, up)["reason"] == "a: agent does not report transports"
+
+
+def test_chip_names_follow_the_soc_codes():
+    from omarchy_cluster import facts
+    assert facts.CHIP_NAMES["t6000"] == "Apple M1 Pro"
+    assert facts.CHIP_NAMES["t6002"].startswith("Apple M1 Ultra")

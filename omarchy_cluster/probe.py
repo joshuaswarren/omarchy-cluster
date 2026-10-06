@@ -194,6 +194,18 @@ def pin_pair(routes):
     return ranked[0] if ranked else None
 
 
+def mcdma_pair(fa, fb):
+    """Whether MCDMA could carry this pair: only when both ends report it available.
+    Recorded in links.json; route choice is unchanged (TCP) until MCDMA is measured."""
+    for side, f in (("a", fa), ("b", fb)):
+        m = (f or {}).get("transports", {}).get("mcdma")
+        if m is None:
+            return {"eligible": False, "reason": "%s: agent does not report transports" % side}
+        if not m.get("available"):
+            return {"eligible": False, "reason": "%s: %s" % (side, m.get("reason"))}
+    return {"eligible": True, "reason": "both ends report MCDMA"}
+
+
 def probe_all(nodes, seconds=3.0, names=None):
     """Probe every node pair; returns the links dict. Liveness for every route of every
     pair runs in parallel; bandwidth then runs one route at a time (parallel tests would
@@ -210,7 +222,8 @@ def probe_all(nodes, seconds=3.0, names=None):
                               "pinned": None})
                 continue
             routes = candidate_routes(fa, fb)
-            pairs.append({"a": a, "b": b, "routes": routes, "pinned": None})
+            pairs.append({"a": a, "b": b, "routes": routes, "pinned": None,
+                          "mcdma": mcdma_pair(fa, fb)})
             todo += routes
 
     def live(r):
