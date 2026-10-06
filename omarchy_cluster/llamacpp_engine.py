@@ -216,9 +216,11 @@ def generate(server_url, req):
     """Serve one gateway /generate request through llama-server, greedy."""
     max_tokens = int(req.get("max_tokens", 64))
     if req.get("messages"):
+        # reasoning_format none: a reasoning model's <think> text stays in content (as on
+        # the MLX path) instead of a separate field the gateway does not return.
         res = _post(server_url + "/v1/chat/completions",
                     {"messages": req["messages"], "max_tokens": max_tokens,
-                     "temperature": 0})
+                     "temperature": 0, "reasoning_format": "none"})
         text = res["choices"][0]["message"]["content"]
     else:
         res = _post(server_url + "/completion",

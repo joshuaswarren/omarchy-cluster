@@ -162,6 +162,20 @@ def test_generate_maps_llama_server_timings_to_the_gateway_contract():
         srv.shutdown()
 
 
+def test_generate_keeps_reasoning_text_in_the_reply():
+    """Reasoning models (Qwen3, GLM-5.3) put <think> text in reasoning_content by
+    default, so a 64-token reply came back as an empty string; ask llama-server to
+    leave it in content, the same text the MLX path returns."""
+    FakeLlamaServer.seen.clear()
+    srv, url = _serve(FakeLlamaServer)
+    try:
+        lce.generate(url, {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 4})
+    finally:
+        srv.shutdown()
+    path, body = FakeLlamaServer.seen[-1]
+    assert path == "/v1/chat/completions" and body["reasoning_format"] == "none"
+
+
 def test_engine_reports_llama_server_failure_to_the_gateway():
     lce.EngineHandler.server_url = "http://127.0.0.1:1"
     srv, url = _serve(lce.EngineHandler)
