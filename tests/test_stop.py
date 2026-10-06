@@ -230,3 +230,29 @@ def test_two_node_script_rejects_arguments():
                             capture_output=True, text=True)
     assert result.returncode == 2
     assert "usage:" in result.stderr
+
+
+def test_rank_stop_kills_rank_that_left_the_wrapper_process_group(tmp_path):
+    """gpu-turn's GNU timeout setpgid()s the rank away from the wrapper's group;
+    rank_stop must still kill it (2026-10-06: orphaned M2 rank held the GPU)."""
+    from omarchy_cluster import agent
+    pidfile = tmp_path / "rank.pid"
+    rank = ("import os, time; os.setpgid(0, 0); "
+            "open(%r, 'w').write(str(os.getpid())); time.sleep(60)" % str(pidfile))
+    wrapper = subprocess.Popen(
+        [sys.executable, "-c", "import subprocess, sys; subprocess.call([sys.executable, '-c', %r])" % rank],
+        start_new_session=True)
+    for _ in range(100):
+        if pidfile.exists() and pidfile.read_text():
+            break
+        time.sleep(0.05)
+    rank_pid = int(pidfile.read_text())
+    assert os.getpgid(rank_pid) != wrapper.pid
+    agent.rank_stop({"pid": wrapper.pid})
+    time.sleep(0.2)
+    try:
+        os.kill(rank_pid, 0)
+        alive = open("/proc/%d/stat" % rank_pid).read().split()[2] != "Z"
+    except (ProcessLookupError, FileNotFoundError):
+        alive = False
+    assert not alive

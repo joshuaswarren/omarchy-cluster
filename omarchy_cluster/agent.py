@@ -265,30 +265,51 @@ def rank_start(req):
     return {"pid": pid, "log": log}
 
 
+def _session_pids(sid):
+    """Live pids in session `sid`. rank_start setsid()s the wrapper, but GNU
+    timeout under gpu-turn moves itself and the rank into their own process
+    group, so a killpg(wrapper) leaves the rank running (and holding the GPU)."""
+    try:
+        os.waitpid(sid, os.WNOHANG)  # reap our own wrapper so it is not counted as a zombie
+    except ChildProcessError:
+        pass
+    out = subprocess.run(["ps", "-A", "-o", "pid="], capture_output=True, text=True).stdout
+    pids = []
+    for value in out.split():
+        try:
+            if os.getsid(int(value)) == sid:
+                pids.append(int(value))
+        except (ValueError, OSError):
+            pass
+    return pids
+
+
+def _signal_all(pids, sig):
+    for p in pids:
+        try:
+            os.kill(p, sig)
+        except OSError:
+            pass
+
+
 def rank_stop(req):
     import signal
     import time as _time
     pid = int(req["pid"])
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
+    pids = _session_pids(pid)
+    if not pids:
         return {"stopped": pid, "escalated": False, "ports_swept": []}
-    except OSError as e:
-        return {"stopped": pid, "error": str(e)}
+    _signal_all(pids, signal.SIGTERM)
     # A rank stuck in a distributed collective defers SIGTERM forever; escalate.
     escalated = False
     for _ in range(6):
-        try:
-            os.killpg(pid, 0)
-        except OSError:
+        pids = _session_pids(pid)
+        if not pids:
             break
         _time.sleep(0.5)
     else:
         escalated = True
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except OSError:
-            pass
+        _signal_all(pids, signal.SIGKILL)
     ports = []
     for value in req.get("ports", []):
         try:
