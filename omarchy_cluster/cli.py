@@ -78,12 +78,20 @@ _PLIST = """\
 
 
 def cmd_install_agent(args):
+    import tempfile
+    py_real = os.path.realpath(sys.executable or "")
+    for tmp in {"/tmp", os.path.realpath(tempfile.gettempdir())}:
+        if py_real.startswith(tmp.rstrip("/") + "/"):
+            sys.exit("refusing: %s is under the temporary directory %s; the agent's boot unit "
+                     "would break after a reboot. Install into a persistent venv." % (sys.executable, tmp))
     home = os.path.expanduser("~")
     src = os.path.join(home, ".local/share/omarchy-cluster/src")
     pkg_dst = os.path.join(src, "omarchy_cluster")
-    shutil.rmtree(pkg_dst, ignore_errors=True)
-    os.makedirs(src, exist_ok=True)
-    shutil.copytree(os.path.join(_agent_src_dir(), "omarchy_cluster"), pkg_dst)
+    pkg_src = os.path.join(_agent_src_dir(), "omarchy_cluster")
+    if os.path.realpath(pkg_src) != os.path.realpath(pkg_dst):  # never delete the tree we copy from
+        shutil.rmtree(pkg_dst, ignore_errors=True)
+        os.makedirs(src, exist_ok=True)
+        shutil.copytree(pkg_src, pkg_dst)
 
     # shared cluster token: agents only accept rank control from token holders
     tokdir = os.path.expanduser("~/.config/omarchy-cluster")

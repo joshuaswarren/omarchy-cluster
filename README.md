@@ -106,12 +106,15 @@ layers.
 
 ## Install
 
-One command per node, into the Python that has MLX.
+One command per node. Use a venv that persists: the agent starts from it at
+every boot, so a venv under /tmp breaks after a reboot (`install-agent`
+refuses one).
 
-On Omarchy, into the omarchy-mlx environment:
+On Omarchy. The agent is plain Python; ranks run in omarchy-mlx's Python,
+whether omarchy-mlx is a user or a package install:
 
 ```sh
-~/.local/share/mlx-omarchy/venv/bin/pip install git+https://github.com/joshuaswarren/omarchy-cluster.git && ~/.local/share/mlx-omarchy/venv/bin/omarchy-cluster install-agent
+python3 -m venv ~/.local/share/omarchy-cluster/venv && ~/.local/share/omarchy-cluster/venv/bin/pip install git+https://github.com/joshuaswarren/omarchy-cluster.git && ~/.local/share/omarchy-cluster/venv/bin/omarchy-cluster install-agent
 ```
 
 On macOS:

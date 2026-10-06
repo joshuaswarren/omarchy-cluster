@@ -360,3 +360,21 @@ def test_gateway_returns_engine_error_as_502_not_empty_reply():
     finally:
         eng.shutdown()
         gw.shutdown()
+
+def test_install_agent_refuses_a_temporary_interpreter(tmp_path, monkeypatch):
+    """install-agent writes sys.executable into the boot unit. A venv under the temp
+    dir is gone after a reboot and the agent then fails forever (status 203/EXEC)."""
+    import tempfile
+
+    def touched(*a, **k):
+        raise AssertionError("install-agent changed files before refusing")
+
+    monkeypatch.setenv("HOME", str(tmp_path))  # never the real ~/.local/share/omarchy-cluster
+    monkeypatch.setattr(cli.shutil, "rmtree", touched)
+    monkeypatch.setattr(cli.shutil, "copytree", touched)
+    monkeypatch.setattr(cli.sys, "executable", os.path.join(tempfile.gettempdir(), "venv", "bin", "python"))
+    try:
+        cli.cmd_install_agent(argparse.Namespace(token_file=None, port=8025))
+        raise AssertionError("expected SystemExit")
+    except SystemExit as e:
+        assert "temporary" in str(e)
