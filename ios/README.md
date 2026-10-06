@@ -86,6 +86,21 @@ Two flags decide the speed:
 Keep the phone unlocked with the app in front. Keep the phone's share under about 2.2 GB:
 4.4 GB of layers on an 8 GB phone pushed iOS into system-wide memory pressure.
 
+usbmuxd 1.1.1 (the 2020 release that Arch packages) aborted once under load with glibc
+`corrupted size vs. prev_size` after a client disconnect, and the phone vanished until a restart.
+Upstream master (tested: 1.1.1-72-g3ded00c) contains later use-after-free fixes. Build it from
+https://github.com/libimobiledevice/usbmuxd and point the unit at it with a drop-in that also
+restarts it:
+
+```ini
+# /etc/systemd/system/usbmuxd.service.d/restart.conf
+[Service]
+Restart=always
+RestartSec=2
+ExecStart=
+ExecStart=/usr/local/bin/usbmuxd --user usbmux --systemd
+```
+
 ## Measured
 
 Qwen3-1.7B Q4_K_M, M1 Max laptop on Omarchy Linux + iPhone 15 Pro Max on USB, lm_head on the
