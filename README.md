@@ -49,7 +49,13 @@ node-loss handling).
   `[["ip:52100"], ...]`, `MLX_RANK` selects). Starts the OpenAI gateway
   on :8020 with the engine on rank 0. GPU ranks are wrapped in
   `~/bin/gpu-turn` (M2 shared GPU is FCFS, 30 min max per turn).
-- `omarchy-cluster stop` — stops the detached gateway, terminates each rank process group on its agent, and sweeps listeners on the gateway, engine, and rank ports.
+  Ranks run mlx-lm's pipeline: rank 0 runs the last layers and samples;
+  rank 1 long-polls rank 0's engine for each job's token ids.
+  `--split N0,N1` sets decoder layers per rank (rank order, default even);
+  put fewer layers on the slower rank. A request with `"timing": true`
+  returns `timings.step_ms` (per decode step: ring wait vs compute) and
+  `poll_ms`; rank 1 logs its own `step_ms`.
+- `omarchy-cluster stop` — stops the detached gateway, terminates every process in each rank's session on its agent, and sweeps listeners on the gateway, engine, and rank ports.
 - `omarchy-cluster hub` — heartbeat hub on :8030; `agent --hub URL` POSTs
   the 1 Hz heartbeat. `status --hub URL` shows per-node up/down state.
 - `omarchy-cluster status` — node table (OS, chip, memory, backend, up) +

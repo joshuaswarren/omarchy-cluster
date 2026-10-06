@@ -51,7 +51,8 @@ class Gateway(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError) as e:
             return self._json(400, {"error": str(e)})
         payload = {"prompt": req.get("prompt"), "messages": req.get("messages"),
-                   "max_tokens": int(req.get("max_tokens", 64)), "greedy": True}
+                   "max_tokens": int(req.get("max_tokens", 64)), "greedy": True,
+                   "timing": bool(req.get("timing"))}
         if req.get("temperature", 0) not in (0, None):
             return self._json(400, {"error": "gateway serves temperature 0 only"})
         data = json.dumps(payload).encode()
@@ -71,7 +72,8 @@ class Gateway(BaseHTTPRequestHandler):
                       "completion_tokens": res["completion_tokens"],
                       "total_tokens": res["prompt_tokens"] + res["completion_tokens"]},
             "timings": {"prefill_ms": res["prefill_ms"], "decode_ms": res["decode_ms"],
-                        "tokens_per_s": res["tokps"]},
+                        "tokens_per_s": res["tokps"],
+                        **{k: res[k] for k in ("poll_ms", "step_ms") if k in res}},
         }
         if self.path == "/v1/chat/completions":
             return self._json(200, {**common, "object": "chat.completion", "choices": [{
