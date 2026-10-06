@@ -216,6 +216,41 @@ real slowdown).
   no per-user auth.
 - A node slowed by other GPU work is detected and reported, not preempted.
 
+## An iPhone as a node (experiment, llama.cpp RPC)
+
+This is not part of the MLX pipeline above. It uses llama.cpp's RPC backend.
+
+An iPhone 15 Pro Max (A17 Pro, 8 GB, iOS 27) ran llama.cpp's `rpc-server` as an app.
+An M1 Max laptop on Omarchy Linux sent model layers to it over USB. The app was built,
+signed and installed from Linux, with no Mac and no Xcode. The phone GPU runs through Metal;
+the shader source ships inside the app and the phone compiles it at start.
+
+The phone is a capacity node, not a speedup. Each phone layer costs about 0.8 ms per token,
+against about 0.5 ms on the laptop CPU, so no split beats the laptop alone for a model the
+laptop holds. Prefill is the phone's strength: with all 28 layers of Qwen3-1.7B on the phone
+GPU, it processes a 128-token prompt at 345 tok/s.
+
+Qwen3-1.7B Q4_K_M, decode of 64 tokens, lm_head kept on the laptop:
+
+| Setup | Decode tok/s |
+|---|---:|
+| Laptop alone (CPU) | 71.1 |
+| Laptop + phone GPU, 7 of 28 layers on the phone | 35.5 |
+| Laptop + phone GPU, 14 layers | 31.6 |
+| Laptop + phone GPU, 14 layers, `OMP_WAIT_POLICY=ACTIVE` on the laptop (separate run) | 45.0 |
+| Laptop + phone GPU, 28 layers | 21.1 |
+| Laptop + phone CPU, 14 layers | 30.0 |
+
+With the phone on its CPU, greedy output is byte-identical to the laptop alone at 7, 14 and
+28 phone layers. On the phone GPU, output matches at 7 layers; at full offload the mean KL
+divergence against the laptop is 0.008 and the top token agrees 96 percent of the time.
+
+Limits: about 2.2 GB of layers ran well on the 8 GB phone; 4.4 GB pushed iOS into memory
+pressure. Speculative decoding with the draft model on the phone was slower (6.6 tok/s) than
+with the draft on the laptop (25.1 tok/s).
+
+Details, sources and raw data: `receipts/2026-10-06-iphone-rpc-node/`.
+
 ## Development
 
 ```sh
