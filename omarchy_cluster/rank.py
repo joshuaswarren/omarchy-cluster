@@ -3,7 +3,7 @@
 Both ranks run the SAME generation loop, coordinated by mlx-lm's
 PipelineMixin collectives. No hand-rolled ring hop.
 
-rank 0 (mac-a) hosts the engine HTTP API and publishes each job's
+rank 0 hosts the engine HTTP API and publishes each job's
 prompt token ids; rank 1 long-polls for them and runs the same
 stream_generate on the same tokens. Only rank 0 samples; it all_gathers
 each token so rank 1 feeds that exact token to its layers (_share_token).
@@ -107,8 +107,9 @@ def _layer_ms(model, n=4, steps=8):
 def _fastest_layer_ms(key, ms, path="~/.local/state/omarchy-cluster/layer-ms.json"):
     """The fastest positive ms/layer this node has measured for `key`, this
     start included. Other GPU work on a node can last through a whole
-    calibration (ClusterRun5: mac-a measured 9.7 ms/layer, above the M2's
-    8.0, and the split flipped to 1,26); the split must follow capability.
+    calibration (one node measured 9.7 ms/layer under a desktop GPU burst,
+    above its peer's 8.0, and the split flipped toward the peer); the split
+    must follow capability.
     ponytail: never forgets a faster past; delete the file after a slowdown."""
     path = os.path.expanduser(path)
     try:
@@ -293,7 +294,7 @@ class _Watch:
     """Trips once when `n` consecutive samples exceed `factor` x the reference
     (the lower of `expected`, from calibration or None, and the fastest sample
     seen so far) and the reference by at least `floor_ms`: a sub-ms recv wait
-    tripling is noise, not contention (mac-a loopback: 0.07 -> 0.33 ms)."""
+    tripling is noise, not contention (two-rank loopback: 0.07 -> 0.33 ms)."""
 
     def __init__(self, expected=None, factor=3.0, n=4, floor_ms=5.0):
         self.ref, self.factor, self.n, self.floor_ms, self.run = expected, factor, n, floor_ms, 0
@@ -364,9 +365,9 @@ class Engine:
             self._jobs.task_done()
 
     def wait_ready(self):
-        """Block until boot ends. No timeout: rank 1 can sit in its node's
-        gpu-turn queue far past 15 min (the old 900 s limit killed rank 0 at
-        04:12Z and rank 1 then lost the ring); the runner's ENGINE_WAIT_S or
+        """Block until boot ends. No timeout: a rank can sit in its node's
+        --gpu-turn queue far past 15 min (an earlier 900 s boot limit killed
+        rank 0 while rank 1 then lost the ring); the launcher's wait budget or
         `omarchy-cluster stop` bounds the wait."""
         self.ready.wait()
         if self.model is None:

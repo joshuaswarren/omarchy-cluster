@@ -28,11 +28,11 @@ def route(a_if, b_if, a2b=None, b2a=None, tcp=0.3):
     }
 
 
-WLAN = ifc("wlan0", "10.10.3.1", wireless=True)
-ETH_A = ifc("en0", "10.10.10.15", speed=10000)
-ETH_B = ifc("eno1", "10.10.10.218", speed=2500)
-TS_A = ifc("utun7", "100.64.1.64", prefix=10)
-TS_B = ifc("tailscale0", "100.64.1.36", prefix=10)
+WLAN = ifc("wlan0", "10.10.1.1", wireless=True)
+ETH_A = ifc("en0", "10.10.2.1", speed=10000)
+ETH_B = ifc("eno1", "10.10.2.2", speed=2500)
+TS_A = ifc("utun7", "100.64.1.1", prefix=10)
+TS_B = ifc("tailscale0", "100.64.1.2", prefix=10)
 
 
 def test_decode_eligibility():
@@ -52,16 +52,16 @@ def test_pin_prefers_eligible_over_faster_wifi():
 
 
 def test_pin_fastest_then_rtt_tiebreak():
-    slow = route(ETH_A, ifc("eno2", "10.10.11.2"), a2b=1.0, b2a=1.0, tcp=0.5)
-    fast = route(ETH_A, ifc("tb0", "169.254.200.2"), a2b=25.0, b2a=25.0, tcp=5.0)
+    slow = route(ETH_A, ifc("eno2", "10.10.3.2"), a2b=1.0, b2a=1.0, tcp=0.5)
+    fast = route(ETH_A, ifc("tb0", "169.254.10.2"), a2b=25.0, b2a=25.0, tcp=5.0)
     assert probe.pin_pair([slow, fast])["b_iface"] == "tb0"
-    r1 = route(ETH_A, ifc("eno1", "10.10.10.2"), a2b=2.0, b2a=2.0, tcp=0.9)
-    r2 = route(ETH_A, ifc("eno2", "10.10.12.2"), a2b=2.0, b2a=2.0, tcp=0.2)
+    r1 = route(ETH_A, ifc("eno1", "10.10.2.2"), a2b=2.0, b2a=2.0, tcp=0.9)
+    r2 = route(ETH_A, ifc("eno2", "10.10.4.2"), a2b=2.0, b2a=2.0, tcp=0.2)
     assert probe.pin_pair([r1, r2])["b_iface"] == "eno2"
 
 
 def test_failover_rank_order():
-    first = route(ETH_A, ifc("tb0", "169.254.200.2"), a2b=25.0, b2a=25.0)
+    first = route(ETH_A, ifc("tb0", "169.254.10.2"), a2b=25.0, b2a=25.0)
     second = route(ETH_A, ETH_B, a2b=2.3, b2a=2.35)
     ranked = probe.rank_routes([first, second])
     assert [r["b_iface"] for r in ranked] == ["tb0", "eno1"]  # next measured fallback
@@ -69,7 +69,7 @@ def test_failover_rank_order():
 
 
 def test_unmeasured_routes_never_pinned():
-    dead = route(ETH_A, ifc("tb0", "169.254.200.2"), a2b=None, b2a=None)
+    dead = route(ETH_A, ifc("tb0", "169.254.10.2"), a2b=None, b2a=None)
     live = route(ETH_A, ETH_B, a2b=2.3, b2a=2.35)
     assert probe.pin_pair([dead, live])["b_iface"] == "eno1"
 
@@ -81,21 +81,21 @@ def test_bottleneck_metric_uses_min_direction():
 
 def test_candidate_routes_dedupe():
     a = node("a", [ETH_A, TS_A])
-    b = node("b", [ETH_B, TS_B, ifc("eno2", "10.10.10.218")])
+    b = node("b", [ETH_B, TS_B, ifc("eno2", "10.10.2.2")])
     routes = probe.candidate_routes(a, b)
     keys = [(r["a_ip"], r["b_ip"]) for r in routes]
-    assert len(keys) == len(set(keys)) == 4  # 2 a-ips x 3 b-ips - 2 duplicate 218
+    assert len(keys) == len(set(keys)) == 4  # 2 a-ips x 3 b-ips - 2 duplicate routes
 
 
 def test_hostfile_parse_and_merge(tmp_path):
     hf = tmp_path / "hosts"
-    hf.write_text("# comment\nmac-a=10.10.10.99\nlinux-b\n")
+    hf.write_text("# comment\nmac-a=10.10.2.9\nlinux-b\n")
     overrides = read_hostfile(str(hf))
-    assert overrides == {"mac-a": "10.10.10.99", "linux-b": "linux-b"}
+    assert overrides == {"mac-a": "10.10.2.9", "linux-b": "linux-b"}
     found = {"mac-a": {"name": "mac-a", "host": "mac-a.local", "ip": "1.2.3.4",
-                           "port": 8025}}
+                       "port": 8025}}
     nodes = merge_discovered(found, overrides)
-    assert nodes["mac-a"]["ip"] == "10.10.10.99"
+    assert nodes["mac-a"]["ip"] == "10.10.2.9"
     assert nodes["mac-a"]["source"] == "hostfile"  # override wins
     assert nodes["linux-b"]["ip"] == "linux-b"  # added, unresolved until fetch
     assert nodes["linux-b"]["source"] == "hostfile"

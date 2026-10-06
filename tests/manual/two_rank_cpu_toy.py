@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Two-rank MLX ring test: a single hop carrying a 4-token float16 activation
-between two processes on the same machine (mac-a, stock MLX 0.32.2 + nix-venv
-MLX 0.32.2). Replicates the omarchy-cluster hand-rolled pattern:
+between two processes on the same machine. Replicates the omarchy-cluster
+hand-rolled pattern:
 
   rank0: embed(ids) -> stage -> mx.eval(h) -> send(h) -> recv(token)
   rank1: recv(h) -> stage -> head -> send(token)
@@ -42,7 +42,7 @@ def main():
     layers = args.layers
     peer = 1 - args.rank
 
-    # no model — just a synthetic 2-layer "stage" (matmul + small non-linearity)
+    # no model: just a synthetic 2-layer "stage" (matmul + small non-linearity)
     rng = mx.random.key(42)
     for li in range(layers):
         w = (mx.random.normal(shape=(hidden, hidden), key=rng) * 0.1).astype(mx.float16)

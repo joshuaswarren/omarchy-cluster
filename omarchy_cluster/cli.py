@@ -519,7 +519,7 @@ def main(argv=None):
     p.add_argument("--ctx", type=int, default=2048)
     p.add_argument("--links", default=None)
     p.add_argument("--no-decode", action="append", default=[],
-                   help="node name never used as a decode rank (e.g. linux-d)")
+                   help="node name never used as a decode rank (e.g. a node shared with other GPU work)")
     p.add_argument("--stages", type=int, default=None,
                    help="force an exact pipeline stage count")
     p.add_argument("--json", action="store_true")
@@ -538,7 +538,8 @@ def main(argv=None):
     p.add_argument("--rank-pythonpath", default=None,
                    help="extra PYTHONPATH entry for ranks (e.g. mlx-lm pkg dir)")
     p.add_argument("--gpu-turn", type=int, default=0, metavar="MINUTES",
-                   help="wrap Linux ranks in ~/bin/gpu-turn for the shared M2 GPU")
+                   help="wrap Linux ranks in ~/bin/gpu-turn, an optional site-specific "
+                        "GPU queue wrapper (off by default)")
     p.add_argument("--split", default=None, metavar="N0,N1",
                    help="decoder layers per rank in rank order (rank 0 runs the last "
                         "layers); default: chosen at rank start from measured ms/layer")

@@ -111,8 +111,8 @@ def test_pipeline_split_rejects_counts_that_drop_layers():
 
 
 def test_fastest_layer_ms_keeps_a_contention_burst_from_flipping_the_split(tmp_path):
-    """ClusterRun5 r18: mac-a measured 9.7 ms/layer during other GPU work,
-    above the M2's 8.0, and the split flipped to 1,26."""
+    """One node measured 9.7 ms/layer during other GPU work, above its
+    peer's 8.0, and the split flipped to 1,26."""
     path = str(tmp_path / "layer-ms.json")
     assert rank._fastest_layer_ms("mac m", 0.6, path) == 0.6
     assert rank._fastest_layer_ms("mac m", 9.7, path) == 0.6  # burst: keep the capability
@@ -131,9 +131,9 @@ def _forward(t0, wait_ms, own_ms):
 
 
 def test_watch_flags_the_contended_rank_after_n_slow_sampled_steps(monkeypatch):
-    """mac-a + linux-b at 26,1 (calibrated 0.5 and 8.0 ms/layer):
-    a Claude.app GPU burst took rank 0 from ~17 to ~220 ms per step while
-    rank 1 stayed at ~4 ms (ClusterRun5 gpuobs3)."""
+    """Two nodes at 26,1 (calibrated 0.5 and 8.0 ms/layer): a desktop app's
+    GPU burst took rank 0 from ~17 to ~220 ms per step while rank 1 stayed
+    at ~4 ms."""
     monkeypatch.setattr(rank.Engine, "_boot", lambda self: None)
     engine = rank.Engine("model", 2)
     engine._start_watch([26, 1], [0.5, 8.0])
@@ -157,7 +157,7 @@ def test_watch_flags_the_contended_rank_after_n_slow_sampled_steps(monkeypatch):
 
 
 def test_watch_with_explicit_split_flags_a_burst_present_from_the_start(monkeypatch, tmp_path):
-    """--split 26,1 started inside contention (mac-a loopback, synthetic
+    """--split 26,1 started inside contention (two-rank loopback, synthetic
     GPU contender): the fastest step seen was itself slow, so nothing tripped.
     Rank 0's own reference now comes from its node's fastest-seen ms/layer."""
     monkeypatch.setattr(rank.Engine, "_boot", lambda self: None)
