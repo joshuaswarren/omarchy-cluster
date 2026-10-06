@@ -412,13 +412,54 @@ def _sweep_listening_port(port):
         out = subprocess.check_output(
             ["lsof", "-tiTCP:%d" % int(port), "-sTCP:LISTEN"],
             stderr=subprocess.DEVNULL, text=True)
+        pids = out.splitlines()
     except (OSError, subprocess.CalledProcessError):
-        return
-    for value in out.splitlines():
+        pids = _listener_pids_proc(port)  # no lsof (Arch base): parse /proc
+    for value in pids:
         try:
             os.kill(int(value), signal.SIGTERM)
         except (ValueError, ProcessLookupError, PermissionError):
             pass
+
+
+def _listener_pids_proc(port):
+    """PIDs with a socket LISTENing on `port`, via /proc/net/tcp{,6} plus
+    /proc/*/fd. Linux only; on macOS lsof is always present."""
+    hexport = "%04X" % int(port)
+    inodes = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table) as f:
+                rows = f.read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            fields = row.split()
+            # sl local_address rem_address st ... inode
+            if len(fields) > 9 and fields[3] == "0A" and \
+                    fields[1].rsplit(":", 1)[1] == hexport:
+                inodes.add(fields[9])
+    pids = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        fddir = "/proc/%s/fd" % entry
+        try:
+            fds = os.listdir(fddir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                target = os.readlink(os.path.join(fddir, fd))
+            except OSError:
+                continue
+            if target.startswith("socket:[") and \
+                    target[8:-1] in inodes:
+                pids.append(int(entry))
+                break
+    return pids
+
+
 def cmd_stop(args):
     path = os.path.expanduser("~/.local/state/omarchy-cluster/serve.json")
     if not os.path.exists(path):
