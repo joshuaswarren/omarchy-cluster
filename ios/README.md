@@ -110,5 +110,8 @@ token agrees 96 percent of the time.
 Speculative decoding with a Qwen3-0.6B draft on the phone and a Qwen3-8B target on the laptop
 ran at 6.6 tok/s, against 25.1 tok/s with the draft on the laptop.
 
-Full tables, traces and raw logs: `receipts/2026-10-06-iphone-rpc-node/`. Those numbers came
-from the iOS 17 deployment target build in that receipt; `ios/build.sh` targets iOS 18.0.
+Full tables, traces and raw logs: `receipts/2026-10-06-iphone-rpc-node/`. Those tables came
+from the iOS 17 deployment target build in that receipt. The iOS 18 build from `ios/build.sh`
+was checked end to end on the same phone: `xtool install`, then
+`omarchy-cluster serve Qwen3-1.7B-Q4_K_M.gguf --engine llamacpp --ios-bundle ... --rpc-layers 28`
+decoded 64 tokens through the gateway at 33.8 tok/s.
