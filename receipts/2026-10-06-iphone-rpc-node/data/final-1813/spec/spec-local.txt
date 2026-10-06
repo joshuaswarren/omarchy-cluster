@@ -1,0 +1,22 @@
+
+
+Write a Python function that parses an ISO 8601 date string and returns a datetime. Include docstring and tests. Also, include a note about the time zone.
+
+Here's a Python function that parses an ISO 8601 date string and returns a datetime object. The function includes a docstring, tests, and a note about time zones:
+
+```python
+from datetime import datetime
+import pytz
+
+def parse_iso8601_date(iso_date_str):
+    """
+    Parse an ISO 8601 date string into a datetime object.
+    
+    Args:
+        iso_date_str (str): A string representing a date in ISO 8601 format.
+                            Supported formats include:
+                            - 'YYYY-MM-DD'
+                            - 'YYYY
+
+
+

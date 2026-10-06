@@ -1,0 +1,10 @@
+Write a Python function that parses an ISO 8601 date string and returns a datetime. Include docstring and tests. Also, include a note about the time zone handling. The function should be called `parse_iso8601`. The function should be able to handle the following formats:
+
+- "YYYY-MM-DD"
+- "YYYY-MM-DDTHH:MM:SS"
+- "YYYY-MM-DDTHH:MM:SS.ssssss"
+- "YYYY-MM-DDTHH:MM:SS.ssssssZ"
+- "YYYY-MM-DDTHH:MM:SS.ssssss+HH:MM"
+- "YYYY-MM-DDTHH:MM:SS.ssssss+HH:MM:SS"
+- "YYYY-MM
+

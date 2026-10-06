@@ -1,0 +1,26 @@
+0.00.384.013 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.01.968.521 I cmn          init: llama threadpool init, n_threads = 8
+0.02.055.282 I common_speculative_init_result: loading draft model '/home/user/models/Qwen3-0.6B-Q8_0.gguf'
+0.02.137.648 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.08.082.254 I encoded   26 tokens in    0.365 seconds, speed:   71.262 t/s
+0.08.082.255 I decoded  132 tokens in    5.255 seconds, speed:   25.119 t/s
+0.08.082.255 I 
+0.08.082.255 I n_draft   = 3
+0.08.082.255 I n_predict = 132
+0.08.082.255 I n_drafted = 135
+0.08.082.255 I n_accept  = 87
+0.08.082.256 I accept    = 64.444%
+0.08.082.256 I 
+0.08.082.256 I draft:
+
+0.08.082.277 I 
+0.08.082.277 I target:
+
+0.08.082.280 I common_perf_print:    sampling time =      20.17 ms
+0.08.082.280 I common_perf_print:    samplers time =       8.09 ms /   132 tokens
+0.08.082.282 I common_perf_print:        load time =    1715.69 ms
+0.08.082.283 I common_perf_print: prompt eval time =    4392.65 ms /   207 tokens (   21.22 ms per token,    47.12 tokens per second)
+0.08.082.283 I common_perf_print:        eval time =       0.00 ms /     1 runs   (    0.00 ms per token,      inf tokens per second)
+0.08.082.284 I common_perf_print:       total time =    6027.02 ms /   208 tokens
+0.08.082.284 I common_perf_print: unaccounted time =    1614.21 ms /  26.8 %      (total - sampling - prompt eval - eval) / (total)
+0.08.082.284 I common_perf_print:    graphs reused =         45
