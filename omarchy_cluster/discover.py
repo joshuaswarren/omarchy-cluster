@@ -142,7 +142,7 @@ def discover_nodes(mdns_timeout=4.0, hostfile=HOSTFILE):
                              "ips": ["127.0.0.1"], "port": DEFAULT_PORT, "source": "local"})
     for node in nodes.values():
         node["facts"] = node["error"] = None
-        best = None  # (score, ip, facts) — prefer the fastest interface that answers
+        best = None  # (score, ip, facts) - prefer the fastest interface that answers
         for ip in node.get("ips") or [node.get("ip")]:
             if not ip:
                 continue

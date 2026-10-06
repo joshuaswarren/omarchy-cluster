@@ -2,7 +2,7 @@
 
 Proxies /v1/chat/completions and /v1/completions to the rank-0 engine and
 answers /health for router-style checks. Not registered in LiteLLM by this
-command — the router side happens under the router rules.
+command; the router side happens under the router rules.
 """
 from __future__ import annotations
 

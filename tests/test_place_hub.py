@@ -25,11 +25,11 @@ INFO = {"ref": "m", "path": "/x", "layers": 28, "hidden": 2048, "kv_heads": 8,
 
 
 def test_pipeline_plan_orders_decode_tail_and_caps_stages_by_free_memory():
-    nodes = {"MacStudio": facts(100, 128), "jw14m2-linux": facts(80, 94)}
-    plan = planner.plan_placement(nodes, links_with("MacStudio", "jw14m2-linux"), INFO)
+    nodes = {"big-desktop": facts(100, 128), "laptop": facts(80, 94)}
+    plan = planner.plan_placement(nodes, links_with("big-desktop", "laptop"), INFO)
     assert plan["mode"] == "pipeline"
-    assert plan["decode_tail"] == "MacStudio"  # biggest memory takes the tail
-    assert [s["node"] for s in plan["stages"]] == ["jw14m2-linux", "MacStudio"]
+    assert plan["decode_tail"] == "big-desktop"  # biggest memory takes the tail
+    assert [s["node"] for s in plan["stages"]] == ["laptop", "big-desktop"]
     # each stage may take every layer but one (the other rank keeps one)
     assert [s["max_layers"] for s in plan["stages"]] == [27, 27]
     assert plan["boundaries"][0]["gbps"] == 2.2
@@ -46,7 +46,7 @@ def test_plan_infeasible_when_stages_together_cannot_hold_the_model():
 
 
 def test_choose_split_puts_layers_on_the_cheapest_rank_up_to_its_cap():
-    # measured: macstudio 1.0 ms/layer, jw14m2-linux 8.2 ms/layer (ClusterRun5)
+    # measured: desktop 1.0 ms/layer, laptop 8.2 ms/layer
     assert planner.choose_split([1.0, 8.2], [120, 200], 27) == [26, 1]
     assert planner.choose_split([8.2, 1.0], [120, 200], 27) == [1, 26]
     assert planner.choose_split([1.0, 8.2], [20, 200], 27) == [20, 7]  # memory cap binds
@@ -63,12 +63,12 @@ def test_max_layers_counts_weights_and_kv_per_layer():
 
 
 def test_no_decode_node_can_prefill_but_cannot_be_decode_tail():
-    nodes = {"MacStudio": facts(100, 128), "jw16-linux": facts(80, 94)}
-    plan = planner.plan_placement(nodes, links_with("MacStudio", "jw16-linux"), INFO,
-                                  no_decode=["MacStudio"], max_stages=2)
+    nodes = {"big-desktop": facts(100, 128), "laptop": facts(80, 94)}
+    plan = planner.plan_placement(nodes, links_with("big-desktop", "laptop"), INFO,
+                                  no_decode=["big-desktop"], max_stages=2)
     assert plan["mode"] == "pipeline"
-    assert [stage["node"] for stage in plan["stages"]] == ["MacStudio", "jw16-linux"]
-    assert plan["decode_tail"] == "jw16-linux"
+    assert [stage["node"] for stage in plan["stages"]] == ["big-desktop", "laptop"]
+    assert plan["decode_tail"] == "laptop"
 
 
 def test_infeasible_when_model_does_not_fit():

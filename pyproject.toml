@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "omarchy-cluster"
 version = "0.1.0"
-description = "One local model across every machine in the homelab: agents, discovery, link probe, route table."
+description = "Split one local MLX model across Apple Silicon Macs (macOS) and Omarchy Linux machines over LAN; OpenAI-compatible gateway."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
