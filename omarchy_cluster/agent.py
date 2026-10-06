@@ -319,20 +319,68 @@ def rank_stop(req):
     for value in req.get("ports", []):
         try:
             port = int(value)
-            if not 1 <= port <= 65535:
-                continue
-            listeners = subprocess.check_output(
-                ["lsof", "-tiTCP:%d" % port, "-sTCP:LISTEN"],
-                stderr=subprocess.DEVNULL, text=True)
-        except (ValueError, OSError, subprocess.CalledProcessError):
+        except ValueError:
             continue
-        for listener in listeners.splitlines():
+        if not 1 <= port <= 65535:
+            continue
+        for listener in listener_pids(port):
             try:
-                os.kill(int(listener), signal.SIGTERM)
-            except (ValueError, ProcessLookupError, PermissionError):
+                os.kill(listener, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
                 pass
         ports.append(port)
     return {"stopped": pid, "escalated": escalated, "ports_swept": ports}
+
+
+def listener_pids(port):
+    """PIDs LISTENing on TCP `port`: lsof when installed (exit 1 means none
+    listen), /proc on Linux without lsof (Arch base), else none."""
+    try:
+        out = subprocess.check_output(
+            ["lsof", "-tiTCP:%d" % int(port), "-sTCP:LISTEN"],
+            stderr=subprocess.DEVNULL, text=True)
+    except subprocess.CalledProcessError:
+        return []
+    except OSError:
+        return _listener_pids_proc(port) if os.path.isdir("/proc") else []
+    return [int(p) for p in out.split()]
+
+
+def _listener_pids_proc(port):
+    """PIDs with a socket LISTENing on `port`, via /proc/net/tcp{,6} plus
+    /proc/*/fd."""
+    hexport = "%04X" % int(port)
+    inodes = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table) as f:
+                rows = f.read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            fields = row.split()
+            # sl local_address rem_address st ... inode
+            if len(fields) > 9 and fields[3] == "0A" and \
+                    fields[1].rsplit(":", 1)[1] == hexport:
+                inodes.add(fields[9])
+    pids = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        fddir = "/proc/%s/fd" % entry
+        try:
+            fds = os.listdir(fddir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                target = os.readlink(os.path.join(fddir, fd))
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target[8:-1] in inodes:
+                pids.append(int(entry))
+                break
+    return pids
 
 
 class Handler(BaseHTTPRequestHandler):

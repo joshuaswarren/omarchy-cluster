@@ -257,3 +257,34 @@ def test_rank_stop_kills_rank_that_left_the_wrapper_process_group(tmp_path):
     except (ProcessLookupError, FileNotFoundError):
         alive = False
     assert not alive
+
+
+def test_listener_pids_lsof_no_match_is_empty_not_proc(monkeypatch):
+    """lsof exits 1 when nothing listens (the normal case after a clean stop).
+    That must mean "none", not "lsof missing": the /proc fallback crashed
+    `omarchy-cluster stop` on macOS, which has no /proc."""
+    from omarchy_cluster import agent
+
+    def no_match(*a, **k):
+        raise subprocess.CalledProcessError(1, a[0])
+
+    def must_not_run(port):
+        raise AssertionError("/proc fallback used although lsof is installed")
+
+    monkeypatch.setattr(agent.subprocess, "check_output", no_match)
+    monkeypatch.setattr(agent, "_listener_pids_proc", must_not_run)
+    assert agent.listener_pids(8020) == []
+
+
+def test_listener_pids_without_lsof_uses_proc_only_if_present(monkeypatch):
+    from omarchy_cluster import agent
+
+    def no_lsof(*a, **k):
+        raise FileNotFoundError("lsof")
+
+    monkeypatch.setattr(agent.subprocess, "check_output", no_lsof)
+    monkeypatch.setattr(agent, "_listener_pids_proc", lambda port: [4242])
+    monkeypatch.setattr(agent.os.path, "isdir", lambda p: True)
+    assert agent.listener_pids(8020) == [4242]
+    monkeypatch.setattr(agent.os.path, "isdir", lambda p: False)
+    assert agent.listener_pids(8020) == []
