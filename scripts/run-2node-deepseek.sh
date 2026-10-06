@@ -93,6 +93,7 @@ python3 -c "import json; d=json.load(open('$receipt/chat.json')); print(json.dum
 cat "$receipt/chat.json" | python3 -m json.tool
 printf 'completion SHA256: '; cat "$receipt/text_sha256"
 printf 'elapsed seconds: '; cat "$receipt/request_seconds"; printf '\n'
+curl -fsS --max-time 5 http://127.0.0.1:8020/status >"$receipt/status.json" || true
 capture_rank_logs
 
 run_cli stop 2>&1 | tee "$receipt/stop.txt"
