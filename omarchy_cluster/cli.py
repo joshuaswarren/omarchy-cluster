@@ -436,10 +436,16 @@ def _serve_llamacpp(args):
     """GGUF model on this host through llama-server. A USB iPhone running the
     rpc-server app gets the last layers only when the model does not fit here."""
     from . import facts, iosnode, llamacpp_engine
-    info = llamacpp_engine.gguf_info(args.model)
+    try:
+        info = llamacpp_engine.gguf_info(args.model)
+    except (OSError, ValueError) as e:
+        sys.exit("cannot read GGUF %s: %s" % (args.model, e))
     phone = None
     if args.ios_bundle:
-        phones = iosnode.list_devices(args.pm3)
+        try:
+            phones = iosnode.list_devices(args.pm3)
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            sys.exit("pymobiledevice3 usbmux list failed (%s): %s" % (args.pm3, e))
         phone = phones[0] if phones else None
         print("usb iPhone: %s" % (phone["name"] if phone else "none"))
     cap = int(args.phone_cap_gb * 1e9) if phone else 0
@@ -461,9 +467,13 @@ def _serve_llamacpp(args):
         fwd = iosnode.start_forward(phone["udid"], args.rpc_port, iosnode.RPC_PORT, args.pm3)
         state["local_pids"].append(fwd.pid)
         _write_state(state)
-        iosnode.launch(args.ios_bundle, iosnode.RPC_PORT, pm3=args.pm3)
         rpc = "127.0.0.1:%d" % args.rpc_port
-        print("iPhone rpc-server: %s" % iosnode.wait_rpc("127.0.0.1", args.rpc_port))
+        try:
+            iosnode.launch(args.ios_bundle, iosnode.RPC_PORT, pm3=args.pm3)
+            print("iPhone rpc-server: %s" % iosnode.wait_rpc("127.0.0.1", args.rpc_port))
+        except (OSError, subprocess.SubprocessError) as e:
+            sys.exit("iPhone rpc-server did not start (unlock the phone, check --ios-bundle; "
+                     "run `omarchy-cluster stop` to drop the USB forward): %s" % e)
     cmd = [sys.executable, "-m", "omarchy_cluster.llamacpp_engine", "--model", args.model,
            "--llama-server", args.llama_server, "--port", str(args.engine_port),
            "--server-port", str(args.engine_port + 1), "--ctx", str(args.ctx),
@@ -474,7 +484,10 @@ def _serve_llamacpp(args):
     state["local_pids"].append(engine.pid)
     _write_state(state)
     engine_url = "http://127.0.0.1:%d" % args.engine_port
-    llamacpp_engine.wait_http(engine_url + "/health")
+    try:
+        llamacpp_engine.wait_http(engine_url + "/health", proc=engine)
+    except (TimeoutError, RuntimeError) as e:
+        sys.exit("llama.cpp engine failed (log: %s): %s" % (log, e))
     print("llama.cpp engine pid %s (log: %s)" % (engine.pid, log))
     _start_gateway(state, args.port, engine_url)
 

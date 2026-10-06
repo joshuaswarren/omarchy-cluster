@@ -2,8 +2,12 @@ import json
 import os
 import socket
 import struct
+import subprocess
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -20,7 +24,7 @@ def _gguf_string(s):
     return struct.pack("<Q", len(b)) + b
 
 
-def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128):
+def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128, value_dim=None):
     """A minimal GGUF v3 file: metadata, tensor infos, and zero-filled data
     whose tensor sizes are given in bytes (multiples of the 32-byte alignment)."""
     meta = [("general.architecture", 8, _gguf_string("qwen3")),
@@ -31,6 +35,8 @@ def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128
             ("qwen3.embedding_length", 4, struct.pack("<I", 2048)),
             ("tokenizer.ggml.tokens", 9,
              struct.pack("<IQ", 8, 2) + _gguf_string("a") + _gguf_string("b"))]
+    if value_dim is not None:
+        meta.append(("qwen3.attention.value_length", 4, struct.pack("<I", value_dim)))
     tensors = [("token_embd.weight", other_sizes[0])]
     for i in range(n_layer):
         tensors += [("blk.%d.attn_q.weight" % i, layer_sizes[0]),
@@ -99,11 +105,13 @@ def test_forced_rpc_layers_are_range_checked():
         lce.rpc_layers(INFO, 8 * GB, 0, 2048, force=29)
 
 
-def test_server_cmd_keeps_lm_head_on_host_only_when_splitting():
+def test_server_cmd_keeps_lm_head_on_host_and_layers_on_the_rpc_device():
     local = lce.server_cmd("llama-server", "m.gguf", 8032, 2048, 8)
     assert "--rpc" not in local and local[local.index("-ngl") + 1] == "0"
+    assert local[local.index("-dev") + 1] == "none"
     split = lce.server_cmd("llama-server", "m.gguf", 8032, 2048, 8, "127.0.0.1:50052", 7)
     assert split[split.index("--rpc") + 1] == "127.0.0.1:50052"
+    assert split[split.index("-dev") + 1] == "RPC0"  # a local GPU backend must not take them
     assert split[split.index("-ngl") + 1] == "7"
     assert split[split.index("-ot") + 1] == r"^output\.weight=CPU"
     with pytest.raises(ValueError):
@@ -154,14 +162,32 @@ def test_generate_maps_llama_server_timings_to_the_gateway_contract():
         srv.shutdown()
 
 
-def test_engine_reports_llama_server_failure_as_error_for_the_gateway():
+def test_engine_reports_llama_server_failure_to_the_gateway():
     lce.EngineHandler.server_url = "http://127.0.0.1:1"
     srv, url = _serve(lce.EngineHandler)
     try:
         res = lce._post(url + "/generate", {"prompt": "x", "max_tokens": 1})
         assert "error" in res
+        with pytest.raises(urllib.error.HTTPError) as health:
+            urllib.request.urlopen(url + "/health", timeout=5)
+        assert health.value.code == 503
     finally:
         srv.shutdown()
+
+
+def test_wait_http_stops_when_the_server_process_exits():
+    proc = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
+    proc.wait()
+    t = time.monotonic()
+    with pytest.raises(RuntimeError):
+        lce.wait_http("http://127.0.0.1:1/health", deadline_s=60, proc=proc)
+    assert time.monotonic() - t < 10
+
+
+def test_gguf_kv_size_uses_key_and_value_widths(tmp_path):
+    p = tmp_path / "m.gguf"
+    make_gguf(str(p), 2, (64, 96), (320, 32), n_kv_head=4, head_dim=192, value_dim=128)
+    assert lce.gguf_info(str(p))["kv_bytes_per_token_layer"] == 4 * (192 + 128) * 2
 
 
 def test_usbmux_list_keeps_usb_phones_only():

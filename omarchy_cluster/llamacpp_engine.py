@@ -94,6 +94,8 @@ def gguf_info(path):
         align = int(meta.get("general.alignment", 32))
         data_start = (f.tell() + align - 1) // align * align
     arch = meta.get("general.architecture", "")
+    if "%s.block_count" % arch not in meta:
+        raise ValueError("%s: no general.architecture/block_count metadata" % path)
     n_layer = int(meta["%s.block_count" % arch])
     tensors.sort()
     sizes = {}
@@ -110,13 +112,14 @@ def gguf_info(path):
     n_kv_head = meta.get("%s.attention.head_count_kv" % arch,
                          meta.get("%s.attention.head_count" % arch, 0))
     if isinstance(n_kv_head, list):
-        n_kv_head = max(n_kv_head)
+        n_kv_head = max(n_kv_head)  # per-layer counts: charge the largest (conservative)
     n_embd = int(meta.get("%s.embedding_length" % arch, 0))
     n_head = int(meta.get("%s.attention.head_count" % arch, 1) or 1)
-    head_dim = int(meta.get("%s.attention.key_length" % arch, n_embd // n_head))
+    k_dim = int(meta.get("%s.attention.key_length" % arch, n_embd // n_head))
+    v_dim = int(meta.get("%s.attention.value_length" % arch, k_dim))
     return {"arch": arch, "n_layer": n_layer, "layer_bytes": max(per_layer),
             "other_bytes": other, "total_bytes": sum(sizes.values()),
-            "kv_bytes_per_token_layer": 2 * int(n_kv_head) * head_dim * 2}
+            "kv_bytes_per_token_layer": int(n_kv_head) * (k_dim + v_dim) * 2}
 
 
 def rpc_layers(info, host_free_bytes, rpc_cap_bytes, ctx_tokens, force=None):
@@ -144,15 +147,17 @@ def rpc_layers(info, host_free_bytes, rpc_cap_bytes, ctx_tokens, force=None):
 
 def server_cmd(llama_server, model, port, ctx_tokens, threads, rpc=None, n_rpc_layers=0):
     """llama-server argv. Layers go to the RPC device only when n_rpc_layers > 0;
-    llama.cpp offloads the LAST n layers, and the lm_head always stays here."""
+    llama.cpp offloads the LAST n layers, and the lm_head always stays here.
+    `-dev RPC0` restricts offload to the RPC device, so a llama-server built with
+    a local GPU backend cannot take those layers instead."""
     cmd = [llama_server, "-m", model, "--host", "127.0.0.1", "--port", str(port),
            "-c", str(ctx_tokens), "-t", str(threads)]
     if n_rpc_layers:
         if not rpc:
             raise ValueError("layers placed on an RPC device but no --rpc endpoint")
-        cmd += ["--rpc", rpc, "-ngl", str(n_rpc_layers), "-ot", LM_HEAD_ON_HOST]
+        cmd += ["--rpc", rpc, "-dev", "RPC0", "-ngl", str(n_rpc_layers), "-ot", LM_HEAD_ON_HOST]
     else:
-        cmd += ["-ngl", "0"]
+        cmd += ["-dev", "none", "-ngl", "0"]
     return cmd
 
 
@@ -208,7 +213,12 @@ class EngineHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            return self._json(200, {"ok": True})
+            try:
+                with urllib.request.urlopen(self.server_url + "/health", timeout=2) as r:
+                    r.read()
+                return self._json(200, {"ok": True})
+            except OSError as e:
+                return self._json(503, {"ok": False, "error": "llama-server: %s" % e})
         if self.path == "/status":
             return self._json(200, self.status)
         self._json(404, {"error": "not found"})
@@ -227,7 +237,9 @@ class EngineHandler(BaseHTTPRequestHandler):
             return self._json(200, {"error": "llama-server: %s" % e})
 
 
-def wait_http(url, deadline_s=600.0):
+def wait_http(url, deadline_s=600.0, proc=None):
+    """Poll url until it answers 200. Raises at the deadline, or at once when
+    proc (the process that should serve url) has exited."""
     end = time.monotonic() + deadline_s
     while True:
         try:
@@ -236,6 +248,9 @@ def wait_http(url, deadline_s=600.0):
                     return
         except OSError:
             pass
+        if proc is not None and proc.poll() is not None:
+            raise RuntimeError("%s: process exited with status %d before it answered"
+                               % (url, proc.returncode))
         if time.monotonic() > end:
             raise TimeoutError("%s did not answer within %.0f s" % (url, deadline_s))
         time.sleep(1.0)
@@ -258,9 +273,10 @@ def main(argv=None):
     server = subprocess.Popen(cmd, env=server_env(), stdin=subprocess.DEVNULL)
     server_url = "http://127.0.0.1:%d" % args.server_port
     try:
-        wait_http(server_url + "/health")
-    except TimeoutError:
+        wait_http(server_url + "/health", proc=server)
+    except (TimeoutError, RuntimeError):
         server.terminate()
+        server.wait(10)
         raise
     EngineHandler.server_url = server_url
     EngineHandler.status = {"engine": "llama.cpp", "model": args.model,
@@ -272,6 +288,7 @@ def main(argv=None):
         srv.serve_forever()
     finally:
         server.terminate()
+        server.wait(10)
 
 
 if __name__ == "__main__":
