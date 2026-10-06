@@ -60,6 +60,14 @@ node-loss handling).
   (rank order) overrides it. A request with `"timing": true`
   returns `timings.step_ms` (per decode step: ring wait vs compute) and
   `poll_ms`; rank 1 logs its own `step_ms`.
+  Contention watch: rank 0 times one decode step in 8 (forced evals on rank
+  0 only, never during prefill) and splits it into its own compute
+  (`rank0`) and its wait on the other ranks (`rank1+`). A part more than 3x
+  its reference (the calibrated ms/layer x layers, or the fastest step seen)
+  and at least 5 ms over it for 4 sampled steps in a row is logged
+  (`rank 0 contention: ...`) and kept in `GET /status` (engine :8031 and
+  gateway :8020): split, calibrated ms/layer, per part last/ref/ratio/
+  contended, and the last 20 events. Each `/generate` result carries `watch`.
 - `omarchy-cluster stop` — stops the detached gateway, terminates every process in each rank's session on its agent, and sweeps listeners on the gateway, engine, and rank ports.
 - `omarchy-cluster hub` — heartbeat hub on :8030; `agent --hub URL` POSTs
   the 1 Hz heartbeat. `status --hub URL` shows per-node up/down state.

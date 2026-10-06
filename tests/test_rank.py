@@ -33,7 +33,7 @@ def test_rank1_long_poll_gets_rank0_prompt_tokens_once(monkeypatch):
     seen = {}
     rank1 = threading.Thread(target=lambda: seen.update(rank1=rank._poll_job(url, None)))
 
-    def rank0_stream(model, tok, prompt, max_tokens, marks=None):
+    def rank0_stream(model, tok, prompt, max_tokens, marks=None, **kw):
         seen["rank0"] = (prompt, max_tokens)
         rank1.join(1.0)  # well inside POLL_WAIT_S: the publish must wake the poll
         engine.POLL_WAIT_S = 0.2
@@ -120,3 +120,51 @@ def test_fastest_layer_ms_keeps_a_contention_burst_from_flipping_the_split(tmp_p
     assert rank._fastest_layer_ms("m2 m", 8.0, path) == 8.0  # keys are independent
     assert rank._fastest_layer_ms("mac m", 0.0, path) == 0.5  # a clamped 0 is noise, not a record
     assert rank._fastest_layer_ms("new m", 0.0, path) == 0.0
+
+
+def _forward(t0, wait_ms, own_ms):
+    """rank 0 marks of one sampled decode forward."""
+    t1 = t0 + wait_ms / 1000
+    t2 = t1 + own_ms / 1000
+    return [("token", t0), ("recv_like<", t0), ("recv_like>", t1), ("all_gather<", t2),
+            ("all_gather>", t2 + 0.0002)]
+
+
+def test_watch_flags_the_contended_rank_after_n_slow_sampled_steps(monkeypatch):
+    """mac-a + linux-b at 26,1 (calibrated 0.5 and 8.0 ms/layer):
+    a Claude.app GPU burst took rank 0 from ~17 to ~220 ms per step while
+    rank 1 stayed at ~4 ms (ClusterRun5 gpuobs3)."""
+    monkeypatch.setattr(rank.Engine, "_boot", lambda self: None)
+    engine = rank.Engine("model", 2)
+    engine._start_watch([26, 1], [0.5, 8.0])
+    t = 0.0
+    for _ in range(5):
+        engine._sample(_forward(t, 4.0, 17.0))
+        t += 1
+    assert engine.status()["parts"]["rank0"]["contended"] is False
+    assert engine.status()["parts"]["rank0"]["ref_ms"] == 13.0  # calibration 26 x 0.5 beats 17
+    for _ in range(4):
+        assert engine.status()["events"] == []
+        engine._sample(_forward(t, 4.0, 220.0))
+        t += 1
+    st = engine.status()
+    assert st["parts"]["rank0"]["contended"] is True
+    assert st["parts"]["rank1+"]["contended"] is False
+    assert [(e["part"], e["ratio"]) for e in st["events"]] == [("rank0", 16.92)]
+    engine._sample(_forward(t, 4.0, 17.0))  # burst over
+    st = engine.status()
+    assert st["parts"]["rank0"]["contended"] is False and len(st["events"]) == 1
+
+
+def test_watch_without_calibration_uses_the_fastest_step_seen():
+    w = rank._Watch(None, factor=3.0, n=2)
+    assert [w.add(ms) for ms in (40.0, 20.0, 70.0, 70.0, 70.0, 10.0, 70.0)] == [
+        False, False, False, True, False, False, False]  # trips once per slow run
+    assert w.ref == 10.0
+
+
+def test_watch_ignores_sub_ms_ratios():
+    """loopback recv wait went 0.07 -> 0.33 ms (4.9x): noise, not contention."""
+    w = rank._Watch(None, factor=3.0, n=2)
+    assert not any(w.add(ms) for ms in (0.07, 0.33, 0.33, 0.33, 4.0, 4.0))
+    assert [w.add(ms) for ms in (6.0, 6.0)] == [False, True]

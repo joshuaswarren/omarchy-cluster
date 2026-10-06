@@ -40,6 +40,12 @@ class Gateway(BaseHTTPRequestHandler):
         if self.path == "/v1/models":
             return self._json(200, {"object": "list", "data": [
                 {"id": "omarchy-cluster", "object": "model", "owned_by": "omarchy-cluster"}]})
+        if self.path in ("/status", "/v1/status"):
+            try:
+                with urllib.request.urlopen(self.engine + "/status", timeout=5) as r:
+                    return self._json(200, json.loads(r.read()))
+            except Exception as e:  # noqa: BLE001
+                return self._json(502, {"error": "engine: %s" % e})
         self._json(404, {"error": "not found"})
 
     def do_POST(self):

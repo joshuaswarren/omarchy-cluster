@@ -61,13 +61,17 @@ def _pipeline_split(self, group, counts):
 
 
 def _sharded_load(model_ref, group, counts=None):
+    """Load this rank's layers. Returns model, tokenizer, the split, and each
+    rank's measured ms/layer (None when the split was given)."""
     from mlx_lm.models.pipeline import PipelineMixin
     from mlx_lm.utils import sharded_load
-    counts = counts or _measured_split(model_ref, group)
+    layer_ms = None
+    if not counts:
+        counts, layer_ms = _measured_split(model_ref, group)
     PipelineMixin.pipeline = lambda self, g: _pipeline_split(self, g, counts)
     model, tokenizer = sharded_load(model_ref, group, None)
     _share_token(model)
-    return model, tokenizer
+    return model, tokenizer, counts, layer_ms
 
 
 def _layer_ms(model, n=4, steps=8):
@@ -150,7 +154,7 @@ def _measured_split(model_ref, group):
           % (group.rank(), now, ms, cap, rows, split), flush=True)
     if split is None:
         raise RuntimeError("ranks cannot hold %d layers: %s" % (info["layers"], rows))
-    return split
+    return split, [r[0] for r in rows]
 
 
 def _share_token(model):
@@ -186,7 +190,7 @@ def rank1_worker(model_ref, engine, counts=None):
     group = mx.distributed.init(backend="ring")
     print("rank 1 ring: rank=%d size=%d device=%s"
           % (group.rank(), group.size(), mx.default_device()), flush=True)
-    model, tokenizer = _sharded_load(model_ref, group, counts)
+    model, tokenizer, _, _ = _sharded_load(model_ref, group, counts)
     print("rank 1 sharded_load done: %s layers %d-%d" % (
         model_ref, model.model.start_idx, model.model.end_idx - 1), flush=True)
     print("rank 1 polling %s/prompt/wait" % engine, flush=True)
@@ -213,10 +217,14 @@ def rank1_worker(model_ref, engine, counts=None):
 _RING_OPS = ("recv_like", "send", "all_gather")
 
 
-def _stream(model, tokenizer, prompt, max_tokens, marks=None):
-    """mlx-lm stream_generate. Given a `marks` list, every ring op the pipeline
-    forward calls is evaluated on entry and exit and timestamped, so each step
-    splits into own compute vs ring wait. The forced evals serialise the step."""
+def _stream(model, tokenizer, prompt, max_tokens, marks=None, every=1, on_sample=None):
+    """mlx-lm stream_generate. Given a `marks` list, the ring ops of every
+    `every`-th decode forward are evaluated on entry and exit and timestamped,
+    so that step splits into own compute vs ring wait (the forced evals
+    serialise it). `on_sample` gets each sampled forward's marks. Prefill
+    forwards are never forced: a chunked prefill leaves its all_gather
+    unevaluated on every rank, so forcing it on one rank alone (rank 0's
+    watch) runs a collective the other ranks never join and the ring hangs."""
     import mlx.core as mx
     from mlx_lm import stream_generate
     kw = {"max_tokens": max_tokens, "sampler": getattr(model, "omarchy_sampler", None)}
@@ -225,23 +233,35 @@ def _stream(model, tokenizer, prompt, max_tokens, marks=None):
         return
     dist = mx.distributed
     saved = {name: getattr(dist, name) for name in _RING_OPS}
+    state = {"n": 0, "first": len(marks), "tokens": 0}
 
     def timed(name, op):
         def call(x, *a, **k):
-            mx.eval(x)
-            marks.append((name + "<", time.perf_counter()))
-            y = op(x, *a, **k)
-            mx.eval(y)
-            marks.append((name + ">", time.perf_counter()))
+            sampled = state["tokens"] > 0 and state["n"] % every == 0
+            if not sampled:
+                y = op(x, *a, **k)
+            else:
+                mx.eval(x)
+                marks.append((name + "<", time.perf_counter()))
+                y = op(x, *a, **k)
+                mx.eval(y)
+                marks.append((name + ">", time.perf_counter()))
+            if name == "all_gather":  # the last ring op of every pipeline forward
+                if sampled and on_sample:
+                    on_sample(marks[state["first"]:])
+                state["n"] += 1
+                state["first"] = len(marks)
             return y
         return call
 
     for name, op in saved.items():
         setattr(dist, name, timed(name, op))
     marks.append(("start", time.perf_counter()))
+    state["first"] = len(marks)
     try:
         for r in stream_generate(model, tokenizer, prompt, **kw):
             marks.append(("token", time.perf_counter()))
+            state["tokens"] += 1
             yield r
     finally:
         for name, op in saved.items():
@@ -269,6 +289,22 @@ def _step_ms(marks):
     return out
 
 
+class _Watch:
+    """Trips once when `n` consecutive samples exceed `factor` x the reference
+    (the lower of `expected`, from calibration or None, and the fastest sample
+    seen so far) and the reference by at least `floor_ms`: a sub-ms recv wait
+    tripling is noise, not contention (mac-a loopback: 0.07 -> 0.33 ms)."""
+
+    def __init__(self, expected=None, factor=3.0, n=4, floor_ms=5.0):
+        self.ref, self.factor, self.n, self.floor_ms, self.run = expected, factor, n, floor_ms, 0
+
+    def add(self, ms):
+        slow = self.ref is not None and ms > self.factor * self.ref and ms - self.ref >= self.floor_ms
+        self.ref = ms if self.ref is None else min(self.ref, ms)
+        self.run = self.run + 1 if slow else 0
+        return self.run == self.n
+
+
 class Engine:
     """rank 0: run mlx-lm stream_generate per request on one worker thread."""
 
@@ -285,7 +321,14 @@ class Engine:
         self._published = self._fetched = None  # perf_counter of publish / rank1's first fetch
         self._cond = threading.Condition()  # guards _pending/_published/_fetched; wakes rank1's long-poll
         self._error = None
+        # contention watch: rank 0's own compute and its wait on ranks 1.. per sampled step
+        self._watch = {}
+        self._status = {"split": None, "layer_ms": None, "every": self.WATCH_EVERY,
+                        "parts": {}, "events": []}
+        self._status_lock = threading.Lock()
         threading.Thread(target=self._boot, daemon=True).start()
+
+    WATCH_EVERY = 8  # sample one decode step in 8 (forced evals on rank 0 only)
 
     def _boot(self):
         try:
@@ -302,10 +345,11 @@ class Engine:
                     raise RuntimeError("ring size %d != %d" % (group.size(), self.world))
                 print("rank 0 ring: rank=%d size=%d device=%s"
                       % (group.rank(), group.size(), mx.default_device()), flush=True)
-                self.model, self.tok = _sharded_load(self.model_ref, group, self.counts)
+                self.model, self.tok, split, layer_ms = _sharded_load(self.model_ref, group, self.counts)
                 print("rank 0 sharded_load done: %s layers %d-%d" % (
                     self.model_ref, self.model.model.start_idx, self.model.model.end_idx - 1),
                     flush=True)
+                self._start_watch(split, layer_ms)
         except Exception as e:  # noqa: BLE001 - surfaced via wait_ready
             self._error = "%s: %s" % (type(e).__name__, e)
             self.ready.set()
@@ -327,7 +371,7 @@ class Engine:
 
     def _generate(self, messages, max_tokens, timing=False):
         prompt = self.tok.apply_chat_template(messages, add_generation_prompt=True)
-        marks = [] if timing else None
+        marks = [] if timing or self._watch else None
         with self._cond:
             self._id += 1
             self._pending = {"id": self._id, "prompt": prompt,
@@ -336,7 +380,9 @@ class Engine:
             self._cond.notify_all()
         response = None
         parts = []
-        for response in _stream(self.model, self.tok, prompt, max_tokens, marks):
+        for response in _stream(self.model, self.tok, prompt, max_tokens, marks,
+                                every=1 if timing else self.WATCH_EVERY,
+                                on_sample=self._sample if self._watch else None):
             parts.append(response.text)
         wall_ms = 1000 * (time.perf_counter() - self._published)
         prefill_ms = 1000 * response.prompt_tokens / response.prompt_tps
@@ -351,9 +397,49 @@ class Engine:
                "peak_memory_gb": round(response.peak_memory, 2)}
         if self._fetched is not None:
             res["poll_ms"] = round(1000 * (self._fetched - self._published), 1)
-        if marks is not None:
+        if timing:
             res["step_ms"] = _step_ms(marks)
+        if self._watch:
+            with self._status_lock:
+                res["watch"] = json.loads(json.dumps(self._status["parts"]))
         return res
+
+    def _start_watch(self, split, layer_ms):
+        """Expected ms per step part from calibration (None with --split)."""
+        own = up = None
+        if layer_ms:
+            own = split[0] * layer_ms[0]
+            up = sum(c * m for c, m in zip(split[1:], layer_ms[1:]))
+        self._watch = {"rank0": _Watch(own), "rank1+": _Watch(up)}
+        with self._status_lock:
+            self._status.update(split=split, layer_ms=layer_ms)
+
+    def _sample(self, forward_marks):
+        """One sampled forward on rank 0: recv wait = ranks 1.. computing,
+        recv exit -> all_gather entry = rank 0's own layers."""
+        t = dict(forward_marks)
+        if not {"recv_like<", "recv_like>", "all_gather<"} <= t.keys():
+            return
+        parts = {"rank1+": 1000 * (t["recv_like>"] - t["recv_like<"]),
+                 "rank0": 1000 * (t["all_gather<"] - t["recv_like>"])}
+        for name, ms in parts.items():
+            w = self._watch[name]
+            tripped = w.add(ms)
+            with self._status_lock:
+                self._status["parts"][name] = {"last_ms": round(ms, 2), "ref_ms": round(w.ref, 2),
+                                               "ratio": round(ms / w.ref, 2), "slow_run": w.run,
+                                               "contended": w.run >= w.n}
+                if tripped:
+                    event = {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "part": name,
+                             "ms": round(ms, 2), "ref_ms": round(w.ref, 2), "ratio": round(ms / w.ref, 2)}
+                    self._status["events"] = (self._status["events"] + [event])[-20:]
+            if tripped:
+                print("rank 0 contention: %s %.1f ms/step, %.1fx its reference %.1f ms for %d sampled steps"
+                      % (name, ms, ms / w.ref, w.ref, w.n), flush=True)
+
+    def status(self):
+        with self._status_lock:
+            return json.loads(json.dumps(self._status))
 
     def generate(self, messages, max_tokens=64, timing=False):
         self.wait_ready()
@@ -392,6 +478,8 @@ class EngineHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._json(200, {"ok": True})
+        if self.path == "/status":
+            return self._json(200, self.engine.status())
         if self.path.startswith("/prompt/wait"):
             after = None
             if "after=" in self.path:
