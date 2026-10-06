@@ -1,5 +1,7 @@
 # omarchy-cluster
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/joshuaswarren)
+
 omarchy-cluster runs one local model across the machines on your network: Macs
 on macOS, Macs on Omarchy Linux, even an iPhone. Any manufacturer, any OS, in
 one run. The machines measure each other, decide which node runs which layers,
@@ -347,6 +349,14 @@ memory pressure. Speculative decoding with the draft model on the phone was
 slower (6.6 tok/s) than with the draft on the laptop (25.1 tok/s).
 
 Details, sources and raw data: `receipts/2026-10-06-iphone-rpc-node/`.
+
+## Support
+
+Every bit of support helps keep omarchy-cluster alive and free. If you are able, [sponsor on GitHub](https://github.com/sponsors/joshuaswarren) or send a Lightning donation to `joshuaswarren@strike.me` to directly fund continued development and new integrations.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge)](https://github.com/sponsors/joshuaswarren)
+
+If financial support is not an option, you can still make a big difference: [star the repo](https://github.com/joshuaswarren/omarchy-cluster), share it, or recommend it to a colleague. Word of mouth is how most people find omarchy-cluster.
 
 ## Contributing
 
