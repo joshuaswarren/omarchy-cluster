@@ -363,9 +363,12 @@ class Engine:
                 out["res"] = {"error": "%s: %s" % (type(e).__name__, e)}
             self._jobs.task_done()
 
-    def wait_ready(self, timeout=900):
-        if not self.ready.wait(timeout):
-            raise RuntimeError("engine boot timed out")
+    def wait_ready(self):
+        """Block until boot ends. No timeout: rank 1 can sit in its node's
+        gpu-turn queue far past 15 min (the old 900 s limit killed rank 0 at
+        04:12Z and rank 1 then lost the ring); the runner's ENGINE_WAIT_S or
+        `omarchy-cluster stop` bounds the wait."""
+        self.ready.wait()
         if self.model is None:
             raise RuntimeError("engine boot failed: %s" % self._error)
 
