@@ -261,8 +261,29 @@ def mcdma():
     return {"available": True, "reason": "ACTIVE port and peer tool", "devices": active}
 
 
+def macos_memory():
+    """macOS only: {"memory_free_pages_bytes": free pages, "memory_reclaimable_bytes":
+    inactive + speculative pages, "data_volume_free_bytes": free space on the volume
+    that holds swap}. Inactive pages come back only by paging them out to that volume,
+    so a budget that counts them must also count the disk they need."""
+    pagesize = int(_run(["sysctl", "-n", "hw.pagesize"]).strip() or "16384")
+    pages = {"free": 0, "inactive": 0, "speculative": 0}
+    for line in _run(["vm_stat"]).splitlines():
+        for k in pages:
+            if line.startswith("Pages %s:" % k):
+                pages[k] = int(line.split()[-1].rstrip("."))
+    try:
+        st = os.statvfs("/System/Volumes/Data")
+        data_free = st.f_bavail * st.f_frsize
+    except OSError:
+        data_free = None
+    return {"memory_free_pages_bytes": pages["free"] * pagesize,
+            "memory_reclaimable_bytes": (pages["inactive"] + pages["speculative"]) * pagesize,
+            "data_volume_free_bytes": data_free}
+
+
 def collect_facts():
-    return {
+    facts = {
         "agent_version": AGENT_VERSION,
         "name": socket.gethostname().split(".")[0],
         "os": os_name(),
@@ -277,3 +298,6 @@ def collect_facts():
         "tools": {"iperf3": bool(shutil.which("iperf3"))},
         "transports": {"mcdma": mcdma()},
     }
+    if platform.system() == "Darwin":
+        facts.update(macos_memory())
+    return facts

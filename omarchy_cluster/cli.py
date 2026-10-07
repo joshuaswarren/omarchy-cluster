@@ -596,7 +596,7 @@ def _serve_llamacpp_nodes(args, info):
                 print("  %s: no Vulkan allocation cap (%s); using the reported heap" % (name, e))
         devs.append({"name": name, "ep": ep, "machine": host, "budget": budget,
                      "free_bytes": hello.get("free_bytes"), "total_bytes": hello.get("total_bytes"),
-                     "ram_avail": f.get("memory_free_bytes"), "ram_total": f.get("memory_total_bytes"),
+                     "ram_avail": llamacpp_engine.node_ram_avail(f), "ram_total": f.get("memory_total_bytes"),
                      "va_cap": va})
     try:
         ordered, host_layers, host_bytes, paged = _plan_devices(

@@ -15,7 +15,9 @@ host, which may have been read from disk on every token.
    machine's RAM so the address space is what stops it. Cached per boot.
 3. Without `=GB`, a device's budget is the least of: what llama.cpp reports free, the machine's
    available RAM minus 6 GB, and the allocation cap; less 1 GB for compute buffers on a GPU or
-   0.5 GB on a CPU. Two servers on one machine share its RAM; the CPU server gives way first.
+   0.5 GB on a CPU. On macOS, available RAM is free pages only (inactive pages come back only by
+   swapping), and zero when the Data volume has under 20 GB free. Two servers on one machine
+   share its RAM; the CPU server gives way first.
 4. The host keeps layers it has room for in its page cache: available RAM minus 2 GB, the model's
    non-layer tensors and 1 GB for llama-server.
 5. Placement searches the node order and the host layer count. It minimizes the host bytes beyond
@@ -27,31 +29,34 @@ host, which may have been read from disk on every token.
 
 [src/dry_split.py](src/dry_split.py) runs the code above on inputs recorded that night. Two are
 assumed, not recorded: the x86 laptop's CUDA free memory (3.9 GB of a 4 GB card) and the Mac
-Studio's Metal working set (103 GB; its available RAM binds first either way). Output:
-[dry-split.txt](dry-split.txt).
+Studio's Metal working set (103 GB). Output: [dry-split.txt](dry-split.txt).
+
+On macOS the budget counts free pages only. Run P sized the Mac Studio from free + inactive +
+speculative pages (60.6 GB) and gave it 41.2 GB; macOS took that by swapping (17.1 to 25.9 GB) and
+the run was stopped before it finished loading. With free pages (8.3 GB, sampled that night) the
+Mac Studio's budget is 1.3 GB, smaller than one layer, so it gets none:
 
 | | paged from host disk | devices used | host layers |
 |---|---|---|---|
-| hand-built (run P) | 0 | 6 | 0-4, 6.67 GB |
-| measured, M1 Max scratch cleared (60.3 GB available) | 0 | 5 | 0-4, 6.67 GB |
-| measured, M1 Max as it was at 02:27Z (51.5 GB available) | 3.58 GB | 6 | 0-6, 12.41 GB |
+| hand-built (run P), Mac Studio 41.2 GB | 0 | 6 | 0-4, 6.67 GB |
+| measured, M1 Max scratch cleared (60.3 GB available) | 39.98 GB | 5 | 0-19, 48.81 GB |
+| measured, M1 Max as it was at 02:27Z (51.5 GB available) | 47.99 GB | 5 | 0-22, 56.82 GB |
 
-With the same inputs as run P, the measured placement pages nothing and uses one device fewer: it
-leaves the 4 GB CUDA card out. Without the scratch cleanup it pages 3.58 GB from the host's disk
-and says so.
+So the hand-built table fit only by counting memory the Mac Studio did not have free. Without that,
+GLM-5.3 at UD-IQ1_S does not fit these machines without paging about 40 GB from the host's disk,
+and the measured placement says so before any load starts.
 
-It also runs two devices closer to their limits than the hand table: the M2 Max GPU at 66.47 GB
-under its 66.65 GB budget (1.2 GB below the 63 GiB cap, where the hand table left 5.9 GB), and the
-Mac Studio at 42.82 of 42.90 GB. The 1 GB GPU reserve is an estimate; the only measured bound
-tonight is 1.3 GB spare on the 4 GB card. The receipt for the first run that uses these budgets
-will show whether it holds.
+The measured budgets also run the M2 Max GPU at 66.47 of 66.65 GB, 1.2 GB below its 63 GiB cap.
+The 1 GB GPU reserve is an estimate; the only measured bound that night is 1.3 GB spare on the
+4 GB card.
 
 ## Tests
 
 `tests/test_placement.py`: the tightest-limit budget, RAM shared by two servers on one machine,
 placement that prefers no paging and then fewer devices, a fixed order and host count, and the
 hand-built GLM-5.3 run-P table reproduced exactly from its budgets. `tests/test_llamacpp.py`:
-the device-memory query over RPC, and the cache flag. 80 tests pass.
+the device-memory query over RPC, and the cache flag; macOS free pages, the agent's probe
+limit. 83 tests pass.
 
 ## The probe on hardware
 

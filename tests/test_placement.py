@@ -153,3 +153,29 @@ def test_agent_gpu_cap_probes_within_spare_ram_and_caches_per_boot(tmp_path, mon
     assert cmd[-1] == str((50 * GB - 6 * GB) // 2 ** 30) and env["HK_SYSMEM"] == str(67 * GB)
     agent.gpu_cap()
     assert len(seen) == 1  # cached for this boot
+
+
+def test_macos_budget_counts_free_pages_not_inactive():
+    """2026-10-07: a Mac Studio sized from free+inactive+speculative (60.6 GB) took a
+    41 GB share and swapped 17.1 -> 25.9 GB. Only free pages count on macOS."""
+    mac = {"memory_free_bytes": 60.6 * GB, "memory_free_pages_bytes": 8.3 * GB,
+           "memory_reclaimable_bytes": 52.3 * GB, "data_volume_free_bytes": 64 * GB}
+    assert lce.node_ram_avail(mac) == 8.3 * GB
+    assert lce.device_budget(103 * GB, lce.node_ram_avail(mac)) == int(8.3 * GB - lce.NODE_HEADROOM - lce.GPU_RESERVE)
+    # no room for swap on the Data volume: nothing
+    assert lce.node_ram_avail(dict(mac, data_volume_free_bytes=19 * GB)) == 0
+    # Linux: MemAvailable as before
+    assert lce.node_ram_avail({"memory_free_bytes": 50 * GB}) == 50 * GB
+
+
+def test_macos_memory_reads_free_and_reclaimable_pages(monkeypatch):
+    from omarchy_cluster import facts
+    vm_stat = ("Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
+               "Pages free:                              506592.\n"
+               "Pages active:                           2000000.\n"
+               "Pages inactive:                         2215576.\n"
+               "Pages speculative:                       158692.\n")
+    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: "16384\n" if cmd[0] == "sysctl" else vm_stat)
+    m = facts.macos_memory()
+    assert m["memory_free_pages_bytes"] == 506592 * 16384
+    assert m["memory_reclaimable_bytes"] == (2215576 + 158692) * 16384
