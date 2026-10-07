@@ -81,15 +81,17 @@ class Gateway(BaseHTTPRequestHandler):
                       "total_tokens": res["prompt_tokens"] + res["completion_tokens"]},
             "timings": {"prefill_ms": res["prefill_ms"], "decode_ms": res["decode_ms"],
                         "tokens_per_s": res["tokps"],
-                        **{k: res[k] for k in ("poll_ms", "step_ms") if k in res}},
+                        **{k: res[k] for k in ("poll_ms", "step_ms") if k in res},
+                        **({"llama_server": res["raw_timings"]} if "raw_timings" in res else {})},
         }
+        finish = res.get("finish_reason", "stop")
         if self.path == "/v1/chat/completions":
             return self._json(200, {**common, "object": "chat.completion", "choices": [{
                 "index": 0,
                 "message": {"role": "assistant", "content": res["text"]},
-                "finish_reason": "stop"}]})
+                "finish_reason": finish}]})
         return self._json(200, {**common, "object": "text_completion", "choices": [{
-            "index": 0, "text": res["text"], "finish_reason": "stop"}]})
+            "index": 0, "text": res["text"], "finish_reason": finish}]})
 
 
 def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031"):

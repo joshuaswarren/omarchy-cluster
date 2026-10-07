@@ -141,7 +141,8 @@ class FakeLlamaServer(BaseHTTPRequestHandler):
         if self.path == "/completion":
             res = {"content": " Paris.", "timings": self.TIMINGS}
         else:
-            res = {"choices": [{"message": {"content": "Paris."}}], "timings": self.TIMINGS}
+            res = {"choices": [{"message": {"content": "Paris."}, "finish_reason": "length"}],
+                   "timings": dict(self.TIMINGS, predicted_per_second=61.5)}
         data = json.dumps(res).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(data)))
@@ -156,17 +157,22 @@ def _serve(handler):
 
 
 def test_generate_maps_llama_server_timings_to_the_gateway_contract():
+    """Decode rate is llama-server's predicted_per_second: n tokens span n - 1 decode
+    intervals (the first comes out of the prompt step), so n / predicted_ms overstated
+    it (GLM-5.3-Flash: 1.39 reported vs 1.36 measured). No prompt cache: every request
+    evaluates its whole prompt."""
     srv, url = _serve(FakeLlamaServer)
     try:
         res = lce.generate(url, {"prompt": "The capital of France is", "max_tokens": 4})
         assert res == {"text": " Paris.", "prompt_tokens": 6, "completion_tokens": 4,
-                       "prefill_ms": 12.5, "decode_ms": 50.0, "tokps": 80.0}
+                       "prefill_ms": 12.5, "decode_ms": 50.0, "tokps": 60.0,
+                       "finish_reason": "stop", "raw_timings": FakeLlamaServer.TIMINGS}
         chat = lce.generate(url, {"messages": [{"role": "user", "content": "hi"}],
                                   "max_tokens": 4})
-        assert chat["text"] == "Paris."
-        paths = [(p, b.get("temperature"), b.get("n_predict", b.get("max_tokens")))
+        assert (chat["text"], chat["tokps"], chat["finish_reason"]) == ("Paris.", 61.5, "length")
+        paths = [(p, b.get("temperature"), b.get("n_predict", b.get("max_tokens")), b.get("cache_prompt"))
                  for p, b in FakeLlamaServer.seen[-2:]]
-        assert paths == [("/completion", 0, 4), ("/v1/chat/completions", 0, 4)]
+        assert paths == [("/completion", 0, 4, False), ("/v1/chat/completions", 0, 4, False)]
     finally:
         srv.shutdown()
 

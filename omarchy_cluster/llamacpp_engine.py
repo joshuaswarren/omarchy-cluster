@@ -236,27 +236,35 @@ def _post(url, payload, timeout=600):
 
 
 def generate(server_url, req):
-    """Serve one gateway /generate request through llama-server, greedy."""
+    """Serve one gateway /generate request through llama-server, greedy. Every request
+    evaluates its whole prompt (cache_prompt false), so prompt timings compare."""
     max_tokens = int(req.get("max_tokens", 64))
     if req.get("messages"):
         # reasoning_format none: a reasoning model's <think> text stays in content (as on
         # the MLX path) instead of a separate field the gateway does not return.
         res = _post(server_url + "/v1/chat/completions",
                     {"messages": req["messages"], "max_tokens": max_tokens,
-                     "temperature": 0, "reasoning_format": "none"})
+                     "temperature": 0, "reasoning_format": "none", "cache_prompt": False})
         text = res["choices"][0]["message"]["content"]
+        finish = res["choices"][0].get("finish_reason") or "stop"
     else:
         res = _post(server_url + "/completion",
                     {"prompt": req.get("prompt") or "", "n_predict": max_tokens,
                      "temperature": 0, "cache_prompt": False})
         text = res["content"]
+        finish = "length" if res.get("stop_type") == "limit" else "stop"
     t = res.get("timings") or {}
     decode_ms = float(t.get("predicted_ms", 0.0))
     completion = int(t.get("predicted_n", 0))
+    # llama-server's own rate: the first token comes out of the prompt step, so n tokens
+    # span n - 1 decode intervals; completion / decode_ms overstates by n / (n - 1).
+    tokps = t.get("predicted_per_second")
+    if tokps is None:
+        tokps = (completion - 1) / decode_ms * 1e3 if decode_ms and completion > 1 else 0.0
     return {"text": text, "prompt_tokens": int(t.get("prompt_n", 0)),
             "completion_tokens": completion, "prefill_ms": float(t.get("prompt_ms", 0.0)),
-            "decode_ms": decode_ms,
-            "tokps": round(completion / decode_ms * 1e3, 2) if decode_ms else 0.0}
+            "decode_ms": decode_ms, "tokps": round(float(tokps), 2), "finish_reason": finish,
+            "raw_timings": t}
 
 
 class EngineHandler(BaseHTTPRequestHandler):
