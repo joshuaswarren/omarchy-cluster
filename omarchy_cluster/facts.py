@@ -297,7 +297,9 @@ def macos_memory():
         data_free = st.f_bavail * st.f_frsize
     except OSError:
         data_free = None
-    return {"memory_free_pages_bytes": pages["Pages free"] * pagesize,
+    m = re.search(r"percentage:\s*(\d+)%", _run(["memory_pressure", "-Q"]))
+    return {"memory_pressure_free_pct": int(m.group(1)) if m else None,
+            "memory_free_pages_bytes": pages["Pages free"] * pagesize,
             "memory_purgeable_bytes": pages["Pages purgeable"] * pagesize,
             "memory_file_backed_bytes": pages["File-backed pages"] * pagesize,
             "memory_reclaimable_bytes": (pages["Pages inactive"] + pages["Pages speculative"]) * pagesize,

@@ -69,6 +69,7 @@ before the run, when that flag landed; nothing measured changed).
   answers hashed as reasoning text plus content, and an empty answer stops the run.
 - Host paging check before the first timed request: major faults and disk reads during one request.
 - Stop rules: Mac Studio memory pressure below 15 percent free or its Data volume below 20 GB; any
-  Linux node below 2 GB available and falling; any node the memory watcher cannot read, twice in a row.
-  The watcher runs on a machine that is not part of the run. Using 90 percent or more of each node's
-  RAM is the target, not a limit.
+  Linux node below 2 GB available; any node that cannot be read; each on two passes in a row. These
+  are `omarchy-cluster guard`, run on the host, where it can always stop the run (amended before the
+  run, when the command landed). Using 90 percent or more of each node's RAM is the target, not a
+  limit.

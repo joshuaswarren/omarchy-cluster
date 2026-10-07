@@ -150,7 +150,11 @@ keeps exactly N layers on the gateway machine and the nodes in the order given.
 (a Vulkan heap size, a cache folder) and `--rpc-threads NAME=N` its CPU threads,
 so no node needs a wrapper script.
 
-The `stop` command stops the gateway and every rank, and sweeps the ports. The
+The `stop` command stops the gateway and every rank, and sweeps the ports.
+The `guard` command watches every node of a running serve through its agent
+and stops the run when a Linux node drops under 2 GB available, a Mac's memory
+pressure falls under 15 percent free or its disk under 20 GB, or a node stops
+answering. Run it on the gateway machine. The
 `status` and `hub` commands print the node table with pinned routes and a 1 Hz
 heartbeat hub.
 

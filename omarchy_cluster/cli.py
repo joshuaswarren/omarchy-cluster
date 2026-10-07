@@ -700,6 +700,61 @@ def cmd_stop(args):
         pass  # concurrent stop already tore the state down
 
 
+GUARD_LINUX_MIN_BYTES = 2_000_000_000
+GUARD_MAC_MIN_FREE_PCT = 15
+GUARD_MAC_MIN_DATA_BYTES = 20_000_000_000
+
+
+def guard_verdict(facts_by_node):
+    """Reasons to stop a run, from each node's agent facts (None = could not be read).
+    Linux: under 2 GB available. macOS: memory_pressure under 15 percent free, or the Data
+    volume (where swap lives) under 20 GB free. A node that cannot be read is a reason too:
+    a guard that skips what it cannot see is no guard."""
+    reasons = []
+    for node, f in sorted(facts_by_node.items()):
+        if f is None:
+            reasons.append("%s unreadable" % node)
+        elif f.get("memory_free_pages_bytes") is not None:  # macOS
+            pct, disk = f.get("memory_pressure_free_pct"), f.get("data_volume_free_bytes")
+            if pct is not None and pct < GUARD_MAC_MIN_FREE_PCT:
+                reasons.append("%s memory_pressure %d%% free" % (node, pct))
+            if disk is not None and disk < GUARD_MAC_MIN_DATA_BYTES:
+                reasons.append("%s Data volume %.1f GB free" % (node, disk / 1e9))
+        elif (f.get("memory_free_bytes") or 0) < GUARD_LINUX_MIN_BYTES:
+            reasons.append("%s %.1f GB available" % (node, (f.get("memory_free_bytes") or 0) / 1e9))
+    return reasons
+
+
+def _agent_facts(ip, port=8025, timeout=5):
+    try:
+        with urllib.request.urlopen("http://%s:%d/v1/facts" % (ip, port), timeout=timeout) as r:
+            return json.loads(r.read())
+    except (OSError, ValueError):
+        return None
+
+
+def cmd_guard(args):
+    """Watch every node of the running serve over its agent; stop the run when guard_verdict
+    has reasons on two passes in a row. Run it on the gateway machine: there it can always
+    stop the run, even when it cannot reach the other nodes. Exits when the run is gone."""
+    import time as _time
+    path = os.path.expanduser("~/.local/state/omarchy-cluster/serve.json")
+    bad = 0
+    while os.path.exists(path):
+        with open(path) as f:
+            nodes = sorted({s["node"] for s in json.load(f).get("stages", [])})
+        reasons = guard_verdict({ip: _agent_facts(ip) for ip in nodes})
+        bad = bad + 1 if reasons else 0
+        if reasons:
+            print("guard: %s" % "; ".join(reasons), flush=True)
+        if bad >= 2:
+            print("guard: stopping the run", flush=True)
+            cmd_stop(args)
+            sys.exit(3)
+        _time.sleep(args.interval)
+    print("guard: no running serve", flush=True)
+
+
 def _pick_route_ip(node_facts_dict, stages, node_name):
     """IP of `node` on the pinned route to the other stage's node."""
     others = [s["node"] for s in stages if s["node"] != node_name]
@@ -843,6 +898,11 @@ def main(argv=None):
 
     p = sub.add_parser("stop", help="stop ranks started by serve")
     p.set_defaults(fn=cmd_stop)
+
+    p = sub.add_parser("guard", help="watch the running serve's nodes; stop it when memory runs out "
+                                     "or a node cannot be read (run on the gateway machine)")
+    p.add_argument("--interval", type=float, default=10.0, help="seconds between passes")
+    p.set_defaults(fn=cmd_guard)
 
     p = sub.add_parser("hub", help="run the heartbeat hub")
     p.add_argument("--port", type=int, default=8030)

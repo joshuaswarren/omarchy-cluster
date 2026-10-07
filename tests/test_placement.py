@@ -181,11 +181,15 @@ def test_macos_memory_reads_free_and_reclaimable_pages(monkeypatch):
                "Pages purgeable:                          61035.\n"
                "File-backed pages:                      1831055.\n"
                "Anonymous pages:                        2543213.\n")
-    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: "16384\n" if cmd[0] == "sysctl" else vm_stat)
+    outputs = {"sysctl": "16384\n", "vm_stat": vm_stat,
+               "memory_pressure": "The system has 137438953472 (8388608 pages with a page size of 16384).\n"
+                                  "System-wide memory free percentage: 63%\n"}
+    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: outputs[cmd[0]])
     m = facts.macos_memory()
     assert m["memory_free_pages_bytes"] == 506592 * 16384
     assert m["memory_reclaimable_bytes"] == (2215576 + 158692) * 16384
     assert (m["memory_purgeable_bytes"], m["memory_file_backed_bytes"]) == (61035 * 16384, 1831055 * 16384)
+    assert m["memory_pressure_free_pct"] == 63
 
 
 def test_rpc_start_passes_env_to_the_server_without_a_wrapper(tmp_path, monkeypatch):
@@ -223,3 +227,37 @@ def test_rpc_env_and_threads_flags_parse_per_node():
                 argparse.Namespace(rpc_env=[], rpc_threads=["omarchy-m2=many"])):
         with pytest.raises(SystemExit):
             cli._rpc_node_options(bad)
+
+
+def test_guard_verdict_stops_on_low_memory_and_on_unreadable_nodes():
+    linux_ok, linux_low = {"memory_free_bytes": 5 * GB}, {"memory_free_bytes": 1.5 * GB}
+    mac_ok = {"memory_free_pages_bytes": 8 * GB, "memory_pressure_free_pct": 40, "data_volume_free_bytes": 60 * GB}
+    assert cli.guard_verdict({"a": linux_ok, "m": mac_ok}) == []
+    assert cli.guard_verdict({"a": linux_low}) == ["a 1.5 GB available"]
+    assert cli.guard_verdict({"m": dict(mac_ok, memory_pressure_free_pct=12)}) == ["m memory_pressure 12% free"]
+    assert cli.guard_verdict({"m": dict(mac_ok, data_volume_free_bytes=19 * GB)}) == ["m Data volume 19.0 GB free"]
+    # swap size is not a reason by itself (2026-10-07: 25.9 GB of stale swap at 63% free)
+    assert cli.guard_verdict({"m": dict(mac_ok, swap_used_bytes=26 * GB)}) == []
+    assert cli.guard_verdict({"x": None}) == ["x unreadable"]
+
+
+def test_guard_stops_the_run_after_two_bad_passes(tmp_path, monkeypatch):
+    import argparse, json as _json
+    monkeypatch.setenv("HOME", str(tmp_path))
+    state = tmp_path / ".local/state/omarchy-cluster/serve.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(_json.dumps({"stages": [{"node": "10.0.0.2"}, {"node": "10.0.0.3"}]}))
+    reads = iter([{"memory_free_bytes": 5 * GB}, None, {"memory_free_bytes": 5 * GB}, None])
+    monkeypatch.setattr(cli, "_agent_facts", lambda ip, port=8025, timeout=5: next(reads))
+    stopped = []
+    monkeypatch.setattr(cli, "cmd_stop", lambda args: stopped.append(True))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    with pytest.raises(SystemExit) as e:
+        cli.cmd_guard(argparse.Namespace(interval=0))
+    assert e.value.code == 3 and stopped == [True]
+
+
+def test_guard_exits_quietly_when_no_run_is_going(tmp_path, monkeypatch):
+    import argparse
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cli.cmd_guard(argparse.Namespace(interval=0))  # returns: nothing to watch
