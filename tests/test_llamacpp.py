@@ -472,3 +472,33 @@ def test_start_gateway_returns_only_once_the_gateway_answers(tmp_path, monkeypat
     finally:
         if servers:
             servers[0].shutdown()
+
+
+def test_layer_extents_locate_each_layer_in_its_shard(tmp_path):
+    p = tmp_path / "m.gguf"
+    make_gguf(str(p), 3, (64, 96), (320, 32))
+    data_start = os.path.getsize(p) - (3 * 160 + 352)
+    ext = lce.layer_extents(str(p))
+    assert [sum(s for _, _, s in e) for e in ext] == [160, 160, 160]
+    assert ext[1][0] == (str(p), data_start + 320 + 160, 64)  # layer 1, first tensor
+    assert ext[2][-1] == (str(p), data_start + 320 + 2 * 160 + 64, 96)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="page cache eviction by fadvise is Linux")
+def test_resident_bytes_sees_the_page_cache(tmp_path):
+    from omarchy_cluster import paging
+    p = tmp_path / "m.gguf"
+    make_gguf(str(p), 2, (1 << 20, 1 << 20), (1 << 20, 32))
+    ext = lce.layer_extents(str(p))
+    if paging.resident_fraction(ext[1]) < 1.0:
+        pytest.skip("this filesystem does not back mmap with the page cache (ZFS)")
+    fd = os.open(str(p), os.O_RDONLY)
+    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    os.close(fd)
+    assert paging.resident_fraction(ext[1]) < 1.0
+
+
+def test_vmstat_deltas():
+    from omarchy_cluster import paging
+    a, b = {"pgmajfault": 10, "pgpgin": 100}, {"pgmajfault": 25, "pgpgin": 400}
+    assert paging.delta(a, b) == {"pgmajfault": 15, "pgpgin": 300}

@@ -64,9 +64,10 @@ class _Reader:
         raise ValueError("unknown GGUF value type %d" % vtype)
 
 
-def _header(path):
+def _header(path, extents=None):
     """(metadata, tensor name -> byte size) of one GGUF file. Sizes come from the gaps
-    between data offsets, so no quant-type table is needed."""
+    between data offsets, so no quant-type table is needed. extents, if a dict, gets
+    name -> (absolute file offset, size) for each tensor."""
     file_size = os.path.getsize(path)
     with open(path, "rb") as f:
         r = _Reader(f)
@@ -95,6 +96,8 @@ def _header(path):
     for i, (offset, name) in enumerate(tensors):
         end = tensors[i + 1][0] if i + 1 < len(tensors) else file_size - data_start
         sizes[name] = end - offset
+        if extents is not None:
+            extents[name] = (data_start + offset, sizes[name])
     return meta, sizes
 
 
@@ -106,6 +109,27 @@ def _shard_paths(path, count):
         raise ValueError("%s: split.count %d but the name is not -NNNNN-of-%05d.gguf"
                          % (path, count, count))
     return [path[:m.start()] + "-%05d-of-%05d.gguf" % (i, count) for i in range(1, count + 1)]
+
+
+def layer_extents(path):
+    """Per layer, the (shard path, absolute file offset, size) of each of its tensors, for a
+    split model starting from the first shard. Used to map page-cache residency to layers."""
+    ext = {}
+    meta, _ = _header(path, ext)
+    shards = _shard_paths(path, int(meta.get("split.count", 1)))
+    per_shard = {path: ext}
+    for p in shards[1:]:
+        per_shard[p] = {}
+        _header(p, per_shard[p])
+    n_layer = int(meta["%s.block_count" % meta.get("general.architecture", "")])
+    out = [[] for _ in range(n_layer)]
+    for p, tensors in per_shard.items():
+        for name, (off, size) in sorted(tensors.items(), key=lambda kv: kv[1][0]):
+            if name.startswith("blk."):
+                il = int(name.split(".")[1])
+                if il < n_layer:
+                    out[il].append((p, off, size))
+    return out
 
 
 def gguf_info(path):
