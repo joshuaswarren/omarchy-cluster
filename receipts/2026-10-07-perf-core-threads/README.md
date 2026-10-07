@@ -1,0 +1,29 @@
+# llama-server threads: performance cores only
+
+2026-10-07. `serve --engine llamacpp` started llama-server with one thread per CPU. On an M1 Max
+under Omarchy Linux that is 10 threads: 8 performance cores (`cpu_capacity` 1024) and 2 efficiency
+cores (485). Every OpenMP op waits for its slowest thread, so the two efficiency cores slowed the
+whole host side. That includes the lm_head the host computes for every token of an iPhone or RPC split.
+
+The engine now defaults to `facts.perf_cores()`. On Linux that is the CPUs at the highest
+`cpu_capacity`; on macOS it is `hw.perflevel0.physicalcpu`. It returns 8 on this M1 Max.
+
+## Measured (M1 Max laptop, Omarchy Linux, llama.cpp 65840ed CPU build, Qwen3-1.7B Q4_K_M)
+
+`llama-bench -p 128 -n 64 -r 3`, `OMP_WAIT_POLICY=ACTIVE`, arms interleaved twice, inside the
+machine's GPU-queue ticket (nothing else ran):
+
+| Threads | Decode tg64 tok/s | Prefill pp128 tok/s |
+|---|---|---|
+| `-t 10` (old default) | 65.44 ± 0.19, 64.87 ± 0.04 | 255.66 ± 0.36, 249.39 ± 0.15 |
+| `-t 8` (new default) | 71.63 ± 0.05, 71.72 ± 0.02 | 348.85 ± 0.19, 333.41 ± 4.51 |
+| `taskset -c 2-9 -t 8` | 71.37 ± 0.02, 71.34 ± 0.05 | 348.87 ± 0.39, 326.78 ± 3.22 |
+
+Decode is about 10% faster and prefill about 34% faster. Pinning to the performance cores adds
+nothing over 8 threads.
+
+The mechanism, measured at 2 threads: two performance cores gave 37.66 and 37.70 tok/s; one efficiency
+plus one performance core gave 23.99 and 24.01; two efficiency cores gave 12.07.
+
+Not measured: the effect on the iPhone split itself, because the phone was unplugged. The earlier
+device run through `serve --engine llamacpp` (33.84 tok/s) used the old 10-thread default.
