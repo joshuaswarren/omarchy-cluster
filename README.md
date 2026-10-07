@@ -138,12 +138,14 @@ ranks agree on the same split; `--split N0,N1` sets it by hand. A request with
 
 The `--engine llamacpp` option serves a GGUF model through llama-server on the
 gateway machine and spreads its layers over llama.cpp RPC servers. Each
-`--rpc-node NAME=GB` has that node's agent start an RPC server: Metal on macOS,
-Vulkan or CPU on Linux. The layers split in proportion to those budgets.
-`--rpc-node HOST:PORT=GB` adds an RPC server started some other way, such as an
-iPhone over USB or a CUDA machine. `--host-layers N` keeps the first N layers on
-the gateway machine's CPU, read from the GGUF on disk. That runs a model a
-little bigger than all the RPC nodes together.
+`--rpc-node NAME` has that node's agent start an RPC server: Metal on macOS,
+Vulkan or CPU on Linux. `--rpc-node HOST:PORT` adds an RPC server started some
+other way, such as an iPhone over USB or a CUDA machine. Each server reports
+its memory, and on Omarchy the agent measures how much the GPU can really
+allocate. `serve` then picks the node order and how many layers stay on the
+gateway machine so that the fewest of them are read from disk, then uses as few
+nodes as it can. `=GB` after a node sets its budget by hand; `--host-layers N`
+keeps exactly N layers on the gateway machine and the nodes in the order given.
 
 The `stop` command stops the gateway and every rank, and sweeps the ports. The
 `status` and `hub` commands print the node table with pinned routes and a 1 Hz
@@ -235,11 +237,12 @@ mlx-community/GLM-4.5-Air-4bit --split 31,15` (rank 0 gets 31 layers).
 
 For a GGUF model over more than two machines, use the llama.cpp engine. Only
 the gateway machine needs the GGUF file. Each RPC server receives its layers
-over the network at load and caches them for the next load:
+over the network at load (`--rpc-cache` keeps them on its disk for the next
+load):
 
 ```sh
 omarchy-cluster serve ~/models/model-00001-of-00004.gguf --engine llamacpp \
-  --rpc-node mac-studio=50 --rpc-node linux-a=57 --rpc-node linux-b=8 \
+  --rpc-node mac-studio --rpc-node linux-a --rpc-node linux-b \
   --rpc-binary linux-a=$HOME/src/llama.cpp/build/bin/ggml-rpc-server
 ```
 

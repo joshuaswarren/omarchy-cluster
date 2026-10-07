@@ -1,0 +1,24 @@
+host page-cache budget 8.83 GB (host 12.9 GB available, headroom 2.0, non-layer 1.07, compute 1.0)
+
+hand-built P (run-P table): host layers 0-4 6.67 GB, paged from disk 0.00 GB, devices used 6
+   x86-gpu      layers  5- 5    2.67 of   2.75 GB
+   x86-cpu      layers  6-12   20.79 of  22.00 GB
+   m2-vulkan    layers 13-35   61.78 of  62.00 GB
+   m1max-vulkan layers 36-55   55.79 of  56.00 GB
+   mac-metal    layers 56-70   41.24 of  42.00 GB
+   m2-cpu       layers 71-78   22.93 of  24.00 GB
+
+measured, M1 Max scratch cleared (avail 60.3 GB): host layers 0-4 6.67 GB, paged from disk 0.00 GB, devices used 5
+   m1max-vulkan layers  5-23   52.82 of  53.30 GB
+   x86-cpu      layers 24-31   21.75 of  23.00 GB
+   m2-cpu       layers 32-39   21.35 of  21.42 GB
+   m2-vulkan    layers 40-63   66.47 of  66.65 GB
+   mac-metal    layers 64-78   42.82 of  42.90 GB
+
+measured, M1 Max as at 02:27Z (avail 51.5 GB): host layers 0-6 12.41 GB, paged from disk 3.58 GB, devices used 6
+   m1max-vulkan layers  7-22   44.41 of  44.50 GB
+   x86-gpu      layers 23-23    2.67 of   2.90 GB
+   x86-cpu      layers 24-31   21.75 of  23.00 GB
+   m2-cpu       layers 32-39   21.35 of  21.42 GB
+   m2-vulkan    layers 40-63   66.47 of  66.65 GB
+   mac-metal    layers 64-78   42.82 of  42.90 GB
