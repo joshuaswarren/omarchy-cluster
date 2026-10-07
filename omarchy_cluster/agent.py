@@ -311,12 +311,16 @@ def _signal_all(pids, sig):
 
 def rpc_start(req):
     """Spawn a llama.cpp RPC server (ggml-rpc-server) for `serve --engine llamacpp
-    --rpc-node`. Binds all interfaces, with -c so a later load reuses weights the
-    server already received. Binary: req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH."""
+    --rpc-node`. Binds all interfaces. "cache": true adds -c, so a later load reuses
+    weights from local disk; off by default because the server then writes this node's
+    whole share to disk (42 GB would have filled a 99% full Mac system disk). Binary:
+    req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH."""
     log_dir = os.path.expanduser("~/.local/share/omarchy-cluster")
     os.makedirs(log_dir, exist_ok=True)
     binary = req.get("binary") or os.environ.get("OMARCHY_CLUSTER_RPC_SERVER") or "ggml-rpc-server"
-    cmd = [binary, "-H", "0.0.0.0", "-p", str(int(req.get("port", 50060))), "-c"]
+    cmd = [binary, "-H", "0.0.0.0", "-p", str(int(req.get("port", 50060)))]
+    if req.get("cache"):
+        cmd.append("-c")
     if req.get("threads"):
         cmd += ["-t", str(int(req["threads"]))]
     if req.get("device"):
@@ -326,6 +330,34 @@ def rpc_start(req):
         pid = subprocess.Popen(cmd, cwd=log_dir, stdout=lf, stderr=subprocess.STDOUT,
                                stdin=subprocess.DEVNULL, start_new_session=True).pid
     return {"pid": pid, "log": log, "cmd": cmd}
+
+
+def gpu_cap(req=None):
+    """Bytes one process can allocate on this node's Vulkan GPU (vkprobe), cached per
+    boot. Run with HK_SYSMEM at the machine's RAM so the address space, not the heap
+    setting, is what stops it. {"alloc_cap_bytes": None} where there is no such GPU."""
+    if sys.platform != "linux":
+        return {"alloc_cap_bytes": None}
+    path = os.path.expanduser("~/.local/state/omarchy-cluster/gpu-cap.json")
+    boot = facts_mod.boot_id()
+    try:
+        with open(path) as f:
+            cached = json.load(f)
+        if cached.get("boot_id") == boot and not (req or {}).get("fresh"):
+            return cached
+    except (OSError, ValueError):
+        pass
+    env = dict(os.environ, HK_SYSMEM=str(facts_mod.memory_total_bytes()),
+               PYTHONPATH=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    p = subprocess.run([sys.executable, "-m", "omarchy_cluster.vkprobe"], env=env,
+                       capture_output=True, text=True, timeout=300)
+    if p.returncode:
+        return {"alloc_cap_bytes": None, "error": p.stderr.strip()[-300:]}
+    res = dict(json.loads(p.stdout), boot_id=boot)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(res, f)
+    return res
 
 
 def rank_stop(req):
@@ -445,7 +477,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start"):
+        if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start", "/v1/gpu-cap"):
             token = _read_token()
             supplied = self.headers.get("X-Cluster-Token", "")
             if not token or not hmac.compare_digest(token, supplied):
@@ -459,6 +491,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, rank_start(req))
                 if self.path == "/v1/rpc/start":
                     return self._json(200, rpc_start(req))
+                if self.path == "/v1/gpu-cap":
+                    return self._json(200, gpu_cap(req))
                 return self._json(200, rank_stop(req))
             except KeyError as e:
                 return self._json(400, {"error": "missing field %s" % e})

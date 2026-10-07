@@ -501,17 +501,15 @@ def _serve_llamacpp(args):
 
 
 def _parse_rpc_nodes(values):
-    """`--rpc-node NAME[=GB]` or `HOST:PORT=GB` values -> [(name, budget bytes or None)].
-    HOST:PORT is an rpc-server started by something else; it needs a budget."""
+    """`--rpc-node NAME[=GB]` or `HOST:PORT[=GB]` values -> [(name, budget bytes or None)].
+    HOST:PORT is an rpc-server started by something else. None means measure it."""
     out = []
     for v in values:
         name, _, gb = v.partition("=")
-        if ":" in name and not gb:
-            sys.exit("--rpc-node %s: an existing HOST:PORT endpoint needs =GB" % v)
         try:
             out.append((name, int(float(gb) * 1e9) if gb else None))
         except ValueError:
-            sys.exit("--rpc-node %s: expected NAME, NAME=GB or HOST:PORT=GB" % v)
+            sys.exit("--rpc-node %s: expected NAME, NAME=GB, HOST:PORT or HOST:PORT=GB" % v)
     return out
 
 
@@ -524,68 +522,103 @@ def _agent_post(node, path, payload, timeout=30):
         return json.loads(r.read())
 
 
+def _plan_devices(devs, info, ctx, host_ram_avail, host_layers=None):
+    """Budgets and placement for the rpc devices. devs: dicts with name, ep, machine,
+    budget (bytes, or None to measure), free_bytes and total_bytes (from the rpc hello),
+    ram_avail and ram_total (the machine's, or None), va_cap (or None). A device whose
+    llama.cpp total matches its machine's RAM is a CPU device; anything else is a GPU.
+    Returns (devices in placement order with weights, host_layers, host_bytes,
+    paged_bytes); devices that get no layer are dropped."""
+    from . import llamacpp_engine as lce
+    for d in devs:
+        total, ram_total = d.get("total_bytes"), d.get("ram_total")
+        d["gpu"] = not (total and ram_total and abs(total - ram_total) <= 0.03 * ram_total)
+        d["measured"] = d["budget"] is None
+        if d["measured"]:
+            if d.get("free_bytes") is None:
+                raise ValueError("--rpc-node %s: no =GB and the rpc-server did not report its memory" % d["name"])
+            d["budget"] = lce.device_budget(d["free_bytes"], d.get("ram_avail"), d.get("va_cap"), d["gpu"])
+    lce.pool_machines([d for d in devs if d["measured"]])
+    host_cache = lce.host_budget(host_ram_avail, info)
+    plan = lce.place(info, [d["budget"] for d in devs], host_cache, ctx,
+                     host_layers=host_layers, keep_order=host_layers is not None)
+    ordered = []
+    for i, w in zip(plan["order"], plan["weights"]):
+        if w:
+            ordered.append(dict(devs[i], weight=w))
+    return ordered, plan["host_layers"], plan["host_bytes"], plan["paged_bytes"]
+
+
 def _serve_llamacpp_nodes(args, info):
     """GGUF on this host's llama-server, every layer spread over llama.cpp RPC servers
-    that each named node's agent starts (this host too, if listed). Weights per node:
-    --rpc-node NAME=GB, else 90 percent of the node's free memory."""
-    from . import iosnode, llamacpp_engine
+    that each named node's agent starts (this host too, if listed) or that run already
+    (HOST:PORT). Starts and greets every rpc-server first, then sizes and places."""
+    from . import facts as facts_mod, iosnode, llamacpp_engine
     wanted = _parse_rpc_nodes(args.rpc_node)
     binaries = dict(v.split("=", 1) for v in args.rpc_binary)
     nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
+    by_ip = {d["ip"]: d for d in nodes.values()}
     local = platform.node().split(".")[0]
-    caps, eps = [], []
-    for name, budget in wanted:
-        if ":" in name:
-            caps.append(budget)
-            continue
-        if name not in nodes:
-            sys.exit("--rpc-node %s: not discovered (have %s)" % (name, ", ".join(sorted(nodes))))
-        free = nodes[name]["facts"].get("memory_free_bytes") or 0
-        caps.append(budget or int(free * llamacpp_engine.HOST_FIT_FRACTION))
-    try:
-        weights = llamacpp_engine.tensor_split(info, caps, args.ctx, host_layers=args.host_layers)
-    except ValueError as e:
-        sys.exit(str(e))
-    print("%s: %d layers, %.2f GB in %d shard(s) over %s" % (
-        os.path.basename(args.model), info["n_layer"], info["total_bytes"] / 1e9, info["shards"],
-        ", ".join("%s %.1f GB" % (n, c / 1e9) for (n, _), c in zip(wanted, caps))))
-    first = args.host_layers
-    for (name, _), cap, k in zip(wanted, caps, weights):
-        layers = min(k, info["n_layer"] - first)  # the last count also holds the output slot
-        gb = sum(info["per_layer"][first:first + layers]) / 1e9 if info.get("per_layer") else 0.0
-        print("  %s: layers %s, %.1f of %.1f GB" % (
-            name, "%d-%d" % (first, first + layers - 1) if layers else "none", gb, cap / 1e9))
-        first += layers
     os.makedirs(os.path.expanduser("~/.local/state/omarchy-cluster"), exist_ok=True)
     state = {"engine": "llamacpp", "stages": [], "local_pids": [], "gateway_port": args.port,
              "engine_port": args.engine_port}
-    for name, _ in wanted:
-        if ":" in name:  # started elsewhere: just check it answers
+    devs = []
+    for name, budget in wanted:
+        if ":" in name:  # started elsewhere: check it answers
             host, port = name.rsplit(":", 1)
-            eps.append(name)
+            node, ep = by_ip.get(host), name
             try:
-                print("rpc-server %s: %s" % (name, iosnode.wait_rpc(host, int(port), deadline_s=30.0)))
+                hello = iosnode.wait_rpc(host, int(port), deadline_s=30.0)
             except OSError as e:
                 sys.exit("rpc-server %s did not answer: %s" % (name, e))
-            continue
-        node = nodes[name]
-        res = _agent_post(node, "/v1/rpc/start", {"binary": binaries.get(name),
-                                                  "port": args.rpc_node_port})
-        state["stages"].append({"node": node["ip"], "pid": str(res["pid"]), "port": args.rpc_node_port})
-        _write_state(state)
-        ip = "127.0.0.1" if name == local else _pick_route_ip(
-            node, [{"node": local}, {"node": name}], name)
-        eps.append("%s:%d" % (ip, args.rpc_node_port))
-        try:
-            hello = iosnode.wait_rpc(ip, args.rpc_node_port, deadline_s=120.0)
-        except OSError as e:
-            sys.exit("rpc-server on %s (%s) did not answer; log %s on that node: %s"
-                     % (name, eps[-1], res.get("log"), e))
-        print("rpc-server %s at %s: %s" % (name, eps[-1], hello))
+        else:
+            if name not in nodes:
+                sys.exit("--rpc-node %s: not discovered (have %s)" % (name, ", ".join(sorted(nodes))))
+            node = nodes[name]
+            res = _agent_post(node, "/v1/rpc/start", {"binary": binaries.get(name), "port": args.rpc_node_port,
+                                                      "cache": args.rpc_cache})
+            state["stages"].append({"node": node["ip"], "pid": str(res["pid"]), "port": args.rpc_node_port})
+            _write_state(state)
+            ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name)
+            ep, host = "%s:%d" % (ip, args.rpc_node_port), node["ip"]
+            try:
+                hello = iosnode.wait_rpc(ip, args.rpc_node_port, deadline_s=120.0)
+            except OSError as e:
+                sys.exit("rpc-server on %s (%s) did not answer; log %s on that node: %s"
+                         % (name, ep, res.get("log"), e))
+        print("rpc-server %s at %s: %s" % (name, ep, hello))
+        f = (node or {}).get("facts") or {}
+        va = None
+        if budget is None and node and f.get("gpu_backend") == "vulkan":
+            try:
+                va = _agent_post(node, "/v1/gpu-cap", {}, timeout=320).get("alloc_cap_bytes")
+            except OSError as e:
+                print("  %s: no Vulkan allocation cap (%s); using the reported heap" % (name, e))
+        devs.append({"name": name, "ep": ep, "machine": host, "budget": budget,
+                     "free_bytes": hello.get("free_bytes"), "total_bytes": hello.get("total_bytes"),
+                     "ram_avail": f.get("memory_free_bytes"), "ram_total": f.get("memory_total_bytes"),
+                     "va_cap": va})
+    try:
+        ordered, host_layers, host_bytes, paged = _plan_devices(
+            devs, info, args.ctx, facts_mod.memory_free_bytes(), args.host_layers)
+    except ValueError as e:
+        sys.exit(str(e))
+    print("%s: %d layers, %.2f GB in %d shard(s). Host: %s, %.2f GB, %.2f GB of it beyond the host's "
+          "page cache" % (os.path.basename(args.model), info["n_layer"], info["total_bytes"] / 1e9, info["shards"],
+                          "layers 0-%d" % (host_layers - 1) if host_layers else "no layers", host_bytes / 1e9,
+                          paged / 1e9))
+    first = host_layers
+    for d in ordered:
+        layers = min(d["weight"], info["n_layer"] - first)  # the last count also holds the output slot
+        gb = sum(info["per_layer"][first:first + layers]) / 1e9 if info.get("per_layer") else 0.0
+        print("  %s: layers %d-%d, %.1f of %.1f GB%s" % (
+            d["name"], first, first + layers - 1, gb, d["budget"] / 1e9, " (measured)" if d["measured"] else ""))
+        first += layers
+    weights = [d["weight"] for d in ordered]
     cmd = [sys.executable, "-m", "omarchy_cluster.llamacpp_engine", "--model", args.model,
            "--llama-server", args.llama_server, "--port", str(args.engine_port),
            "--server-port", str(args.engine_port + 1), "--ctx", str(args.ctx),
-           "--rpc", ",".join(eps), "--tensor-split", ",".join("%g" % w for w in weights),
+           "--rpc", ",".join(d["ep"] for d in ordered), "--tensor-split", ",".join("%g" % w for w in weights),
            "--ngl", str(sum(weights))]
     engine, log = _spawn(cmd, "llamacpp-engine.log")
     state["local_pids"].append(engine.pid)
@@ -737,14 +770,20 @@ def main(argv=None):
                    help="force this many of the last layers onto the iPhone (llamacpp)")
     p.add_argument("--rpc-port", type=int, default=50052, help="local port of the USB forward")
     p.add_argument("--rpc-node", action="append", default=[], metavar="NAME[=GB]",
-                   help="llamacpp: run a llama.cpp RPC server on this discovered node (repeat; "
-                        "include this host to use it too); layers spread by GB, default 90%% of free")
+                   help="llamacpp: a llama.cpp RPC server on this discovered node, or HOST:PORT for one "
+                        "started elsewhere (repeat). Without =GB the budget is measured: what llama.cpp "
+                        "reports free on the device, the node's RAM minus headroom, its Vulkan "
+                        "allocation cap")
     p.add_argument("--rpc-binary", action="append", default=[], metavar="NAME=PATH",
                    help="llamacpp: ggml-rpc-server path on NAME (default: the node's PATH)")
     p.add_argument("--rpc-node-port", type=int, default=50060, help="llamacpp: rpc-server port on each node")
-    p.add_argument("--host-layers", type=int, default=0,
-                   help="llamacpp with --rpc-node: keep the first N layers on this host's CPU, "
-                        "mmapped from the GGUF (pages from disk when RAM runs out)")
+    p.add_argument("--rpc-cache", action="store_true",
+                   help="llamacpp: rpc-servers keep received weights on local disk (-c) for faster reloads; "
+                        "each node then needs disk for its whole share")
+    p.add_argument("--host-layers", type=int, default=None,
+                   help="llamacpp with --rpc-node: keep exactly the first N layers on this host's CPU "
+                        "(mmapped from the GGUF) and the nodes in the given order. Default: choose the "
+                        "order and N that page the fewest host bytes from disk, then use the fewest nodes")
     p.add_argument("--ctx", type=int, default=2048)
     p.add_argument("--links", default=None)
     p.add_argument("--no-decode", action="append", default=[])

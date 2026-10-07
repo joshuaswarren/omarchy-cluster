@@ -198,6 +198,86 @@ def tensor_split(info, caps_bytes, ctx_tokens, host_layers=0):
     return counts
 
 
+# ponytail: fixed reserves for llama.cpp compute buffers + KV beyond the weights; the
+# measured bound tonight is ~1.3 GB spare on a 4 GB CUDA card that ran one GLM-5.3
+# layer. Measure per device (llama.cpp prints buffer sizes at -v) if a run fails here.
+GPU_RESERVE = 1_000_000_000
+CPU_RESERVE = 500_000_000
+NODE_HEADROOM = 6_000_000_000   # RAM left free on every rpc node
+HOST_HEADROOM = 2_000_000_000   # host page cache is reclaimable; less is kept back there
+HOST_COMPUTE = 1_000_000_000    # llama-server's own buffers on the host
+
+
+def device_budget(dev_free, ram_avail=None, va_cap=None, gpu=True):
+    """Bytes of layers one rpc-server device can take: the least of what llama.cpp
+    reports free on it, the machine's available RAM minus NODE_HEADROOM (Apple memory is
+    unified, so a GPU heap can claim more than the RAM that is free) and a measured GPU
+    address-space cap (Honeykrisp stops at 63 GiB on an M2 Max whose heap says 80), less
+    the device's compute reserve."""
+    limit = min(x for x in (dev_free, None if ram_avail is None else ram_avail - NODE_HEADROOM, va_cap)
+                if x is not None)
+    return max(0, int(limit - (GPU_RESERVE if gpu else CPU_RESERVE)))
+
+
+def pool_machines(devices):
+    """Two rpc-servers on one machine (GPU + CPU) share its RAM: cap their sum at the
+    machine's ram_avail minus NODE_HEADROOM and their reserves, taking it from the CPU
+    device first. devices: dicts with budget, machine, ram_avail (or None), gpu."""
+    for m in {d["machine"] for d in devices}:
+        group = [d for d in devices if d["machine"] == m]
+        ram = next((d["ram_avail"] for d in group if d.get("ram_avail")), None)
+        if ram is None or len(group) < 2:
+            continue
+        room = ram - NODE_HEADROOM - sum(GPU_RESERVE if d["gpu"] else CPU_RESERVE for d in group)
+        for d in sorted(group, key=lambda d: d["gpu"]):  # CPU devices give way first
+            others = sum(o["budget"] for o in group if o is not d)
+            d["budget"] = max(0, min(d["budget"], room - others))
+    return devices
+
+
+def host_budget(ram_avail, info):
+    """Bytes of host layers that stay resident in the host's page cache."""
+    return max(0, int(ram_avail - HOST_HEADROOM - info["other_bytes"] - HOST_COMPUTE))
+
+
+def place(info, budgets, host_cache, ctx_tokens, host_layers=None, keep_order=False):
+    """Device order and host layer count for the llama.cpp split. Minimizes the host
+    bytes paged from disk (host layers beyond host_cache), then the devices used (RPC
+    hops), then the host layers (devices outrun the host CPU). Each device takes one
+    contiguous block, so the order matters. host_layers fixes the count, keep_order the
+    order. Returns {"order", "weights", "host_layers", "host_bytes", "paged_bytes"};
+    weights follow order. Raises when no order and host count fits."""
+    import itertools
+    n = info["n_layer"]
+    per_layer = info.get("per_layer") or [(info["total_bytes"] - info["other_bytes"]) / n] * n
+    host_bytes = [sum(per_layer[:h]) for h in range(n + 1)]
+    orders = [tuple(range(len(budgets)))] if keep_order or len(budgets) > 8 else \
+        itertools.permutations(range(len(budgets)))
+    hs = [host_layers] if host_layers is not None else range(n + 1)
+    best = None
+    for order in orders:
+        caps = [budgets[i] for i in order]
+        floor = None
+        for h in hs:
+            paged = max(0, host_bytes[h] - host_cache)
+            if floor is not None and paged > floor:
+                break  # more host layers only add paging past the cheapest fit
+            try:
+                w = tensor_split(info, caps, ctx_tokens, host_layers=h)
+            except ValueError:
+                continue
+            floor = paged if floor is None else floor
+            key = (paged, sum(1 for x in w if x), h)
+            if best is None or key < best[0]:
+                best = (key, list(order), w, h)
+    if best is None:
+        raise ValueError("no device order fits %.1f GB of layers in %s GB plus the host" % (
+            sum(per_layer) / 1e9, ", ".join("%.1f" % (b / 1e9) for b in budgets)))
+    (paged, _, _), order, w, h = best
+    return {"order": order, "weights": w, "host_layers": h, "host_bytes": host_bytes[h],
+            "paged_bytes": paged}
+
+
 def server_cmd(llama_server, model, port, ctx_tokens, threads, rpc=None, n_rpc_layers=0,
                split=None, ngl=999):
     """llama-server argv. With `split`, `rpc` is a list of N endpoints and the last

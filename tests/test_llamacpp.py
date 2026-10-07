@@ -250,6 +250,8 @@ def test_rpc_hello_speaks_the_rpc_handshake():
             conn.sendall(struct.pack("<Q", len(rsp)) + rsp)
             got["count"] = conn.recv(9)
             conn.sendall(struct.pack("<Q", 4) + struct.pack("<I", 1))
+            got["mem"] = conn.recv(13)
+            conn.sendall(struct.pack("<Q", 16) + struct.pack("<QQ", 60 * GB, 86 * GB))
 
     t = threading.Thread(target=fake_rpc_server, daemon=True)
     t.start()
@@ -257,9 +259,11 @@ def test_rpc_hello_speaks_the_rpc_handshake():
     t.join(2)
     srv.close()
     assert res["version"] == "7.0.0" and res["devices"] == 1
+    assert (res["free_bytes"], res["total_bytes"]) == (60 * GB, 86 * GB)
     assert got["hello"][0] == iosnode.RPC_CMD_HELLO
     assert struct.unpack("<Q", got["hello"][1:9])[0] == iosnode.RPC_CONN_CAPS_SIZE
     assert got["count"] == bytes([iosnode.RPC_CMD_DEVICE_COUNT]) + bytes(8)
+    assert got["mem"] == bytes([iosnode.RPC_CMD_GET_DEVICE_MEMORY]) + struct.pack("<QI", 4, 0)
 
 
 def write_gguf(path, meta, tensors):
@@ -322,7 +326,9 @@ def test_server_cmd_spreads_all_layers_over_n_rpc_devices():
         lce.server_cmd("llama-server", "m.gguf", 8032, 2048, 8, rpc=["a:1"], split=[1.0, 2.0])
 
 
-def test_agent_starts_rpc_server_with_cache_on_all_interfaces(tmp_path, monkeypatch):
+def test_agent_starts_rpc_server_on_all_interfaces_with_cache_only_on_request(tmp_path, monkeypatch):
+    """-c writes the node's whole share to its disk (42 GB on a 99% full Mac system disk),
+    so the cache is opt-in."""
     from omarchy_cluster import agent
     seen = {}
 
@@ -335,8 +341,10 @@ def test_agent_starts_rpc_server_with_cache_on_all_interfaces(tmp_path, monkeypa
     monkeypatch.setattr(agent.subprocess, "Popen", FakePopen)
     res = agent.rpc_start({"binary": "/opt/llama/ggml-rpc-server", "port": 50060, "threads": 8})
     assert res["pid"] == 777
-    assert seen["cmd"] == ["/opt/llama/ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-c", "-t", "8"]
+    assert seen["cmd"] == ["/opt/llama/ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-t", "8"]
     assert seen["kw"]["start_new_session"] is True
+    agent.rpc_start({"binary": "/opt/llama/ggml-rpc-server", "port": 50060, "cache": True})
+    assert seen["cmd"] == ["/opt/llama/ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-c"]
     monkeypatch.setenv("OMARCHY_CLUSTER_RPC_SERVER", "/x/rpc")
     agent.rpc_start({"port": 50061})
     assert seen["cmd"][:5] == ["/x/rpc", "-H", "0.0.0.0", "-p", "50061"]
@@ -350,13 +358,12 @@ def test_rpc_node_args_parse_names_and_optional_gb():
         cli._parse_rpc_nodes(["bad=x"])
 
 
-def test_rpc_node_accepts_a_raw_endpoint_with_a_budget():
+def test_rpc_node_accepts_a_raw_endpoint_with_or_without_a_budget():
     """An rpc-server some other tool started (CUDA box, USB-forwarded phone) joins as
-    HOST:PORT=GB; there are no agent facts for it, so the budget is required."""
+    HOST:PORT; without =GB its budget comes from the memory it reports over RPC."""
     from omarchy_cluster import cli
-    assert cli._parse_rpc_nodes(["10.0.0.9:50052=3.5"]) == [("10.0.0.9:50052", int(3.5 * GB))]
-    with pytest.raises(SystemExit):
-        cli._parse_rpc_nodes(["10.0.0.9:50052"])
+    assert cli._parse_rpc_nodes(["10.0.0.9:50052=3.5", "10.0.0.9:50053"]) == [
+        ("10.0.0.9:50052", int(3.5 * GB)), ("10.0.0.9:50053", None)]
 
 
 def test_host_layers_stay_on_the_host_cpu_and_are_not_charged_to_devices():

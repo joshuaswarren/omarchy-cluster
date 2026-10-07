@@ -25,6 +25,7 @@ import time
 
 PHONE_CAP_BYTES = 2_200_000_000
 RPC_PORT = 50052
+RPC_CMD_GET_DEVICE_MEMORY = 11
 RPC_CMD_HELLO = 14
 RPC_CMD_DEVICE_COUNT = 15
 RPC_CONN_CAPS_SIZE = 24
@@ -90,7 +91,10 @@ def _recv_exact(sock, n):
 
 
 def rpc_hello(host="127.0.0.1", port=RPC_PORT, timeout=5.0):
-    """HELLO then DEVICE_COUNT. Returns {"version": "M.m.p", "devices": n, "rtt_ms": x}."""
+    """HELLO, DEVICE_COUNT, then GET_DEVICE_MEMORY for device 0. Returns {"version":
+    "M.m.p", "devices": n, "rtt_ms": x, "free_bytes": f, "total_bytes": t}: free and total
+    are what llama.cpp itself sees on that device (a Vulkan heap, Metal's working set,
+    system RAM for CPU), left out if the server does not answer the memory query."""
     with socket.create_connection((host, port), timeout=timeout) as s:
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         s.sendall(bytes([RPC_CMD_HELLO]) + struct.pack("<Q", RPC_CONN_CAPS_SIZE)
@@ -102,8 +106,15 @@ def rpc_hello(host="127.0.0.1", port=RPC_PORT, timeout=5.0):
         size = struct.unpack("<Q", _recv_exact(s, 8))[0]
         (count,) = struct.unpack("<I", _recv_exact(s, size)[:4])
         rtt_ms = (time.perf_counter() - t) * 1e3
-    return {"version": "%d.%d.%d" % (major, minor, patch), "devices": count,
-            "rtt_ms": round(rtt_ms, 3)}
+        res = {"version": "%d.%d.%d" % (major, minor, patch), "devices": count,
+               "rtt_ms": round(rtt_ms, 3)}
+        try:
+            s.sendall(bytes([RPC_CMD_GET_DEVICE_MEMORY]) + struct.pack("<Q", 4) + struct.pack("<I", 0))
+            size = struct.unpack("<Q", _recv_exact(s, 8))[0]
+            res["free_bytes"], res["total_bytes"] = struct.unpack("<QQ", _recv_exact(s, size)[:16])
+        except (OSError, struct.error):
+            pass
+    return res
 
 
 def wait_rpc(host="127.0.0.1", port=RPC_PORT, deadline_s=60.0):
