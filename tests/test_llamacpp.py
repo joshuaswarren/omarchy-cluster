@@ -492,9 +492,12 @@ def test_resident_bytes_sees_the_page_cache(tmp_path):
     ext = lce.layer_extents(str(p))
     if paging.resident_fraction(ext[1]) < 1.0:
         pytest.skip("this filesystem does not back mmap with the page cache (ZFS)")
-    fd = os.open(str(p), os.O_RDONLY)
+    fd = os.open(str(p), os.O_RDWR)
+    os.fsync(fd)  # dirty pages cannot be dropped
     os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
     os.close(fd)
+    if paging.resident_fraction(ext[1]) == 1.0:
+        pytest.skip("this filesystem cannot evict its page cache (tmpfs)")
     assert paging.resident_fraction(ext[1]) < 1.0
 
 
