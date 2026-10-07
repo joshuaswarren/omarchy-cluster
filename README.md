@@ -16,13 +16,16 @@ machines you own together and you can run models too big for any one of them.
 Even a split too slow for chat can keep working on your coding projects in the
 background.
 
-On real hardware, 2026-10-07: GLM-5.3-Flash (156.8 GB, more than any one of
-these machines holds) split across four Macs. A 128 GB Mac Studio on macOS
-(Metal) took 14 layers. Two MacBook Pros on Omarchy Linux (Vulkan), an M2 Max
-and an M1 Max, took 17 and 12. A 13-inch M1 MacBook Pro on Omarchy Linux (CPU)
-took the last 3 and hosted the endpoint. Two greedy requests returned the same
-text and decoded at 1.36 tokens per second (the first, cold) and 1.54. Loading
-took 1055 seconds over 2.5 Gb Ethernet.
+On real hardware, 2026-10-07: GLM-5.3 (753B parameters, 216.7 GB) ran as one
+endpoint across five machines: a Mac Studio on macOS (Metal), three MacBook
+Pros on Omarchy Linux (an M2 Max on Vulkan and CPU, an M1 Max on Vulkan, and a
+13-inch M1 that hosted the endpoint), and an x86 laptop on Omarchy Linux with a
+4 GB NVIDIA GPU (CUDA and CPU). After a first request at 0.34 tokens per second,
+five more decoded at a median 0.39 (0.36 to 0.40). Loading took 2724 seconds.
+
+The same night, GLM-5.3-Flash (156.8 GB) ran on four of those Macs. Two greedy
+requests returned the same text and decoded at 1.36 tokens per second (the
+first, cold) and 1.54. Loading took 1055 seconds over 2.5 Gb Ethernet.
 
 On 2026-10-06: GLM-4.5-Air (106B parameters, 60.1 GB at 4 bits) split across
 the Mac Studio (31 layers) and the M1 Max (15 layers) over Thunderbolt and ran
@@ -35,7 +38,8 @@ pairs, and pinned the fastest routes in 42.6 seconds.
 A split does not make a model faster than one machine that can hold it. For a
 model that fits on the Mac Studio, the Mac Studio alone is faster (see the
 second table). Use a split when the model is too big for any one machine you
-have. GLM-5.3-Flash fits on none of these four. GLM-4.5-Air fits on the idle
+have. Neither GLM-5.3 nor GLM-5.3-Flash fits on any one of these machines.
+GLM-4.5-Air fits on the idle
 Mac Studio by itself; in that run the Mac Studio was also serving other models
 and had 50 to 66 GB free, and the split left at least 22 percent of its memory
 free.
@@ -49,7 +53,10 @@ Try it on a node (Omarchy Linux; macOS install below):
 python3 -m venv ~/.local/share/omarchy-cluster/venv && ~/.local/share/omarchy-cluster/venv/bin/pip install git+https://github.com/joshuaswarren/omarchy-cluster.git && ~/.local/share/omarchy-cluster/venv/bin/omarchy-cluster install-agent
 ```
 
-Then connect two machines and serve a model: Quickstart below. The
+Then connect two machines and serve a model: Quickstart below. The GLM-5.3 run
+is recorded in
+[receipts/2026-10-07-glm53-full-7device](receipts/2026-10-07-glm53-full-7device),
+the
 GLM-5.3-Flash run is recorded in
 [receipts/2026-10-07-glm53-flash-4node](receipts/2026-10-07-glm53-flash-4node)
 and the GLM-4.5-Air run in [docs/demo.cast](docs/demo.cast)
@@ -65,6 +72,7 @@ Capacity: models that do not fit on the Omarchy machines.
 
 | Model | Weights | Nodes | Layers per node | Decode | Prompt time |
 |---|---|---|---|---|---|
+| GLM-5.3 UD-IQ1_S (llama.cpp RPC, 79 layers), 2026-10-07 | 216.7 GB | MacBook Pro M1 13-inch (Omarchy, CPU, host) + x86 laptop Quadro M1200 4 GB (Omarchy, CUDA + CPU) + MacBook Pro M1 Max (Omarchy, Vulkan) + Mac Studio M1 Ultra 128 GB (Metal) + MacBook Pro M2 Max (Omarchy, CPU + Vulkan) | 11 + 1 + 8 + 14 + 15 + 8 + 23 | 0.34 tok/s cold; then median 0.39 tok/s (0.36 to 0.40, n = 5), 64 tokens each (max_tokens); texts differ, see receipt | median 28.8 s for 20 tokens (25.1 to 34.4, n = 6, uncached) |
 | GLM-5.3-Flash UD-IQ4_XS (llama.cpp RPC, 46 layers), 2026-10-07 | 156.8 GB | Mac Studio M1 Ultra 128 GB (Metal) + MacBook Pro M2 Max + MacBook Pro M1 Max (Omarchy, Vulkan) + MacBook Pro M1 13-inch (Omarchy, CPU), 2.5 Gb Ethernet | 14 + 17 + 12 + 3 | 1.36 tok/s (first request, cold) and 1.54 tok/s, 64 tokens each (max_tokens), same text | 13.6 s for 20 tokens (first request; the second hit the prompt cache) |
 | GLM-4.5-Air-4bit (glm4_moe, 46 layers), 2026-10-06 | 60.1 GB | Mac Studio M1 Ultra 128 GB + MacBook Pro M1 Max 64 GB, Thunderbolt | 31 + 15 | 0.87 and 0.86 tok/s, 64 tokens, agree | 15.5 s, 13.2 s, 16.1 s |
 
