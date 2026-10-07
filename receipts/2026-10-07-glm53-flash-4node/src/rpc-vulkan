@@ -1,0 +1,6 @@
+#!/bin/sh
+# rpc-server wrapper used on the Omarchy (Vulkan) nodes for this run.
+# HK_SYSMEM sizes the Honeykrisp heap in bytes: write the digits, "86e9" reads as 0.
+# Drops -c: rpc-server -c writes every large tensor of this node's share to local disk.
+for a; do shift; [ "$a" = -c ] || set -- "$@" "$a"; done
+HK_SYSMEM=${HK_SYSMEM:-86000000000} exec "$HOME/src/llama.cpp/build-vulkan/bin/ggml-rpc-server" "$@"
