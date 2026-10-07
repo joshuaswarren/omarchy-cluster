@@ -106,3 +106,25 @@ entries are its IP address in the run. All paths are checked on each node before
   are `omarchy-cluster guard`, run on the host, where it can always stop the run (amended before the
   run, when the command landed). Using 90 percent or more of each node's RAM is the target, not a
   limit.
+
+## Per-layer paging observation (added before the run; observation only)
+
+The arms, their order, their settings and their stop rules are unchanged. During every timed request
+of every arm, `python3 -m omarchy_cluster.paging` (commit `22d628a`) writes one line per second to
+a file, so the paging that the host's layers cost can be ranked before anything is pinned or moved:
+
+- On every node: the counters since the last line (Linux: major faults, pages read in, swap in and
+  out; macOS: page-ins, swap-ins, swap-outs). The Vulkan, Metal and CUDA ranks hold their layers in
+  device memory, so these are expected to be flat; a node where they are not is a finding.
+- On the host only, with `--model <shard 1> --layers A-B` for the layers it maps: the share of each
+  layer's pages in the page cache, by `mincore` over that layer's tensor ranges.
+
+Reported in the receipt, per arm: faults and pages read per token (the counters over each request,
+divided by its 64 tokens); per host layer, mean and minimum cached share and the bytes the kernel
+re-reads per token if the layer is evicted (uncached share times its size); and the layers ranked by
+that figure. Its sum is compared with the pages read in per token and with the host paging check;
+if they disagree by more than 2x, the ranking is not reported as a ranking. The sampler adds one
+process at one sample per second to the host; a first request without it, against the same request
+with it, is run before arm A and its difference is reported. Page-cache residency needs a filesystem
+that backs mmap with the page cache; the host's is checked first (a cached shard reads above 0).
+This measures where the paging is. It does not claim that pinning or moving a layer helps.
