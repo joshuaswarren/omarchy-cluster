@@ -28,9 +28,11 @@ loading. Since then:
 - Both Vulkan ranks run one private Mesa driver, not the system packages (the two nodes' packages
   differ: 26.2.2 on the M1 Max, 26.2.3 on the M2 Max). It is built from honeykrisp-omarchy-v3
   `6543eeb7df7` (has `HK_LARGE_CONSTANTS`, on by default, and bf16), the same `.so` staged on both
-  nodes, and selected per rank with `--rpc-env NAME=VK_DRIVER_FILES=<its ICD json>`. Before the load,
-  the `.so` sha256 on each node (the two must match) and `vulkaninfo --summary` run with the same
-  `VK_DRIVER_FILES` (driver info) are recorded for the receipt. The first run used the system driver.
+  nodes, and selected per rank with `--rpc-env NAME=VK_DRIVER_FILES=<its ICD json>` (an absolute path:
+  the agent passes the value as is, with no `~` expansion). Staged 2026-10-07 at the same path on both
+  nodes: `libvulkan_asahi.so` sha256 `3546bcafe8ed3995d091debcc2fb00803087e0074a88d7ebfe681071c58e57d0`
+  on each, checked on each node. Before the load the sha256 is checked again and `vulkaninfo --summary`
+  run with the same `VK_DRIVER_FILES` (driver info) is recorded. The first run used the system driver.
 - For arm C: the Mesa change behind `HK_LARGE_CONSTANTS` (`9e3f6c56196`) passed its independent review
   (w7J), and the M2 Max (G14C) passed the same unfiltered `MUL_MAT` and `MUL_MAT_ID` correctness check
   against CPU that the M1 Max (G13C) passed. Every arm sets the flag explicitly (`=0` in A and B, `=1`
