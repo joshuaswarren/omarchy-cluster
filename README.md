@@ -16,10 +16,17 @@ machines you own together and you can run models too big for any one of them.
 Even a split too slow for chat can keep working on your coding projects in the
 background.
 
-On real hardware, 2026-10-06: GLM-4.5-Air (106B parameters, 60.1 GB at 4 bits)
-split across a 128 GB Mac Studio on macOS (Metal, 31 layers) and a 64 GB
-MacBook Pro M1 Max on Omarchy Linux (Vulkan, 15 layers) over Thunderbolt. It
-ran at 0.87 tokens per second, with both machines agreeing on every token. Two
+On real hardware, 2026-10-07: GLM-5.3-Flash (156.8 GB, more than any one of
+these machines holds) split across four Macs. A 128 GB Mac Studio on macOS
+(Metal) took 14 layers. A 96 GB M2 Max and a 64 GB M1 Max on Omarchy Linux
+(Vulkan) took 17 and 12. A 16 GB M1 on Omarchy Linux (CPU) took the last 3 and
+hosted the endpoint. It decoded at 1.39 and 1.57 tokens per second, and two
+greedy requests returned the same text. Loading took 1055 seconds over
+2.5 Gb Ethernet.
+
+On 2026-10-06: GLM-4.5-Air (106B parameters, 60.1 GB at 4 bits) split across
+the Mac Studio (31 layers) and the M1 Max (15 layers) over Thunderbolt and ran
+at 0.87 tokens per second, with both machines agreeing on every token. Two
 Omarchy Linux Macs split a smaller model and produced byte-identical text to
 one machine alone. An iPhone 15 Pro Max served layers to an Omarchy Linux host
 as a llama.cpp node. A three node probe measured every pair, including Linux
@@ -28,9 +35,10 @@ pairs, and pinned the fastest routes in 42.6 seconds.
 A split does not make a model faster than one machine that can hold it. For a
 model that fits on the Mac Studio, the Mac Studio alone is faster (see the
 second table). Use a split when the model is too big for any one machine you
-have. The idle Mac Studio could hold this model by itself. In this run it was
-also serving other models and had 50 to 66 GB free. The split left at least 22
-percent of its memory free.
+have. GLM-5.3-Flash fits on none of these four. GLM-4.5-Air fits on the idle
+Mac Studio by itself; in that run the Mac Studio was also serving other models
+and had 50 to 66 GB free, and the split left at least 22 percent of its memory
+free.
 
 exo, the closest comparison, runs its Linux nodes on CPU; omarchy-cluster runs
 Vulkan on Omarchy Linux. See the FAQ below.
@@ -41,23 +49,26 @@ Try it on a node (Omarchy Linux; macOS install below):
 python3 -m venv ~/.local/share/omarchy-cluster/venv && ~/.local/share/omarchy-cluster/venv/bin/pip install git+https://github.com/joshuaswarren/omarchy-cluster.git && ~/.local/share/omarchy-cluster/venv/bin/omarchy-cluster install-agent
 ```
 
-Then connect two machines and serve a model: Quickstart below. The GLM-4.5-Air
-run is recorded in [docs/demo.cast](docs/demo.cast)
+Then connect two machines and serve a model: Quickstart below. The
+GLM-5.3-Flash run is recorded in
+[receipts/2026-10-07-glm53-flash-4node](receipts/2026-10-07-glm53-flash-4node)
+and the GLM-4.5-Air run in [docs/demo.cast](docs/demo.cast)
 (`asciinema play docs/demo.cast`).
 
 ## Measured on real hardware
 
-All runs greedy (temperature 0), prompt "Write a haiku about shared memory.",
-2026-10-06. "Agree" means rank 1 logged the same text SHA-256 as the text the
-gateway returned.
+All runs greedy (temperature 0), prompt "Write a haiku about shared memory.".
+"Agree" means rank 1 logged the same text SHA-256 as the text the gateway
+returned. "Same text" means two requests returned byte-identical text.
 
-Capacity: a model that does not fit on the Omarchy machine.
+Capacity: models that do not fit on the Omarchy machines.
 
-| Model | Weights | Nodes | Layers per node | Decode | Prefill, 13 tokens |
+| Model | Weights | Nodes | Layers per node | Decode | Prompt time |
 |---|---|---|---|---|---|
-| GLM-4.5-Air-4bit (glm4_moe, 46 layers) | 60.1 GB | Mac Studio M1 Ultra 128 GB + MacBook Pro M1 Max 64 GB, Thunderbolt | 31 + 15 | 0.87 and 0.86 tok/s, 64 tokens, agree | 15.5 s, 13.2 s, 16.1 s |
+| GLM-5.3-Flash UD-IQ4_XS (llama.cpp RPC, 46 layers), 2026-10-07 | 156.8 GB | Mac Studio M1 Ultra 128 GB (Metal) + M2 Max 96 GB + M1 Max 64 GB (Omarchy, Vulkan) + M1 16 GB (CPU), 2.5 Gb Ethernet | 14 + 17 + 12 + 3 | 1.39 and 1.57 tok/s, 64 tokens, same text | 13.6 s, 2.7 s (prompt cache) |
+| GLM-4.5-Air-4bit (glm4_moe, 46 layers), 2026-10-06 | 60.1 GB | Mac Studio M1 Ultra 128 GB + MacBook Pro M1 Max 64 GB, Thunderbolt | 31 + 15 | 0.87 and 0.86 tok/s, 64 tokens, agree | 15.5 s, 13.2 s, 16.1 s |
 
-The recording of this run shows 0.83 tok/s. Per token, the laptop's 15 layers
+The GLM-4.5-Air recording shows 0.83 tok/s. Per token, the laptop's 15 layers
 take about 1.1 s and the Mac Studio's 31 layers about 45 ms. The omarchy-mlx
 Vulkan path runs a GLM-4.5-Air layer at about 74 ms and Metal at about 1.5 ms,
 so the Omarchy machine sets the speed.
