@@ -25,9 +25,10 @@ loading. Since then:
   (w7J); a Mesa build with it installed on both Omarchy GPU nodes; and the M2 Max (G14C) passed the same
   unfiltered `MUL_MAT` and `MUL_MAT_ID` correctness check against CPU that the M1 Max (G13C) passed.
 - Before the load, the kernel each Linux node runs (`uname -r`) and the Mesa commit each Vulkan rank
-  runs (`vulkaninfo --summary`, driver info) are recorded for the receipt. The first run was on kernel
-  11.38; nodes may be on a newer kernel by the next window, which is part of arm A's change set. Builds from `fc8f604f68b` on have the flag on by default; earlier ones off. Every
-  arm sets the flag explicitly, so the default of the installed build does not matter.
+  runs (`vulkaninfo --summary`, driver info) are recorded for the receipt. The first run did not record
+  kernel versions, and the M1 Max has moved to a newer kernel since, so a kernel change is part
+  of arm A's change set. Builds from `fc8f604f68b` on have the flag on by default; earlier ones off.
+  Every arm sets the flag explicitly, so the default of the installed build does not matter.
 - rpc-servers with `-c` (`--rpc-cache`): the Mac Studio's cache on the external volume
   (`--rpc-env mac-ultra=LLAMA_CACHE=...`), never the system disk; the M2 Max CPU server started by hand
   with `-c -t 8` (its 8 performance cores); the x86 laptop's servers with `-c`.
