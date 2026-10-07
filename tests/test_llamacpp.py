@@ -410,24 +410,10 @@ def test_tensor_split_keeps_every_device_under_budget_with_uneven_layers():
             assert sum(s for s, x in zip(per_layer, devs) if x == d) <= cap
 
 
-SLOW_GATEWAY = """
-import sys, time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-class H(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers()
-        self.wfile.write(b"{}")
-    def log_message(self, *a):
-        pass
-time.sleep(1.5)  # a gateway still importing when serve returns
-HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
-"""
-
-
 def test_start_gateway_returns_only_once_the_gateway_answers(tmp_path, monkeypatch):
     """serve printed the gateway pid and returned before it listened: a script that sent
     its first request at once got connection refused on a loaded 157 GB model. The
-    stand-in binds loopback only, so no host firewall sits between it and the test."""
+    stand-in gateway is a thread in this process that starts listening 1.5 s late."""
     from omarchy_cluster import cli
     monkeypatch.setenv("HOME", str(tmp_path))
     os.makedirs(str(tmp_path / ".local/state/omarchy-cluster"))
@@ -435,12 +421,33 @@ def test_start_gateway_returns_only_once_the_gateway_answers(tmp_path, monkeypat
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
-    procs = []
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *a):
+            pass
+
+    servers = []
+
+    def late_listen():
+        time.sleep(1.5)  # a gateway still importing when serve returns
+        servers.append(ThreadingHTTPServer(("127.0.0.1", port), H))
+        servers[0].serve_forever()
+
+    class Alive:
+        pid = os.getpid()
+
+        def poll(self):
+            return None
 
     def slow_spawn(cmd, log_name):
-        p = subprocess.Popen([sys.executable, "-c", SLOW_GATEWAY, str(port)])
-        procs.append(p)
-        return p, str(tmp_path / log_name)
+        threading.Thread(target=late_listen, daemon=True).start()
+        return Alive(), str(tmp_path / log_name)
 
     monkeypatch.setattr(cli, "_spawn", slow_spawn)
     try:
@@ -448,5 +455,5 @@ def test_start_gateway_returns_only_once_the_gateway_answers(tmp_path, monkeypat
         with urllib.request.urlopen("http://127.0.0.1:%d/v1/models" % port, timeout=2) as r:
             assert r.status == 200
     finally:
-        procs[0].kill()
-        procs[0].wait()
+        if servers:
+            servers[0].shutdown()
