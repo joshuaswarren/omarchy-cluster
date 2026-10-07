@@ -328,7 +328,8 @@ def test_server_cmd_spreads_all_layers_over_n_rpc_devices():
 
 def test_agent_starts_rpc_server_on_all_interfaces_with_cache_only_on_request(tmp_path, monkeypatch):
     """-c writes the node's whole share to its disk (42 GB on a 99% full Mac system disk),
-    so the cache is opt-in."""
+    so the cache is opt-in. Threads default to the performance cores, not the server's own
+    half-of-all-CPUs default that counts efficiency cores."""
     from omarchy_cluster import agent
     seen = {}
 
@@ -339,12 +340,13 @@ def test_agent_starts_rpc_server_on_all_interfaces_with_cache_only_on_request(tm
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(agent.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(agent.facts_mod, "perf_cores", lambda: 6)
     res = agent.rpc_start({"binary": "/opt/llama/ggml-rpc-server", "port": 50060, "threads": 8})
     assert res["pid"] == 777
     assert seen["cmd"] == ["/opt/llama/ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-t", "8"]
     assert seen["kw"]["start_new_session"] is True
     agent.rpc_start({"binary": "/opt/llama/ggml-rpc-server", "port": 50060, "cache": True})
-    assert seen["cmd"] == ["/opt/llama/ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-c"]
+    assert seen["cmd"] == ["/opt/llama/ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-c", "-t", "6"]
     monkeypatch.setenv("OMARCHY_CLUSTER_RPC_SERVER", "/x/rpc")
     agent.rpc_start({"port": 50061})
     assert seen["cmd"][:5] == ["/x/rpc", "-H", "0.0.0.0", "-p", "50061"]

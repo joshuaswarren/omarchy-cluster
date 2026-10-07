@@ -314,7 +314,9 @@ def rpc_start(req):
     --rpc-node`. Binds all interfaces. "cache": true adds -c, so a later load reuses
     weights from local disk; off by default because the server then writes this node's
     whole share to disk (42 GB would have filled a 99% full Mac system disk). Binary:
-    req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH. "env": {KEY: VALUE} is added to the
+    req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH. Threads for the server's CPU device:
+    req, else the performance cores (facts.perf_cores); ggml-rpc-server's own default is
+    half of all CPUs, efficiency cores included. "env": {KEY: VALUE} is added to the
     server's environment (HK_SYSMEM, LLAMA_CACHE for -c, GGML_METAL_*), so a node needs no
     wrapper script; the token already lets a caller pick the binary, so this adds no reach."""
     log_dir = os.path.expanduser("~/.local/share/omarchy-cluster")
@@ -323,8 +325,7 @@ def rpc_start(req):
     cmd = [binary, "-H", "0.0.0.0", "-p", str(int(req.get("port", 50060)))]
     if req.get("cache"):
         cmd.append("-c")
-    if req.get("threads"):
-        cmd += ["-t", str(int(req["threads"]))]
+    cmd += ["-t", str(int(req.get("threads") or facts_mod.perf_cores()))]
     if req.get("device"):
         cmd += ["-d", str(req["device"])]
     extra = {str(k): str(v) for k, v in (req.get("env") or {}).items()}
