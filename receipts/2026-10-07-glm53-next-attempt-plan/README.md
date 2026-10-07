@@ -19,7 +19,11 @@ loading. Since then:
 ## Preconditions
 
 - The x86 laptop on wired Ethernet (Wi-Fi made most of the first run's 2724 s load).
-- The host on omarchy-cluster main at or after this commit's parent (`install-agent`).
+- The host and every node agent (Mac Studio, M1 Max, M2 Max) on omarchy-cluster main at or after the
+  commit that adds this line (`install-agent` on each, agent restarted). The agents installed on
+  2026-10-06 ignore `--rpc-env`, always add `-c` and pass no `-t`: arm A against them would drop the
+  heap sizes and `HK_LARGE_CONSTANTS`, and arms A and C would not differ. `serve` from that commit stops
+  when an agent's reply shows a setting was not applied.
 - The M1 Max's scratch space cleared (its budget assumes 60.3 GB available).
 - For arm C: the Mesa change behind `HK_LARGE_CONSTANTS` (`9e3f6c56196`) passed its independent review
   (w7J); a Mesa build with it installed on both Omarchy GPU nodes; and the M2 Max (G14C) passed the same

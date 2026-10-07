@@ -542,6 +542,22 @@ def _rpc_node_options(args):
     return envs, threads
 
 
+def _rpc_start_mismatch(req, res):
+    """What an agent's /v1/rpc/start reply shows it did not do, or None. Agents older than
+    the env/cache/threads fields ignore them without an error (and always add -c), so the
+    reply's cmd and env are the only proof the server got what serve asked for."""
+    cmd, why = res.get("cmd") or [], []
+    missing = sorted(set(req.get("env") or {}) - set(res.get("env") or []))
+    if missing:
+        why.append("env %s not set" % ",".join(missing))
+    if ("-c" in cmd) != bool(req.get("cache")):
+        why.append("-c %s" % ("missing" if req.get("cache") else "added"))
+    t = cmd[cmd.index("-t") + 1] if "-t" in cmd[:-1] else None
+    if t is None or (req.get("threads") and t != str(req["threads"])):
+        why.append("-t %s, got %s" % (req.get("threads") or "<performance cores>", t))
+    return "; ".join(why) or None
+
+
 def _agent_post(node, path, payload, timeout=30):
     req = urllib.request.Request(
         "http://%s:%d%s" % (node["ip"], node.get("port", 8025), path),
@@ -605,11 +621,20 @@ def _serve_llamacpp_nodes(args, info):
             if name not in nodes:
                 sys.exit("--rpc-node %s: not discovered (have %s)" % (name, ", ".join(sorted(nodes))))
             node = nodes[name]
-            res = _agent_post(node, "/v1/rpc/start", {"binary": binaries.get(name), "port": args.rpc_node_port,
-                                                      "cache": args.rpc_cache, "env": envs.get(name, {}),
-                                                      "threads": threads.get(name)})
+            rpc_req = {"binary": binaries.get(name), "port": args.rpc_node_port, "cache": args.rpc_cache,
+                       "env": envs.get(name, {}), "threads": threads.get(name)}
+            res = _agent_post(node, "/v1/rpc/start", rpc_req)
             state["stages"].append({"node": node["ip"], "pid": str(res["pid"]), "port": args.rpc_node_port})
             _write_state(state)
+            why = _rpc_start_mismatch(rpc_req, res)
+            if why:
+                try:
+                    _agent_post(node, "/v1/rank/stop", {"pid": res["pid"]})
+                except OSError:
+                    pass
+                sys.exit("agent on %s did not start the rpc-server as asked (%s); cmd %s. "
+                         "Update it: omarchy-cluster install-agent on that node."
+                         % (name, why, " ".join(map(str, res.get("cmd") or []))))
             ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name)
             ep, host = "%s:%d" % (ip, args.rpc_node_port), node["ip"]
             try:

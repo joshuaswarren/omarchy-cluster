@@ -261,3 +261,19 @@ def test_guard_exits_quietly_when_no_run_is_going(tmp_path, monkeypatch):
     import argparse
     monkeypatch.setenv("HOME", str(tmp_path))
     cli.cmd_guard(argparse.Namespace(interval=0))  # returns: nothing to watch
+
+
+def test_serve_refuses_an_agent_that_ignored_the_request():
+    """The node agents installed on 2026-10-06 drop "env", always add -c and only pass -t when
+    asked. A run against them would have dropped HK_SYSMEM and HK_LARGE_CONSTANTS without a word
+    and cached every share to disk; serve has to notice from the agent's reply."""
+    req = {"binary": None, "port": 50060, "cache": False, "threads": None,
+           "env": {"HK_SYSMEM": "60000000000", "HK_LARGE_CONSTANTS": "0"}}
+    old = {"pid": 1, "cmd": ["ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-c"]}
+    why = cli._rpc_start_mismatch(req, old)
+    assert "HK_LARGE_CONSTANTS" in why and "-c" in why and "-t" in why
+    new = {"pid": 1, "cmd": ["ggml-rpc-server", "-H", "0.0.0.0", "-p", "50060", "-t", "8"],
+           "env": ["HK_LARGE_CONSTANTS", "HK_SYSMEM"]}
+    assert cli._rpc_start_mismatch(req, new) is None
+    assert "-c" in cli._rpc_start_mismatch(dict(req, cache=True), new)
+    assert "-t 6" in cli._rpc_start_mismatch(dict(req, threads=6), new)
