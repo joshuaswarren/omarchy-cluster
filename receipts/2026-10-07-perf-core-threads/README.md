@@ -66,3 +66,18 @@ interleaved 3 times, both machines under their GPU locks. Server load average be
 - Prefill is about 51% faster with 8 threads. The ranges do not overlap.
 - Decode shows no difference. Each decoded token costs one network round trip, so the request-to-request
   spread (about 10 tok/s in both arms) is larger than any thread effect.
+
+Second server: an M2 Max laptop (8 performance cores at 1024 + 4 efficiency cores at 561), Omarchy
+Linux, same build, `ggml-rpc-server -d CPU` at nice 19. Client: the M1 Max above,
+`llama-bench -t 8 -p 128 -n 64 -r 3 --rpc <server> -ngl 99 -ot '^output\.weight=CPU'`, wired LAN, arms
+interleaved twice, both machines under their GPU locks:
+
+| Server threads | Prefill pp128 tok/s | Decode tg64 tok/s |
+|---|---|---|
+| `-t 6` (ggml-rpc-server default) | 179.94 ± 0.20, 179.61 ± 0.55 | 57.46 ± 1.64, 54.81 ± 2.38 |
+| `-t 8` (perf_cores, the new default) | 243.11 ± 0.27, 244.03 ± 0.37 | 56.30 ± 1.04, 57.80 ± 0.62 |
+| `-t 12` (every CPU) | 266.22 ± 1.43, 260.41 ± 5.70 | 53.46 ± 0.19, 53.84 ± 1.52 |
+
+- 8 threads prefill about 35% faster than the default 6, with decode unchanged.
+- All 12 CPUs add about 8% more prefill, but decode drops about 6%. The default stays at the
+  performance cores; pass `threads` to rpc-start to override.
