@@ -46,3 +46,23 @@ GPU lock:
 
 Not measured: the effect on the iPhone split itself, because the phone was unplugged. The earlier
 device run through `serve --engine llamacpp` (33.84 tok/s) used the old 10-thread default.
+
+## rpc-server threads
+
+`rpc-start` now passes `-t facts.perf_cores()` to `ggml-rpc-server`. Without `-t`, the server uses
+half of all CPUs: 5 on the M1 Max, which leaves 3 performance cores idle.
+
+Server: the M1 Max above, `ggml-rpc-server -d CPU`, llama.cpp 65840ed CPU build. Client: the 13-inch
+M1 above, `llama-server --rpc <server> -dev RPC0 -ngl 99 -ot '^output\.weight=CPU' -t 4`, so every
+layer runs on the server and the client computes only the lm_head. Wired LAN. Qwen3-1.7B Q4_K_M, a
+130-token prompt and 64 decoded tokens per `/completion`, 1 warm-up + 3 timed requests per arm, arms
+interleaved 3 times, both machines under their GPU locks. Server load average before the run was 0.62.
+
+| Server threads | Prefill tok/s, median [range] | Decode tok/s, median [range] |
+|---|---|---|
+| `-t 5` (ggml-rpc-server default) | 109.2 [108.4-109.9] | 40.06 [31.76-42.04] |
+| `-t 8` (perf_cores, the new default) | 164.5 [161.9-169.0] | 38.22 [32.82-46.96] |
+
+- Prefill is about 51% faster with 8 threads. The ranges do not overlap.
+- Decode shows no difference. Each decoded token costs one network round trip, so the request-to-request
+  spread (about 10 tok/s in both arms) is larger than any thread effect.
