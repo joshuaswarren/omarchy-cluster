@@ -25,14 +25,19 @@ loading. Since then:
   heap sizes and `HK_LARGE_CONSTANTS`, and arms A and C would not differ. `serve` from that commit stops
   when an agent's reply shows a setting was not applied.
 - The M1 Max's scratch space cleared (its budget assumes 60.3 GB available).
+- Both Vulkan ranks run one private Mesa driver, not the system packages (the two nodes' packages
+  differ: 26.2.2 on the M1 Max, 26.2.3 on the M2 Max). It is built from honeykrisp-omarchy-v3
+  `6543eeb7df7` (has `HK_LARGE_CONSTANTS`, on by default, and bf16), the same `.so` staged on both
+  nodes, and selected per rank with `--rpc-env NAME=VK_DRIVER_FILES=<its ICD json>`. Before the load,
+  the `.so` sha256 on each node (the two must match) and `vulkaninfo --summary` run with the same
+  `VK_DRIVER_FILES` (driver info) are recorded for the receipt. The first run used the system driver.
 - For arm C: the Mesa change behind `HK_LARGE_CONSTANTS` (`9e3f6c56196`) passed its independent review
-  (w7J); a Mesa build with it installed on both Omarchy GPU nodes; and the M2 Max (G14C) passed the same
-  unfiltered `MUL_MAT` and `MUL_MAT_ID` correctness check against CPU that the M1 Max (G13C) passed.
-- Before the load, the kernel each Linux node runs (`uname -r`) and the Mesa commit each Vulkan rank
-  runs (`vulkaninfo --summary`, driver info) are recorded for the receipt. The first run did not record
-  kernel versions, and the M1 Max has moved to a newer kernel since, so a kernel change is part
-  of arm A's change set. Builds from `fc8f604f68b` on have the flag on by default; earlier ones off.
-  Every arm sets the flag explicitly, so the default of the installed build does not matter.
+  (w7J), and the M2 Max (G14C) passed the same unfiltered `MUL_MAT` and `MUL_MAT_ID` correctness check
+  against CPU that the M1 Max (G13C) passed. Every arm sets the flag explicitly (`=0` in A and B, `=1`
+  in C), so the build's default does not matter.
+- Before the load, the kernel each Linux node runs (`uname -r`) is recorded. The first run did not
+  record kernel versions, and both Omarchy GPU nodes have moved to a newer kernel since. The kernel,
+  the private driver and bf16 are all part of arm A's change set against the first run.
 - rpc-servers with `-c` (`--rpc-cache`): the Mac Studio's cache on the external volume
   (`--rpc-env mac-ultra=LLAMA_CACHE=...`), never the system disk; the M2 Max CPU server started by hand
   with `-c -t 8` (its 8 performance cores); the x86 laptop's servers with `-c`.
@@ -62,6 +67,7 @@ omarchy-cluster serve ~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.
   --rpc-binary omarchy-m2=~/src/llama.cpp/build-vulkan/bin/ggml-rpc-server \
   --rpc-env omarchy-m1=HK_SYSMEM=60000000000 --rpc-env omarchy-m2=HK_SYSMEM=86000000000 \
   --rpc-env omarchy-m1=HK_LARGE_CONSTANTS=0 --rpc-env omarchy-m2=HK_LARGE_CONSTANTS=0 \
+  --rpc-env omarchy-m1=VK_DRIVER_FILES=<ICD json> --rpc-env omarchy-m2=VK_DRIVER_FILES=<ICD json> \
   --rpc-env mac-ultra=LLAMA_CACHE=/Volumes/ext/rpc-cache --ctx 2048
 ```
 
