@@ -309,12 +309,25 @@ def _signal_all(pids, sig):
             pass
 
 
+def rpc_server_env(base=None, platform=None):
+    """Environment for ggml-rpc-server. On macOS (Metal) it defaults to private GPU
+    buffers: with other GPU work on the Mac (an oMLX server held its GPU at 98-100%),
+    decode ran 2.3-2.6x faster than with ggml's shared buffers; on an idle GPU, shared
+    buffers were about 15% faster. Opt out by setting GGML_METAL_SHARED_BUFFERS_ENABLE (or
+    either variable) in the agent's own environment; ggml lets ENABLE win."""
+    env = dict(os.environ if base is None else base)
+    if (platform or sys.platform) == "darwin" and not (
+            "GGML_METAL_SHARED_BUFFERS_DISABLE" in env or "GGML_METAL_SHARED_BUFFERS_ENABLE" in env):
+        env["GGML_METAL_SHARED_BUFFERS_DISABLE"] = "1"
+    return env
+
+
 def rpc_start(req):
     """Spawn a llama.cpp RPC server (ggml-rpc-server) for `serve --engine llamacpp
     --rpc-node`. Binds all interfaces. "cache": true adds -c, so a later load reuses
     weights from local disk; off by default because the server then writes this node's
     whole share to disk (42 GB would have filled a 99% full Mac system disk). Binary:
-    req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH."""
+    req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH. Environment: rpc_server_env."""
     log_dir = os.path.expanduser("~/.local/share/omarchy-cluster")
     os.makedirs(log_dir, exist_ok=True)
     binary = req.get("binary") or os.environ.get("OMARCHY_CLUSTER_RPC_SERVER") or "ggml-rpc-server"
@@ -325,11 +338,14 @@ def rpc_start(req):
         cmd += ["-t", str(int(req["threads"]))]
     if req.get("device"):
         cmd += ["-d", str(req["device"])]
+    env = rpc_server_env()
+    metal = {k: env[k] for k in ("GGML_METAL_SHARED_BUFFERS_DISABLE", "GGML_METAL_SHARED_BUFFERS_ENABLE")
+             if k in env}
     log = os.path.join(log_dir, "rpc-server.log")
     with open(log, "w") as lf:
-        pid = subprocess.Popen(cmd, cwd=log_dir, stdout=lf, stderr=subprocess.STDOUT,
+        pid = subprocess.Popen(cmd, cwd=log_dir, env=env, stdout=lf, stderr=subprocess.STDOUT,
                                stdin=subprocess.DEVNULL, start_new_session=True).pid
-    return {"pid": pid, "log": log, "cmd": cmd}
+    return {"pid": pid, "log": log, "cmd": cmd, "metal_env": metal}
 
 
 def gpu_cap(req=None):

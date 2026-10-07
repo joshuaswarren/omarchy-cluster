@@ -350,6 +350,16 @@ def test_agent_starts_rpc_server_on_all_interfaces_with_cache_only_on_request(tm
     assert seen["cmd"][:5] == ["/x/rpc", "-H", "0.0.0.0", "-p", "50061"]
 
 
+def test_mac_rpc_server_defaults_to_private_metal_buffers_unless_the_agent_env_says_otherwise():
+    """Under other GPU work on the Mac, private buffers decoded 2.3-2.6x faster; an operator
+    who wants ggml's shared buffers sets GGML_METAL_SHARED_BUFFERS_ENABLE for the agent."""
+    from omarchy_cluster import agent
+    assert agent.rpc_server_env({}, "darwin")["GGML_METAL_SHARED_BUFFERS_DISABLE"] == "1"
+    assert "GGML_METAL_SHARED_BUFFERS_DISABLE" not in agent.rpc_server_env({}, "linux")
+    kept = agent.rpc_server_env({"GGML_METAL_SHARED_BUFFERS_ENABLE": "1"}, "darwin")
+    assert "GGML_METAL_SHARED_BUFFERS_DISABLE" not in kept
+    assert agent.rpc_server_env({"PATH": "/bin"}, "darwin")["PATH"] == "/bin"
+
 def test_rpc_node_args_parse_names_and_optional_gb():
     from omarchy_cluster import cli
     assert cli._parse_rpc_nodes(["mac-a=50", "linux-b", "linux-c=7.5"]) == [
