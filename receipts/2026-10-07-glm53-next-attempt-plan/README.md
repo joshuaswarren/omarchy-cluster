@@ -61,12 +61,12 @@ Launch (arm A), started detached on the host so a dropped ssh session cannot sto
 following its log:
 
 ```sh
-omarchy-cluster serve ~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.gguf --engine llamacpp \
-  --llama-server ~/src/llama.cpp/build-cpu/bin/llama-server --rpc-cache \
+omarchy-cluster serve <GLM-5.3 shard 1> --engine llamacpp \
+  --llama-server <host llama-server, CPU build> --rpc-cache \
   --rpc-node x86-laptop:50052 --rpc-node x86-laptop:50053 --rpc-node omarchy-m1 --rpc-node mac-ultra \
   --rpc-node omarchy-m2 --rpc-node omarchy-m2:50061 \
-  --rpc-binary omarchy-m1=~/src/llama.cpp/build-vulkan/bin/ggml-rpc-server \
-  --rpc-binary omarchy-m2=~/src/llama.cpp/build-vulkan/bin/ggml-rpc-server \
+  --rpc-binary omarchy-m1=<its Vulkan ggml-rpc-server> --rpc-binary omarchy-m2=<its Vulkan ggml-rpc-server> \
+  --rpc-binary mac-ultra=<its Metal ggml-rpc-server> \
   --rpc-env omarchy-m1=HK_SYSMEM=60000000000 --rpc-env omarchy-m2=HK_SYSMEM=86000000000 \
   --rpc-env omarchy-m1=HK_LARGE_CONSTANTS=0 --rpc-env omarchy-m2=HK_LARGE_CONSTANTS=0 \
   --rpc-env omarchy-m1=VK_DRIVER_FILES=<ICD json> --rpc-env omarchy-m2=VK_DRIVER_FILES=<ICD json> \
@@ -76,6 +76,10 @@ omarchy-cluster serve ~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.
 No `=GB` and no `--host-layers`: the budgets are measured and the placement is chosen. No wrapper
 scripts: the heap sizes and the cache folder go to each node's RPC server with `--rpc-env` (amended
 before the run, when that flag landed; nothing measured changed).
+
+Every `<path>` is the absolute path on that node: the agent starts the binary without a shell, so `~`
+is not expanded, and the Mac's launchd agent has no `ggml-rpc-server` on its PATH. The `x86-laptop`
+entries are its IP address in the run. All paths are checked on each node before the launch.
 
 ## Expected (before the run)
 
