@@ -53,6 +53,15 @@ placement that prefers no paging and then fewer devices, a fixed order and host 
 hand-built GLM-5.3 run-P table reproduced exactly from its budgets. `tests/test_llamacpp.py`:
 the device-memory query over RPC, and the cache flag. 80 tests pass.
 
-Not yet run on hardware: the Vulkan probe's allocation path (it opened Vulkan and enumerated
-devices on a machine with only a CPU implementation) and `serve` with measured budgets end to
-end.
+## The probe on hardware
+
+05:26Z, MacBook Pro 16-inch M1 Max (62.8 GiB visible to Linux), heap set to its RAM: 60 GiB
+(64.4 GB) allocated, then the driver refused with `DRM_IOCTL_ASAHI_VM_BIND failed`, not the
+address-space error the M2 Max hit at 63 GiB. Page cache fell from 18 to 1 GiB during the probe:
+blocks past free memory take real memory. The agent now caps the probe at available RAM minus
+the 6 GB headroom and reports `stopped_at_limit` when the driver never refused. The budget
+already takes the least of RAM and the cap, so the limit costs nothing.
+
+For run P this settles the M1 Max share: 55.79 GB under a measured 64.4 GB.
+
+Not yet run on hardware: `serve` with measured budgets end to end.

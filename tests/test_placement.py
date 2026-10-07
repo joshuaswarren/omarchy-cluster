@@ -123,3 +123,33 @@ def test_vkprobe_counts_blocks_until_refused_and_frees_every_one():
     freed.clear()
     assert vkprobe.count_blocks(iter(range(100)).__next__, freed.append, 4) == 4
     assert len(freed) == 4
+
+
+def test_agent_gpu_cap_probes_within_spare_ram_and_caches_per_boot(tmp_path, monkeypatch):
+    """Probe blocks past free RAM take real memory (an M1 Max evicted 17 GiB of page cache),
+    so the agent caps the probe at available RAM minus the 6 GB headroom."""
+    import json as _json
+    from omarchy_cluster import agent
+    seen = []
+
+    class Done:
+        returncode, stderr = 0, ""
+        stdout = _json.dumps({"device": "gpu", "heap_bytes": 70 * GB, "alloc_cap_bytes": 40 * 2 ** 30,
+                              "stopped_at_limit": True})
+
+    def fake_run(cmd, env=None, **kw):
+        seen.append((cmd, env))
+        return Done()
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(agent.sys, "platform", "linux")
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    monkeypatch.setattr(agent.facts_mod, "boot_id", lambda: "boot-1")
+    monkeypatch.setattr(agent.facts_mod, "memory_total_bytes", lambda: 67 * GB)
+    monkeypatch.setattr(agent.facts_mod, "memory_free_bytes", lambda: 50 * GB)
+    res = agent.gpu_cap()
+    assert res["alloc_cap_bytes"] == 40 * 2 ** 30 and res["boot_id"] == "boot-1"
+    cmd, env = seen[0]
+    assert cmd[-1] == str((50 * GB - 6 * GB) // 2 ** 30) and env["HK_SYSMEM"] == str(67 * GB)
+    agent.gpu_cap()
+    assert len(seen) == 1  # cached for this boot

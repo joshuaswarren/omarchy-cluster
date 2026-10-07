@@ -84,8 +84,11 @@ _GPU_TYPES = (1, 2)  # VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, DISCRETE_GPU
 
 
 def probe(max_gib=256, lib="libvulkan.so.1"):
-    """{"device", "heap_bytes", "alloc_cap_bytes"} for the first GPU (not a CPU
-    implementation such as lavapipe)."""
+    """{"device", "heap_bytes", "alloc_cap_bytes", "stopped_at_limit"} for the first GPU
+    (not a CPU implementation such as lavapipe). Allocations take real memory once they
+    pass what is free (an M1 Max with 62 GiB went to 60 GiB and evicted 17 GiB of page
+    cache), so callers set max_gib to what the node can spare; stopped_at_limit then
+    says the driver never refused and the true cap is higher."""
     vk = ctypes.CDLL(lib)
     app = _AppInfo(0, None, b"omarchy-cluster-vkprobe", 1, None, 0, (1 << 22) | (2 << 12))
     ici = _InstanceInfo(1, None, 0, ctypes.pointer(app), 0, None, 0, None)
@@ -127,9 +130,10 @@ def probe(max_gib=256, lib="libvulkan.so.1"):
             vk.vkDestroyDevice(dev, None)
     finally:
         vk.vkDestroyInstance(inst, None)
-    return {"device": name, "heap_bytes": heap, "alloc_cap_bytes": blocks * GIB}
+    return {"device": name, "heap_bytes": heap, "alloc_cap_bytes": blocks * GIB,
+            "stopped_at_limit": blocks >= max_gib}
 
 
 if __name__ == "__main__":
-    json.dump(probe(), sys.stdout)
+    json.dump(probe(int(sys.argv[1]) if len(sys.argv) > 1 else 256), sys.stdout)
     print()

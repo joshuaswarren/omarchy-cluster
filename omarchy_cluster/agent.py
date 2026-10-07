@@ -349,7 +349,9 @@ def gpu_cap(req=None):
         pass
     env = dict(os.environ, HK_SYSMEM=str(facts_mod.memory_total_bytes()),
                PYTHONPATH=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    p = subprocess.run([sys.executable, "-m", "omarchy_cluster.vkprobe"], env=env,
+    # never push the node past its headroom: blocks beyond free RAM take real memory
+    spare_gib = max(1, int((facts_mod.memory_free_bytes() - 6_000_000_000) // (1 << 30)))
+    p = subprocess.run([sys.executable, "-m", "omarchy_cluster.vkprobe", str(spare_gib)], env=env,
                        capture_output=True, text=True, timeout=300)
     if p.returncode:
         return {"alloc_cap_bytes": None, "error": p.stderr.strip()[-300:]}
