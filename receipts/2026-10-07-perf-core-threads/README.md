@@ -25,5 +25,24 @@ nothing over 8 threads.
 The mechanism, measured at 2 threads: two performance cores gave 37.66 and 37.70 tok/s; one efficiency
 plus one performance core gave 23.99 and 24.01; two efficiency cores gave 12.07.
 
+## A machine with as many efficiency cores as performance cores
+
+13-inch M1 MacBook Pro (4 performance cores at 1024 + 4 efficiency cores at 493), Omarchy Linux,
+llama.cpp 65840ed CPU build. `llama-server`, Qwen3-1.7B Q4_K_M, a 130-token prompt and 64 decoded
+tokens per `/completion`, 1 warm-up + 3 timed requests per arm, arms interleaved, under the machine's
+GPU lock:
+
+| Threads | Decode tok/s | Prefill tok/s |
+|---|---|---|
+| `-t 4` (perf_cores, the default) | 36.70-37.01 (15 requests) | 145-191 |
+| `-t 8` (one per CPU, the old default) | 31.09-34.47 (one outlier 27.47) | 186-221 |
+| `-t 4 -tb 8` | 36.74-36.97 | 181-197 |
+
+- Performance cores alone decode about 12% faster here too.
+- Prefill, which is compute-bound, gains from the 4 efficiency cores: about 15-20% more with 8 threads.
+  Prefill fell from rep to rep in every arm (thermal), so compare within a rep.
+- `-tb` with every CPU would recover prefill here, but on the M1 Max above 10 threads cost 34% of
+  prefill, so the default stays at one count. Pass `--threads` to override on a given machine.
+
 Not measured: the effect on the iPhone split itself, because the phone was unplugged. The earlier
 device run through `serve --engine llamacpp` (33.84 tok/s) used the old 10-thread default.
