@@ -44,8 +44,10 @@ GPU lock:
 - `-tb` with every CPU would recover prefill here, but on the M1 Max above 10 threads cost 34% of
   prefill, so the default stays at one count. Pass `--threads` to override on a given machine.
 
-Not measured: the effect on the iPhone split itself, because the phone was unplugged. The earlier
-device run through `serve --engine llamacpp` (33.84 tok/s) used the old 10-thread default.
+Not measured: a matched 10-thread against 8-thread run of the iPhone split. The device run through
+`serve --engine llamacpp` (33.84 tok/s) used the old 10-thread default; later `llama-bench -t 8` runs
+with all 28 layers on the phone gave 30.3-34.8 tok/s when the phone was in its normal state, against
+35.1 on the day before. No difference larger than that spread shows, but no matched A/B exists.
 
 ## rpc-server threads
 
