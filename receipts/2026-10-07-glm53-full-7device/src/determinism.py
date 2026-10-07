@@ -21,7 +21,7 @@ VK = HOME + "/src/llama.cpp/build-vulkan/bin/llama-server"
 MODEL = os.environ.get("MODEL", HOME + "/models/Qwen3-1.7B-Q4_K_M.gguf")
 RUNS = int(os.environ.get("RUNS", "3"))
 PORT = 8090
-OUT = os.environ.get("OUT", HOME + "/determinism.jsonl")
+OUT = os.environ.get("OUT", HOME + "/.local/share/omarchy-bench/determinism.jsonl")
 ESP = os.environ.get("ESP", "10.10.0.20")
 MAC = os.environ.get("MAC", "10.10.0.13:50070")
 M2 = os.environ.get("M2", "10.10.0.14:50070")
@@ -82,6 +82,9 @@ def test(name):
                 out.write(json.dumps({"device": name, "run": i + 1, "response": res}) + "\n")
                 runs.append(res["choices"][0]["logprobs"]["content"])
         toks = [[e["token"] for e in r] for r in runs]
+        if not all(toks) or not "".join(toks[0]):
+            print("%-20s FAILED: empty token list, nothing to compare" % name, flush=True)
+            return False
         first = None
         for i in range(1, len(toks)):
             for k, (a, b) in enumerate(zip(toks[0], toks[i])):

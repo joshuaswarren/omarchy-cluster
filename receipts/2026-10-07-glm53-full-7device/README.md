@@ -83,6 +83,11 @@ So no single device path repeats inconsistently on a dense Q4_K model. This chec
 what the 753B run adds: IQ1_S kernels, mixture-of-experts routing, the sparse attention indexer,
 layers mapped from disk on the host, and six devices chained over RPC.
 
+What was compared: the per-device check compared the 64 generated tokens and their logprobs (241
+characters of `<think>` text per run), and the six-request divergence table compared the full
+answers (334 to 344 characters each, `reasoning_format` none). Neither hashed an empty field. The
+scripts in [src/](src/) now refuse an empty answer outright.
+
 ## Conditions
 
 - During the load the Mac Studio's swap grew by 4.3 to 4.5 GB (two samplers), then held flat;

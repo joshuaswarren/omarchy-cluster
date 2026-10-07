@@ -18,8 +18,23 @@ import urllib.request
 SERVER = os.environ.get("SERVER", "http://127.0.0.1:8032")
 ENGINE = os.environ.get("ENGINE", "http://127.0.0.1:8031")
 WARM = int(os.environ.get("WARM", "5"))
-OUT = os.environ.get("OUT", os.path.expanduser("~/measure-%d.jsonl" % int(time.time())))
+OUT = os.environ.get("OUT", os.path.expanduser("~/.local/share/omarchy-bench/measure-%d.jsonl" % int(time.time())))
 PROMPT = "Write a haiku about shared memory."
+DISK = os.environ.get("DISK", "nvme0n1")
+
+
+def host_counters():
+    """Major page faults and pages read in (/proc/vmstat), and sectors read from DISK."""
+    c = {}
+    try:
+        for line in open("/proc/vmstat"):
+            k, v = line.split()
+            if k in ("pgmajfault", "pgpgin"):
+                c[k] = int(v)
+        c["sectors_read"] = int(open("/sys/block/%s/stat" % DISK).read().split()[2])
+    except OSError:
+        pass
+    return c
 
 
 def post(path, body, timeout=3600):
@@ -59,13 +74,20 @@ def main():
             label = "cold" if i == 0 else "warm %d" % i
             print("\n$ request %d (%s): %r, temperature 0, max_tokens 64, cache_prompt false"
                   % (i + 1, label, PROMPT), flush=True)
+            before = host_counters()
             res = post("/v1/chat/completions", {
                 "messages": [{"role": "user", "content": PROMPT}], "max_tokens": 64,
-                "temperature": 0, "reasoning_format": "none", "cache_prompt": False})
-            out.write(json.dumps({"request": i + 1, "label": label, "response": res}) + "\n")
+                "temperature": 0, "reasoning_format": "none", "cache_prompt": False,
+                "logprobs": True, "top_logprobs": 2})
+            after = host_counters()
+            delta = {k: after[k] - before[k] for k in after if k in before}
+            out.write(json.dumps({"request": i + 1, "label": label, "host_delta": delta, "response": res}) + "\n")
             out.flush()
             ch = res["choices"][0]
-            text = ch["message"]["content"]
+            # hash everything the model wrote: a reasoning model may put it all in reasoning_content
+            text = (ch["message"].get("reasoning_content") or "") + (ch["message"].get("content") or "")
+            if not text:
+                sys.exit("request %d returned no text: refusing to hash an empty answer" % (i + 1))
             t = res["timings"]
             sha = hashlib.sha256(text.encode()).hexdigest()[:16]
             shas.add(sha)
@@ -74,6 +96,9 @@ def main():
             print("prompt %d tokens in %.1f s | decode %d tokens at %.2f tok/s | finish_reason %s | sha256 %s"
                   % (t["prompt_n"], t["prompt_ms"] / 1000, t["predicted_n"], t["predicted_per_second"],
                      ch.get("finish_reason"), sha), flush=True)
+            if delta:
+                print("host during request: %d major faults, %.2f GB read from %s"
+                      % (delta.get("pgmajfault", 0), delta.get("sectors_read", 0) * 512 / 1e9, DISK), flush=True)
             rows.append(t)
     warm = [r["predicted_per_second"] for r in rows[1:]]
     pms = [r["prompt_ms"] / 1000 for r in rows]

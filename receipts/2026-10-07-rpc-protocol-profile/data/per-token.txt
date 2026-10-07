@@ -1,0 +1,18 @@
+connection 13: 125 decode tokens
+   pre_cmds           median      9.000   min      9.000   max     11.000
+   pre_bytes          median  27865.000   min  27865.000   max  52999.000
+   gets               median      1.000   min      1.000   max     57.000
+   reply_bytes        median 607752.000   min 607752.000   max 9668552.000
+   graph_to_reply_ms  median     21.220   min     17.644   max     25.982
+   reply_stream_ms    median      0.000   min      0.000   max    221.633
+   client_gap_ms      median      2.920   min      0.000   max      5.601
+   token_ms           median     26.881   min     23.244   max    252.082
+connection 26: 125 decode tokens
+   pre_cmds           median      9.000   min      9.000   max     11.000
+   pre_bytes          median  27865.000   min  27865.000   max  52999.000
+   gets               median      1.000   min      1.000   max     57.000
+   reply_bytes        median   8200.000   min   8200.000   max 9069000.000
+   graph_to_reply_ms  median     16.042   min     14.307   max     22.857
+   reply_stream_ms    median      0.000   min      0.000   max    818.306
+   client_gap_ms      median     12.219   min      0.000   max     16.214
+   token_ms           median     29.057   min     22.914   max    844.673
