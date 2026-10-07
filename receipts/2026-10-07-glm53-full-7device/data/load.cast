@@ -1,0 +1,12 @@
+{"version": 2, "width": 110, "height": 32, "timestamp": 1791340052, "env": {"SHELL": null, "TERM": "dumb"}, "idle_time_limit": 2}
+[0.237364, "o", "\r\n\u001b[1m$ omarchy-cluster status\u001b[0m\r\n"]
+[1.532059, "o", "NODE             OS                     CHIP             MEM FREE/TOT  BACKEND UP   IP\r\nmac-ultra        macOS 26.6.2           Apple M1 Ultra   41.7/128GB    metal   up   10.10.0.13\r\nomarchy-m1       Omarchy                Apple M1 Max     48.5/62GB     vulkan  up   10.10.0.12\r\nomarchy-host       Arch Linux ARM         Apple M1         12.6/15GB     vulkan  up   10.10.0.11\r\nomarchy-m2       Arch Linux ARM         Apple M2 Max     89.8/94GB     vulkan  up   10.10.0.14\r\n\r\npinned routes (links.json 2026-10-07T00:56:05Z):\r\nmac-ultra <-> omarchy-m1\r\n"]
+[1.564511, "o", "\r\n\u001b[1m$ omarchy-cluster serve GLM-5.3-UD-IQ1_S-00001-of-00006.gguf --engine llamacpp --host-layers 11 --rpc-node x86-gpu=2.75 --rpc-node x86-cpu=22 --rpc-node omarchy-m1=38 --rpc-node mac-ultra=42 --rpc-node m2-cpu=24 --rpc-node omarchy-m2=62\u001b[0m\r\n"]
+[2.931805, "o", "GLM-5.3-UD-IQ1_S-00001-of-00006.gguf: 79 layers, 216.71 GB in 6 shard(s) over 10.10.0.20:50052 2.8 GB, 10.10.0.20:50053 22.0 GB, omarchy-m1 38.0 GB, mac-ultra 42.0 GB, 10.10.0.14:50061 24.0 GB, omarchy-m2 62.0 GB\r\n  10.10.0.20:50052: layers 11-11, 2.7 of 2.8 GB\r\n  10.10.0.20:50053: layers 12-19, 21.4 of 22.0 GB\r\n  omarchy-m1: layers 20-33, 37.8 of 38.0 GB\r\n  mac-ultra: layers 34-48, 41.6 of 42.0 GB\r\n  10.10.0.14:50061: layers 49-56, 22.2 of 24.0 GB\r\n  omarchy-m2: layers 57-78, 61.5 of 62.0 GB\r\n"]
+[2.944715, "o", "rpc-server 10.10.0.20:50052: {'version': '7.0.0', 'devices': 1, 'rtt_ms': 3.381}\r\n"]
+[2.967066, "o", "rpc-server 10.10.0.20:50053: {'version': '7.0.0', 'devices': 1, 'rtt_ms': 3.477}\r\n"]
+[3.974252, "o", "rpc-server omarchy-m1 at 10.10.0.12:50060: {'version': '7.0.0', 'devices': 1, 'rtt_ms': 0.335}\r\n"]
+[8.011978, "o", "rpc-server mac-ultra at 10.10.0.13:50060: {'version': '7.0.0', 'devices': 1, 'rtt_ms': 0.414}\r\n"]
+[8.013203, "o", "rpc-server 10.10.0.14:50061: {'version': '7.0.0', 'devices': 1, 'rtt_ms': 0.361}\r\n"]
+[9.017763, "o", "rpc-server omarchy-m2 at 10.10.0.14:50060: {'version': '7.0.0', 'devices': 1, 'rtt_ms': 0.352}\r\n"]
+[821.413581, "o", "Connection to 10.10.0.11 closed.\r\r\n"]

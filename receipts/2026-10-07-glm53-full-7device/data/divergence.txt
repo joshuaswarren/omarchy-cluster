@@ -1,0 +1,23 @@
+re-tokenized lengths: [65, 65, 65, 65, 65, 65] (server predicted_n: [64, 64, 64, 64, 64, 64] )
+first differing token index (0-based) per pair:
+ req1 ['-', 3, 3, 3, 3, 3]
+ req2 [3, '-', 22, 61, 34, 34]
+ req3 [3, 22, '-', 22, 22, 22]
+ req4 [3, 61, 22, '-', 34, 34]
+ req5 [3, 34, 22, 34, '-', 36]
+ req6 [3, 34, 22, 34, 36, '-']
+req1 vs req2 at token  3: after '<think>The user' -> ' is' vs ' wants'
+req1 vs req3 at token  3: after '<think>The user' -> ' is' vs ' wants'
+req1 vs req4 at token  3: after '<think>The user' -> ' is' vs ' wants'
+req1 vs req5 at token  3: after '<think>The user' -> ' is' vs ' wants'
+req1 vs req6 at token  3: after '<think>The user' -> ' is' vs ' wants'
+req2 vs req3 at token 22: after ' because "shared memory"' -> ' could' vs ' has'
+req2 vs req4 at token 61: after ' for inter-process communication.' -> ' This' vs ' It'
+req2 vs req5 at token 34: after '1. The technical/com' -> 'put' vs 'puter'
+req2 vs req6 at token 34: after '1. The technical/com' -> 'put' vs 'puter'
+req3 vs req4 at token 22: after ' because "shared memory"' -> ' has' vs ' could'
+req3 vs req5 at token 22: after ' because "shared memory"' -> ' has' vs ' could'
+req3 vs req6 at token 22: after ' because "shared memory"' -> ' has' vs ' could'
+req4 vs req5 at token 34: after '1. The technical/com' -> 'put' vs 'puter'
+req4 vs req6 at token 34: after '1. The technical/com' -> 'put' vs 'puter'
+req5 vs req6 at token 36: after ' The technical/computer science' -> ' meaning' vs ' sense'

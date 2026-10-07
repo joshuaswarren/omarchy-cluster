@@ -1,0 +1,89 @@
+llama-server: ~/src/llama.cpp/build-cpu/bin/llama-server -m ~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.gguf --host 127.0.0.1 --port 8032 -c 2048 -t 8 --rpc 10.10.0.20:50052,10.10.0.20:50053,10.10.0.12:50060,10.10.0.13:50060,10.10.0.14:50061,10.10.0.14:50060 -dev RPC0,RPC1,RPC2,RPC3,RPC4,RPC5 -ngl 69 --tensor-split 1,8,14,15,8,23 -ot ^output\.weight=CPU
+0.00.114.137 I srv  llama_server: initializing ...
+0.00.114.154 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.114.748 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.116.176 I srv    load_model: loading model '~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.gguf'
+0.01.369.471 W load: special_eot_id is not in special_eog_ids - the tokenizer config may be incorrect
+0.01.369.477 W load: special_eom_id is not in special_eog_ids - the tokenizer config may be incorrect
+0.01.499.129 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+44.39.942.213 I cmn          init: llama threadpool init, n_threads = 8
+45.13.435.859 I srv    load_model: initializing, n_slots = 4, n_ctx_slot = 2048, kv_unified = 'true'
+45.13.476.085 W srv          init: chat template supports preserving reasoning, it is enabled by default (may use more tokens, disable via --no-reasoning-preserve)
+45.13.476.140 I srv  llama_server: model loaded
+45.13.476.149 I srv  llama_server: listening on http://127.0.0.1:8032
+llama.cpp engine on :8031 (rpc 10.10.0.20:50052,10.10.0.20:50053,10.10.0.12:50060,10.10.0.13:50060,10.10.0.14:50061,10.10.0.14:50060, split 1,8,14,15,8,23)
+45.14.320.606 I slot get_availabl: id  3 | task -1 | selected slot by LRU, t_last = -1
+45.14.320.656 I slot launch_slot_: id  3 | task 0 | processing task, is_child = 0
+48.55.622.584 I slot print_timing: id  3 | task 0 | prompt eval time =   34443.82 ms /    20 tokens ( 1722.19 ms per token,     0.58 tokens per second)
+48.55.622.591 I slot print_timing: id  3 | task 0 |        eval time =  186848.27 ms /    64 tokens ( 2965.85 ms per token,     0.34 tokens per second)
+48.55.622.592 I slot print_timing: id  3 | task 0 |       total time =  221292.09 ms /    84 tokens
+48.55.637.665 I slot print_timing: id  3 | task 0 |    graphs reused =         63
+48.55.643.715 I slot      release: id  3 | task 0 | stop processing: n_tokens = 83, truncated = 0
+48.55.684.355 I slot get_availabl: id  3 | task -1 | selected slot by LCP similarity, f_sim_best = 1.000 (> 0.100 thold), f_keep = 0.241
+48.55.985.190 I slot launch_slot_: id  3 | task 65 | processing task, is_child = 0
+52.05.254.243 I slot print_timing: id  3 | task 65 | prompt eval time =   28604.39 ms /    20 tokens ( 1430.22 ms per token,     0.70 tokens per second)
+52.05.254.255 I slot print_timing: id  3 | task 65 |        eval time =  160656.37 ms /    64 tokens ( 2550.10 ms per token,     0.39 tokens per second)
+52.05.254.256 I slot print_timing: id  3 | task 65 |       total time =  189260.76 ms /    84 tokens
+52.05.258.646 I slot print_timing: id  3 | task 65 |    graphs reused =        125
+52.05.263.987 I slot      release: id  3 | task 65 | stop processing: n_tokens = 83, truncated = 0
+52.05.324.972 I slot get_availabl: id  3 | task -1 | selected slot by LCP similarity, f_sim_best = 1.000 (> 0.100 thold), f_keep = 0.241
+52.05.536.910 I slot launch_slot_: id  3 | task 130 | processing task, is_child = 0
+55.18.887.370 I slot print_timing: id  3 | task 130 | prompt eval time =   27832.74 ms /    20 tokens ( 1391.64 ms per token,     0.72 tokens per second)
+55.18.887.423 I slot print_timing: id  3 | task 130 |        eval time =  165513.89 ms /    64 tokens ( 2627.20 ms per token,     0.38 tokens per second)
+55.18.887.424 I slot print_timing: id  3 | task 130 |       total time =  193346.63 ms /    84 tokens
+55.18.893.416 I slot print_timing: id  3 | task 130 |    graphs reused =        187
+55.18.899.033 I slot      release: id  3 | task 130 | stop processing: n_tokens = 83, truncated = 0
+55.18.976.602 I slot get_availabl: id  3 | task -1 | selected slot by LCP similarity, f_sim_best = 1.000 (> 0.100 thold), f_keep = 0.241
+55.19.193.325 I slot launch_slot_: id  3 | task 195 | processing task, is_child = 0
+58.47.189.618 I slot print_timing: id  3 | task 195 | prompt eval time =   32504.43 ms /    20 tokens ( 1625.22 ms per token,     0.62 tokens per second)
+58.47.190.524 I slot print_timing: id  3 | task 195 |        eval time =  175481.21 ms /    64 tokens ( 2785.42 ms per token,     0.36 tokens per second)
+58.47.190.525 I slot print_timing: id  3 | task 195 |       total time =  207985.64 ms /    84 tokens
+58.47.192.974 I slot print_timing: id  3 | task 195 |    graphs reused =        249
+58.47.200.675 I slot      release: id  3 | task 195 | stop processing: n_tokens = 83, truncated = 0
+58.47.269.017 I slot get_availabl: id  3 | task -1 | selected slot by LCP similarity, f_sim_best = 1.000 (> 0.100 thold), f_keep = 0.241
+58.47.565.431 I slot launch_slot_: id  3 | task 260 | processing task, is_child = 0
+61.49.004.487 I slot print_timing: id  3 | task 260 | prompt eval time =   25054.55 ms /    20 tokens ( 1252.73 ms per token,     0.80 tokens per second)
+61.49.004.540 I slot print_timing: id  3 | task 260 |        eval time =  156380.58 ms /    64 tokens ( 2482.23 ms per token,     0.40 tokens per second)
+61.49.004.541 I slot print_timing: id  3 | task 260 |       total time =  181435.13 ms /    84 tokens
+61.49.011.538 I slot print_timing: id  3 | task 260 |    graphs reused =        311
+61.49.016.383 I slot      release: id  3 | task 260 | stop processing: n_tokens = 83, truncated = 0
+61.49.087.872 I slot get_availabl: id  3 | task -1 | selected slot by LCP similarity, f_sim_best = 1.000 (> 0.100 thold), f_keep = 0.241
+61.49.335.982 I slot launch_slot_: id  3 | task 325 | processing task, is_child = 0
+64.58.877.580 I slot print_timing: id  3 | task 325 | prompt eval time =   28986.61 ms /    20 tokens ( 1449.33 ms per token,     0.69 tokens per second)
+64.58.877.898 I slot print_timing: id  3 | task 325 |        eval time =  160547.88 ms /    64 tokens ( 2548.38 ms per token,     0.39 tokens per second)
+64.58.877.899 I slot print_timing: id  3 | task 325 |       total time =  189534.49 ms /    84 tokens
+64.58.879.350 I slot print_timing: id  3 | task 325 |    graphs reused =        373
+64.58.885.302 I slot      release: id  3 | task 325 | stop processing: n_tokens = 83, truncated = 0
+64.59.133.110 I srv    operator(): operator(): cleaning up before exit...
+64.59.230.511 E recv failed (bytes_recv=0, size_to_recv=8)
+~/src/llama.cpp/ggml/src/ggml-rpc/ggml-rpc.cpp:566: Remote RPC server crashed or returned malformed response
+⚠️ warning: The current terminal doesn't support styling.  Styled output might not appear as expected.
+[New LWP 19714 (id 2)]
+[New LWP 19713 (id 3)]
+[New LWP 19712 (id 4)]
+[New LWP 19711 (id 5)]
+[New LWP 19710 (id 6)]
+[New LWP 19709 (id 7)]
+[New LWP 19708 (id 8)]
+[New LWP 17696 (id 9)]
+[New LWP 17694 (id 10)]
+[New LWP 17692 (id 11)]
+[New LWP 17690 (id 12)]
+[New LWP 17687 (id 13)]
+[New LWP 17682 (id 14)]
+[New LWP 17463 (id 15)]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+[Switching to thread 1 (Thread 0xfffef5ec0020 (LWP 17461))]
+0x0000fffef62dc564 in syscall () from /usr/lib/libc.so.6
+#0  0x0000fffef62dc564 in syscall () from /usr/lib/libc.so.6
+#1  0x0000fffef65c78c0 in std::__atomic_futex_unsigned_base::_M_futex_wait_until(unsigned int*, unsigned int, bool, std::chrono::duration<long, std::ratio<1l, 1l> >, std::chrono::duration<long, std::ratio<1l, 1000000000l> >) () from /usr/lib/libstdc++.so.6
+#2  0x0000fffef7086234 in rpc_dispatcher::send(rpc_cmd, std::shared_ptr<void const>, unsigned long, void*, unsigned long) () from ~/src/llama.cpp/build-cpu/bin/libggml-rpc.so.0
+#3  0x0000fffef7087130 in ggml_backend_rpc_get_device_memory () from ~/src/llama.cpp/build-cpu/bin/libggml-rpc.so.0
+#4  0x0000fffef79f8724 in common_memory_breakdown_print(llama_context const*) () from ~/src/llama.cpp/build-cpu/bin/libllama-common.so.0
+#5  0x0000fffef7d07050 in llama_server(common_params&, int, char**, server_child&) () from ~/src/llama.cpp/build-cpu/bin/libllama-server-impl.so
+#6  0x0000fffef7d09374 in llama_server(int, char**) () from ~/src/llama.cpp/build-cpu/bin/libllama-server-impl.so
+#7  0x0000fffef6212d94 in ?? () from /usr/lib/libc.so.6
+#8  0x0000fffef6212ef8 in __libc_start_main () from /usr/lib/libc.so.6
+#9  0x0000aaab040907f0 in _start ()
+[Inferior 1 (process 17461) detached]
