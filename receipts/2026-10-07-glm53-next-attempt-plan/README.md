@@ -24,8 +24,9 @@ loading. Since then:
 - For arm C: the Mesa change behind `HK_LARGE_CONSTANTS` (`9e3f6c56196`) passed its independent review
   (w7J); a Mesa build with it installed on both Omarchy GPU nodes; and the M2 Max (G14C) passed the same
   unfiltered `MUL_MAT` and `MUL_MAT_ID` correctness check against CPU that the M1 Max (G13C) passed.
-- Before the load, the Mesa commit each Vulkan rank runs is recorded (`vulkaninfo --summary`, driver
-  info) for the receipt. Builds from `fc8f604f68b` on have the flag on by default; earlier ones off. Every
+- Before the load, the kernel each Linux node runs (`uname -r`) and the Mesa commit each Vulkan rank
+  runs (`vulkaninfo --summary`, driver info) are recorded for the receipt. The first run was on kernel
+  11.38; nodes may be on a newer kernel by the next window, which is part of arm A's change set. Builds from `fc8f604f68b` on have the flag on by default; earlier ones off. Every
   arm sets the flag explicitly, so the default of the installed build does not matter.
 - rpc-servers with `-c` (`--rpc-cache`): the Mac Studio's cache on the external volume
   (`--rpc-env mac-ultra=LLAMA_CACHE=...`), never the system disk; the M2 Max CPU server started by hand
