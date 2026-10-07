@@ -136,7 +136,7 @@ def gguf_info(path):
     n_head = int(meta.get("%s.attention.head_count" % arch, 1) or 1)
     k_dim = int(meta.get("%s.attention.key_length" % arch, n_embd // n_head))
     v_dim = int(meta.get("%s.attention.value_length" % arch, k_dim))
-    return {"arch": arch, "n_layer": n_layer, "layer_bytes": max(per_layer),
+    return {"arch": arch, "n_layer": n_layer, "layer_bytes": max(per_layer), "per_layer": per_layer,
             "other_bytes": other, "total_bytes": sum(sizes.values()), "shards": len(shards),
             "kv_bytes_per_token_layer": int(n_kv_head) * (k_dim + v_dim) * 2}
 
@@ -165,21 +165,33 @@ def rpc_layers(info, host_free_bytes, rpc_cap_bytes, ctx_tokens, force=None):
 
 
 def tensor_split(info, caps_bytes, ctx_tokens, host_layers=0):
-    """--tensor-split weights for N RPC devices: each device's memory budget, so the
-    layers spread in proportion and none gets more than its share of the total.
-    Raises when the offloaded layers plus their KV cache exceed the summed budgets.
-    The embeddings, lm_head and the first `host_layers` layers stay on the host CPU
-    (mmapped from the GGUF, so they can page from disk) and are not charged here."""
+    """--tensor-split weights for N RPC devices, as whole layer counts. llama.cpp gives
+    each device one contiguous block of layers sized by its weight, so budgets used as
+    weights overfill a device that lands on big layers (MoE layers here range 10x in
+    size). Instead fill the devices in order with each layer's real size plus its KV
+    cache, and pass the counts: integer weights make llama.cpp's split points exact.
+    The last count includes llama.cpp's output-layer slot (lm_head itself is pinned to
+    the host with -ot), so sum(weights) is the -ngl to pass. Layers 0..host_layers-1
+    stay on the host CPU (mmapped, can page from disk) and are not charged here.
+    Raises when the layers do not fit the budgets in order."""
     n_all = info["n_layer"]
-    n = n_all - host_layers
-    # average real layer size: MoE models have uneven layers (dense first layers), so
-    # n x the largest layer overstates the need (GLM-5.3-Flash: 217 GB vs 155.6 GB).
-    layer = (info["total_bytes"] - info["other_bytes"]) / n_all if info.get("total_bytes") else info["layer_bytes"]
-    need = n * (layer + info["kv_bytes_per_token_layer"] * ctx_tokens)
-    if need > sum(caps_bytes):
-        raise ValueError("%d offloaded layers need %.1f GB; the RPC devices have %.1f GB (%s)" % (
-            n, need / 1e9, sum(caps_bytes) / 1e9, ", ".join("%.1f" % (c / 1e9) for c in caps_bytes)))
-    return [round(c / 1e9, 2) for c in caps_bytes]
+    kv = info["kv_bytes_per_token_layer"] * ctx_tokens
+    per_layer = info.get("per_layer") or [
+        (info["total_bytes"] - info["other_bytes"]) / n_all if info.get("total_bytes") else info["layer_bytes"]
+    ] * n_all
+    counts, dev, used = [0] * len(caps_bytes), 0, 0
+    for il in range(host_layers, n_all):
+        size = per_layer[il] + kv
+        while dev < len(caps_bytes) and used + size > caps_bytes[dev]:
+            dev, used = dev + 1, 0
+        if dev == len(caps_bytes):
+            need = sum(per_layer[host_layers:]) + kv * (n_all - host_layers)
+            raise ValueError("%d offloaded layers need %.1f GB; layer %d does not fit the RPC devices in order (%s GB)" % (
+                n_all - host_layers, need / 1e9, il, ", ".join("%.1f" % (c / 1e9) for c in caps_bytes)))
+        counts[dev] += 1
+        used += size
+    counts[dev] += 1  # output-layer slot, right after the last layer
+    return counts
 
 
 def server_cmd(llama_server, model, port, ctx_tokens, threads, rpc=None, n_rpc_layers=0,

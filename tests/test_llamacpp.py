@@ -286,11 +286,11 @@ def test_gguf_info_sums_tensors_across_every_shard(tmp_path):
     assert info["shards"] == 2
 
 
-def test_tensor_split_weights_devices_by_memory_and_refuses_what_cannot_fit():
+def test_tensor_split_fills_devices_in_order_and_refuses_what_cannot_fit():
     info = {"n_layer": 10, "layer_bytes": 4 * GB, "other_bytes": 1 * GB,
             "total_bytes": 41 * GB, "kv_bytes_per_token_layer": 1000}
-    weights = lce.tensor_split(info, [30 * GB, 10 * GB, 5 * GB], 2048)
-    assert weights == [30.0, 10.0, 5.0]
+    # 4 GB layers: 7 fit 30 GB, 2 fit 10 GB, 1 fits 5 GB; the last count holds the output slot
+    assert lce.tensor_split(info, [30 * GB, 10 * GB, 5 * GB], 2048) == [7, 2, 2]
     with pytest.raises(ValueError):
         lce.tensor_split(info, [20 * GB, 10 * GB], 2048)  # 10 x ~4 GB layers need ~40 GB
 
@@ -349,7 +349,7 @@ def test_host_layers_stay_on_the_host_cpu_and_are_not_charged_to_devices():
     layers stay on the host CPU, mmapped from the GGUF (paged from disk)."""
     info = {"n_layer": 10, "layer_bytes": 4 * GB, "other_bytes": 1 * GB,
             "total_bytes": 41 * GB, "kv_bytes_per_token_layer": 1000}
-    assert lce.tensor_split(info, [20 * GB, 10 * GB], 2048, host_layers=3) == [20.0, 10.0]
+    assert lce.tensor_split(info, [21 * GB, 10 * GB], 2048, host_layers=3) == [5, 3]
     cmd = lce.server_cmd("llama-server", "m.gguf", 8032, 2048, 8, rpc=["a:1", "b:2"],
                          split=[2.0, 1.0], ngl=7)
     assert cmd[cmd.index("-ngl") + 1] == "7"
@@ -360,6 +360,42 @@ def test_tensor_split_charges_the_real_layer_total_not_n_times_the_largest():
     46 x 4.71 = 217 GB refused a model whose layers hold 155.6 GB."""
     info = {"n_layer": 46, "layer_bytes": int(4.71 * GB), "other_bytes": int(1.19 * GB),
             "total_bytes": int(156.81 * GB), "kv_bytes_per_token_layer": 2048}
-    assert lce.tensor_split(info, [50 * GB, 86 * GB, 57 * GB, 8 * GB], 4096) == [50.0, 86.0, 57.0, 8.0]
+    assert lce.tensor_split(info, [50 * GB, 86 * GB, 57 * GB, 8 * GB], 4096) == [14, 25, 8, 0]
     with pytest.raises(ValueError):
         lce.tensor_split(info, [100 * GB, 50 * GB], 4096)  # 150 GB < ~155.6 GB of layers
+
+
+def _f32(x):
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def _llama_cpp_layer_devices(weights, n_layer, ngl):
+    """llama-model.cpp load_tensors at 65840ed: float32 cumulative split points, then
+    layer il goes to upper_bound(splits, (il - i_gpu_start) / act_gpu_layers)."""
+    import bisect
+    acc, splits = 0.0, []
+    for w in weights:
+        acc = _f32(acc + w)
+        splits.append(acc)
+    splits = [_f32(s / acc) for s in splits]
+    start, act = max(n_layer + 1 - ngl, 0), min(ngl, n_layer + 1)
+    return [None if il < start or il - start >= act else
+            bisect.bisect_right(splits, _f32((il - start) / act)) for il in range(n_layer)]
+
+
+def test_tensor_split_keeps_every_device_under_budget_with_uneven_layers():
+    """GLM-5.3-Flash failed to load: budgets passed as weights gave the 86 GB node a
+    contiguous block of big MoE layers past its Vulkan heap. Counts must map 1:1."""
+    per_layer = [int(g * GB) for g in [0.4, 0.4, 0.4] + [3.6] * 20 + [1.0] * 10 + [3.7] * 13]
+    info = {"n_layer": len(per_layer), "layer_bytes": max(per_layer), "per_layer": per_layer,
+            "other_bytes": 1 * GB, "total_bytes": sum(per_layer) + GB, "kv_bytes_per_token_layer": 0}
+    caps = [39 * GB, 80 * GB, 57 * GB, 8 * GB]
+    for host_layers in (0, 2):
+        weights = lce.tensor_split(info, caps, 4096, host_layers=host_layers)
+        devs = _llama_cpp_layer_devices(weights, len(per_layer), sum(weights))
+        assert devs[:host_layers] == [None] * host_layers  # host layers stay on the host
+        assert None not in devs[host_layers:]
+        on_devices = [d for d in devs[host_layers:] if d is not None]
+        assert on_devices == sorted(on_devices)  # one contiguous block per device, in order
+        for d, cap in enumerate(caps):
+            assert sum(s for s, x in zip(per_layer, devs) if x == d) <= cap

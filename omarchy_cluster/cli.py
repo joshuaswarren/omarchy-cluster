@@ -543,6 +543,13 @@ def _serve_llamacpp_nodes(args, info):
     print("%s: %d layers, %.2f GB in %d shard(s) over %s" % (
         os.path.basename(args.model), info["n_layer"], info["total_bytes"] / 1e9, info["shards"],
         ", ".join("%s %.1f GB" % (n, c / 1e9) for (n, _), c in zip(wanted, caps))))
+    first = args.host_layers
+    for (name, _), cap, k in zip(wanted, caps, weights):
+        layers = min(k, info["n_layer"] - first)  # the last count also holds the output slot
+        gb = sum(info["per_layer"][first:first + layers]) / 1e9 if info.get("per_layer") else 0.0
+        print("  %s: layers %s, %.1f of %.1f GB" % (
+            name, "%d-%d" % (first, first + layers - 1) if layers else "none", gb, cap / 1e9))
+        first += layers
     os.makedirs(os.path.expanduser("~/.local/state/omarchy-cluster"), exist_ok=True)
     state = {"engine": "llamacpp", "stages": [], "local_pids": [], "gateway_port": args.port,
              "engine_port": args.engine_port}
@@ -573,7 +580,7 @@ def _serve_llamacpp_nodes(args, info):
            "--llama-server", args.llama_server, "--port", str(args.engine_port),
            "--server-port", str(args.engine_port + 1), "--ctx", str(args.ctx),
            "--rpc", ",".join(eps), "--tensor-split", ",".join("%g" % w for w in weights),
-           "--ngl", str(info["n_layer"] - args.host_layers)]
+           "--ngl", str(sum(weights))]
     engine, log = _spawn(cmd, "llamacpp-engine.log")
     state["local_pids"].append(engine.pid)
     _write_state(state)
