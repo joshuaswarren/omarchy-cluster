@@ -262,23 +262,26 @@ def mcdma():
 
 
 def macos_memory():
-    """macOS only: {"memory_free_pages_bytes": free pages, "memory_reclaimable_bytes":
-    inactive + speculative pages, "data_volume_free_bytes": free space on the volume
-    that holds swap}. Inactive pages come back only by paging them out to that volume,
-    so a budget that counts them must also count the disk they need."""
+    """macOS only: {"memory_free_pages_bytes": free pages, "memory_purgeable_bytes",
+    "memory_file_backed_bytes": cached file pages (dropped without swapping),
+    "memory_reclaimable_bytes": inactive + speculative pages (anonymous ones swap),
+    "data_volume_free_bytes": free space on the volume that holds swap}."""
     pagesize = int(_run(["sysctl", "-n", "hw.pagesize"]).strip() or "16384")
-    pages = {"free": 0, "inactive": 0, "speculative": 0}
+    pages = {"Pages free": 0, "Pages inactive": 0, "Pages speculative": 0, "Pages purgeable": 0,
+             "File-backed pages": 0}
     for line in _run(["vm_stat"]).splitlines():
         for k in pages:
-            if line.startswith("Pages %s:" % k):
+            if line.startswith(k + ":"):
                 pages[k] = int(line.split()[-1].rstrip("."))
     try:
         st = os.statvfs("/System/Volumes/Data")
         data_free = st.f_bavail * st.f_frsize
     except OSError:
         data_free = None
-    return {"memory_free_pages_bytes": pages["free"] * pagesize,
-            "memory_reclaimable_bytes": (pages["inactive"] + pages["speculative"]) * pagesize,
+    return {"memory_free_pages_bytes": pages["Pages free"] * pagesize,
+            "memory_purgeable_bytes": pages["Pages purgeable"] * pagesize,
+            "memory_file_backed_bytes": pages["File-backed pages"] * pagesize,
+            "memory_reclaimable_bytes": (pages["Pages inactive"] + pages["Pages speculative"]) * pagesize,
             "data_volume_free_bytes": data_free}
 
 

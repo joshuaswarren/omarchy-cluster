@@ -209,18 +209,25 @@ HOST_COMPUTE = 1_000_000_000    # llama-server's own buffers on the host
 DISK_FLOOR = 20_000_000_000      # macOS Data volume kept free for swap
 
 
+# ponytail: a fixed allowance for the Mac's own services (oMLX) to grow during a run; not
+# measured. Replace with a per-node figure from the agent if a run trips the Mac guard.
+MAC_SERVICE_GROWTH = 8_000_000_000
+
+
 def node_ram_avail(facts):
-    """RAM a node can give its rpc-servers, from its agent facts. macOS: free pages only.
-    Inactive and speculative pages come back only by paging them out: on 2026-10-07 a
-    Mac Studio sized from free+inactive+speculative (60.6 GB) took a 41 GB share by
-    swapping 17.1 -> 25.9 GB. None of it when the Data volume, where swap lives, is
-    below DISK_FLOOR. Elsewhere: MemAvailable (memory_free_bytes)."""
+    """RAM a node can give its rpc-servers, from its agent facts. macOS: free + purgeable
+    + file-backed (cached file) pages, which come back without swapping, less
+    MAC_SERVICE_GROWTH; anonymous inactive pages do not count, they come back only by
+    swapping. None of it when the Data volume, where swap lives, is below DISK_FLOOR.
+    Elsewhere: MemAvailable (memory_free_bytes)."""
     if facts.get("memory_free_pages_bytes") is None:
         return facts.get("memory_free_bytes")
     disk = facts.get("data_volume_free_bytes")
     if disk is not None and disk < DISK_FLOOR:
         return 0
-    return facts["memory_free_pages_bytes"]
+    back = facts["memory_free_pages_bytes"] + facts.get("memory_purgeable_bytes", 0) + \
+        facts.get("memory_file_backed_bytes", 0)
+    return max(0, back - MAC_SERVICE_GROWTH)
 
 
 def device_budget(dev_free, ram_avail=None, va_cap=None, gpu=True):
