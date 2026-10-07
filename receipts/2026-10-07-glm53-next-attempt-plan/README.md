@@ -21,20 +21,26 @@ loading. Since then:
 - The x86 laptop on wired Ethernet (Wi-Fi made most of the first run's 2724 s load).
 - The host on omarchy-cluster main at or after this commit's parent (`install-agent`).
 - The M1 Max's scratch space cleared (its budget assumes 60.3 GB available).
+- For arm C: the Mesa change behind `HK_LARGE_CONSTANTS` (`9e3f6c56196`) passed its independent review
+  (w7J); a Mesa build with it installed on both Omarchy GPU nodes, the flag off by default so arms A and
+  B run the driver unchanged; and the M2 Max (G14C) passed the same unfiltered `MUL_MAT` and
+  `MUL_MAT_ID` correctness check against CPU that the M1 Max (G13C) passed.
 - rpc-servers with `-c` (`--rpc-cache`): the Mac Studio's cache on the external volume
   (`--rpc-env mac-ultra=LLAMA_CACHE=...`), never the system disk; the M2 Max CPU server started by hand
   with `-c -t 8` (its 8 performance cores); the x86 laptop's servers with `-c`.
 
-## Session (one window, about 70 minutes)
+## Session (one window, about 95 minutes)
 
 | arm | change | measured |
 |---|---|---|
 | A | new baseline: measured placement, macOS budget, performance-core threads, cache on, x86 wired | cold load time, the host paging check, 1 cold + 5 warm requests |
 | B | A plus `--rpc-env mac-ultra=GGML_METAL_SHARED_BUFFERS_DISABLE=1`, reloaded from the caches | warm reload time, 1 cold + 5 warm requests |
+| C | A plus `--rpc-env omarchy-m1=HK_LARGE_CONSTANTS=1 --rpc-env omarchy-m2=HK_LARGE_CONSTANTS=1` (Metal as in A), reloaded from the caches | warm reload time, 1 cold + 5 warm requests |
 
 Arm A changes several things at once against the first run and is reported as a new baseline, not as
-the effect of any one change. Arm B against arm A is a single-variable test of the Metal setting, in the
-same session, on the same loaded weights.
+the effect of any one change. Arm B against arm A is a single-variable test of the Metal setting, and
+arm C against arm A a single-variable test of the Vulkan driver flag, both in the same session from the
+same cached weights.
 
 Launch (arm A), started detached on the host so a dropped ssh session cannot stop it, recorded by
 following its log:
@@ -62,6 +68,10 @@ before the run, when that flag landed; nothing measured changed).
   about 275 s of it); about 6 to 7 minutes warm from the caches.
 - Decode: 0.4 to 0.6 tok/s if host paging accounts for the time the way the first run's breakdown
   suggests. That is an inference; the run measures it.
+- Arm C: no number is predicted. The basis is a kernel measurement on the M1 Max: `HK_LARGE_CONSTANTS=1`
+  ran the IQ1_S matrix-vector kernel 6.2x faster and the mixture-of-experts matrix-vector kernel
+  (IQ2_XS) 22 to 24x faster, with output identical to CPU. The Vulkan nodes were estimated at about 720
+  ms of the first run's 2560 ms token; how much of that the flag removes is what arm C measures.
 
 ## Method and guards
 
