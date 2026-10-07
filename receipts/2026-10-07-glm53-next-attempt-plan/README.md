@@ -22,9 +22,11 @@ loading. Since then:
 - The host on omarchy-cluster main at or after this commit's parent (`install-agent`).
 - The M1 Max's scratch space cleared (its budget assumes 60.3 GB available).
 - For arm C: the Mesa change behind `HK_LARGE_CONSTANTS` (`9e3f6c56196`) passed its independent review
-  (w7J); a Mesa build with it installed on both Omarchy GPU nodes, the flag off by default so arms A and
-  B run the driver unchanged; and the M2 Max (G14C) passed the same unfiltered `MUL_MAT` and
-  `MUL_MAT_ID` correctness check against CPU that the M1 Max (G13C) passed.
+  (w7J); a Mesa build with it installed on both Omarchy GPU nodes; and the M2 Max (G14C) passed the same
+  unfiltered `MUL_MAT` and `MUL_MAT_ID` correctness check against CPU that the M1 Max (G13C) passed.
+- Before the load, the Mesa commit each Vulkan rank runs is recorded (`vulkaninfo --summary`, driver
+  info) for the receipt. Builds from `fc8f604f68b` on have the flag on by default; earlier ones off. Every
+  arm sets the flag explicitly, so the default of the installed build does not matter.
 - rpc-servers with `-c` (`--rpc-cache`): the Mac Studio's cache on the external volume
   (`--rpc-env mac-ultra=LLAMA_CACHE=...`), never the system disk; the M2 Max CPU server started by hand
   with `-c -t 8` (its 8 performance cores); the x86 laptop's servers with `-c`.
@@ -33,9 +35,9 @@ loading. Since then:
 
 | arm | change | measured |
 |---|---|---|
-| A | new baseline: measured placement, macOS budget, performance-core threads, cache on, x86 wired | cold load time, the host paging check, 1 cold + 5 warm requests |
-| B | A plus `--rpc-env mac-ultra=GGML_METAL_SHARED_BUFFERS_DISABLE=1`, reloaded from the caches | warm reload time, 1 cold + 5 warm requests |
-| C | A plus `--rpc-env omarchy-m1=HK_LARGE_CONSTANTS=1 --rpc-env omarchy-m2=HK_LARGE_CONSTANTS=1` (Metal as in A), reloaded from the caches | warm reload time, 1 cold + 5 warm requests |
+| A | new baseline: measured placement, macOS budget, performance-core threads, cache on, x86 wired; `HK_LARGE_CONSTANTS=0` on both Vulkan ranks | cold load time, the host paging check, 1 cold + 5 warm requests |
+| B | A (flag still 0) plus `--rpc-env mac-ultra=GGML_METAL_SHARED_BUFFERS_DISABLE=1`, reloaded from the caches | warm reload time, 1 cold + 5 warm requests |
+| C | A with `HK_LARGE_CONSTANTS=1` instead of 0 on both Vulkan ranks (Metal as in A), reloaded from the caches | warm reload time, 1 cold + 5 warm requests |
 
 Arm A changes several things at once against the first run and is reported as a new baseline, not as
 the effect of any one change. Arm B against arm A is a single-variable test of the Metal setting, and
@@ -53,6 +55,7 @@ omarchy-cluster serve ~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.
   --rpc-binary omarchy-m1=~/src/llama.cpp/build-vulkan/bin/ggml-rpc-server \
   --rpc-binary omarchy-m2=~/src/llama.cpp/build-vulkan/bin/ggml-rpc-server \
   --rpc-env omarchy-m1=HK_SYSMEM=60000000000 --rpc-env omarchy-m2=HK_SYSMEM=86000000000 \
+  --rpc-env omarchy-m1=HK_LARGE_CONSTANTS=0 --rpc-env omarchy-m2=HK_LARGE_CONSTANTS=0 \
   --rpc-env mac-ultra=LLAMA_CACHE=/Volumes/ext/rpc-cache --ctx 2048
 ```
 
