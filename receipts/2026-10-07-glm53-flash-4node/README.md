@@ -7,10 +7,10 @@ over a Mac Studio on macOS and three Macs running Omarchy (Arch Linux ARM), thro
 
 | node | hardware | OS | backend | layers | GB on node |
 |---|---|---|---|---|---|
-| mac-ultra | M1 Ultra, 128 GB | macOS 26.6.2 | Metal | 0-13 | 41.7 |
-| omarchy-m2 | M2 Max, 94 GB | Omarchy | Vulkan (Honeykrisp, Mesa 26.2.3) | 14-30 | 60.1 |
-| omarchy-m1 | M1 Max, 62 GB | Omarchy | Vulkan (Honeykrisp, Mesa 26.2.2) | 31-42 | 42.4 |
-| omarchy-host | M1, 15 GB | Omarchy | CPU, plus the llama-server host | 43-45 | 7.8 |
+| mac-ultra | Mac Studio M1 Ultra, 128 GB | macOS 26.6.2 | Metal | 0-13 | 41.7 |
+| omarchy-m2 | MacBook Pro 14-inch M2 Max (2023), 94.9 GiB visible to Linux | Omarchy on Arch Linux ARM | Vulkan (Honeykrisp, Mesa 26.2.3) | 14-30 | 60.1 |
+| omarchy-m1 | MacBook Pro 16-inch M1 Max (2021), 62.8 GiB visible to Linux | Omarchy | Vulkan (Honeykrisp, Mesa 26.2.2) | 31-42 | 42.4 |
+| omarchy-host | MacBook Pro 13-inch M1 (2020), 15.3 GiB visible to Linux | Omarchy on Arch Linux ARM | CPU, plus the llama-server host | 43-45 | 7.8 |
 
 - Model: unsloth GLM-5.3-Flash UD-IQ4_XS, 5 shards, 156.81 GB, 46 layers (layer 45 is the MTP
   layer, which llama.cpp does not load).
