@@ -33,10 +33,12 @@ loading. Since then:
   nodes: `libvulkan_asahi.so` sha256 `3546bcafe8ed3995d091debcc2fb00803087e0074a88d7ebfe681071c58e57d0`
   on each, checked on each node. Before the load the sha256 is checked again and `vulkaninfo --summary`
   run with the same `VK_DRIVER_FILES` (driver info) is recorded. The first run used the system driver.
-- For arm C: the Mesa change behind `HK_LARGE_CONSTANTS` (`9e3f6c56196`) passed its independent review
-  (w7J), and the M2 Max (G14C) passed the same unfiltered `MUL_MAT` and `MUL_MAT_ID` correctness check
-  against CPU that the M1 Max (G13C) passed. Every arm sets the flag explicitly (`=0` in A and B, `=1`
-  in C), so the build's default does not matter.
+- For arm C: the Mesa change behind `HK_LARGE_CONSTANTS` (`9e3f6c56196`) passed its independent review,
+  and both GPUs passed the unfiltered `MUL_MAT` and `MUL_MAT_ID` check against CPU (llama.cpp
+  `65840ed`, the private driver, kernel 7.1.12-2-12.1, `test-backend-ops -b Vulkan0`) with the flag
+  set to 1 and to 0: M1 Max (G13C) and M2 Max (G14C) each 1684/1684 and 939/939 cases, 0 failures
+  in all eight runs. Every arm sets the flag explicitly (`=0` in A and B, `=1` in C), so the build's
+  default does not matter. Arm C has no remaining gate.
 - Before the load, the kernel each Linux node runs (`uname -r`) is recorded. The first run did not
   record kernel versions, and both Omarchy GPU nodes have moved to a newer kernel since. The kernel,
   the private driver and bf16 are all part of arm A's change set against the first run.
