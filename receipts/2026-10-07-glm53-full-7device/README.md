@@ -55,12 +55,40 @@ GLM-5.3 tokenizer ([data/divergence.txt](data/divergence.txt), [src/diverge.py](
 
 Ruled out by the data: prompt cache and KV reuse (`cache_n` 0 and `prompt_n` 20 on all six), and
 different inputs or sampling (same prompt, temperature 0, same server build). The cause is not
-determined: nothing per device was recorded, and the requests did not log token probabilities.
+determined: nothing per device was recorded in this run, and its requests did not log token
+probabilities.
+
+### Per-device check with a small model
+
+Same night, same llama.cpp build: Qwen3-1.7B Q4_K_M with every layer on one device at a time, 3
+greedy runs each, `cache_prompt` false, 64 tokens, top-2 logprobs
+([src/determinism.py](src/determinism.py), [src/detcompare.py](src/detcompare.py), raw:
+[data/determinism.jsonl](data/determinism.jsonl)).
+
+| device | tokens identical, 3 runs | largest logprob change between runs |
+|---|---|---|
+| x86 laptop, CUDA | yes | 0 |
+| x86 laptop, CPU | yes | 0 |
+| M1 Max, CPU | yes | 0 |
+| Mac Studio, Metal | yes | 0 |
+| M2 Max, Vulkan | yes | 0 |
+| M1 Max, Vulkan | yes | 0 |
+
+Every device repeated itself bit for bit. The devices differ from each other: logprob gaps up to
+0.33 between CPU and Metal, and 0 between the two Vulkan GPUs
+([data/determinism-compare.txt](data/determinism-compare.txt)). No token differed on this prompt;
+the smallest top-1 over top-2 margin in any run was 0.29.
+
+So no single device path repeats inconsistently on a dense Q4_K model. This check does not cover
+what the 753B run adds: IQ1_S kernels, mixture-of-experts routing, the sparse attention indexer,
+layers mapped from disk on the host, and six devices chained over RPC.
 
 ## Conditions
 
-- During the load the Mac Studio's swap grew from 12.3 to 16.6 GB, then held steady; macOS
-  reported 29 to 33 percent of memory free.
+- During the load the Mac Studio's swap grew by 4.3 to 4.5 GB (two samplers), then held flat;
+  macOS reported 29 to 33 percent of memory free.
+- Peak memory use during the run, sampled about every 5 minutes: M2 Max 89.1 percent (03:15 to
+  03:30Z, during the requests). No Linux node logged an out-of-memory kill.
 - Another job ran on the Mac Studio from 03:04 to 03:08Z, before the first request (03:12:56Z).
 - The load started under a two-request script. It was stopped at 02:41Z, mid-load, and replaced
   by the 1 cold + 5 warm measurement; the server kept loading. The load time spans both.

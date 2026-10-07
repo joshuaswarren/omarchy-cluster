@@ -38,6 +38,8 @@ Two requests, n = 1 each; request 1 is the first after load (cold).
 - The recording prints 1.39 and 1.57 tok/s: the gateway then divided 64 tokens by the decode time,
   but 64 tokens span 63 decode steps. Fixed in `dce97d2`; the table uses llama-server's figures.
 - The only uncached prompt time is request 1's. Request 2 hit the prompt cache.
+- Memory: the Mac Studio peaked at 91.6 percent used at 02:05Z, during the requests (sampled about
+  every 5 minutes). No Linux node logged an out-of-memory kill.
 - Load: 1055 s. The host pushes about 149 GB over its one 2.35 Gb/s link; that alone takes about
   507 s.
 - Recording: [data/glm53-flash-4node.cast](data/glm53-flash-4node.cast) (`asciinema play`).

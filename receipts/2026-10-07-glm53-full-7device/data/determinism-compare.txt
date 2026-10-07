@@ -1,0 +1,23 @@
+within device (3 runs each):
+  x86-cuda             runs 3, tokens identical True, max logprob change 0
+  x86-cpu              runs 3, tokens identical True, max logprob change 0
+  host-cpu             runs 3, tokens identical True, max logprob change 0
+  mac-metal            runs 3, tokens identical True, max logprob change 0
+  m2-vulkan            runs 3, tokens identical True, max logprob change 0
+  m1max-vulkan-local   runs 3, tokens identical True, max logprob change 0
+across devices (run 1 vs run 1):
+  x86-cuda             vs x86-cpu              first token difference none, max logprob gap before it 0.144
+  x86-cuda             vs host-cpu             first token difference none, max logprob gap before it 0.232
+  x86-cuda             vs mac-metal            first token difference none, max logprob gap before it 0.0924
+  x86-cuda             vs m2-vulkan            first token difference none, max logprob gap before it 0.0596
+  x86-cuda             vs m1max-vulkan-local   first token difference none, max logprob gap before it 0.0596
+  x86-cpu              vs host-cpu             first token difference none, max logprob gap before it 0.272
+  x86-cpu              vs mac-metal            first token difference none, max logprob gap before it 0.102
+  x86-cpu              vs m2-vulkan            first token difference none, max logprob gap before it 0.102
+  x86-cpu              vs m1max-vulkan-local   first token difference none, max logprob gap before it 0.102
+  host-cpu             vs mac-metal            first token difference none, max logprob gap before it 0.325
+  host-cpu             vs m2-vulkan            first token difference none, max logprob gap before it 0.292
+  host-cpu             vs m1max-vulkan-local   first token difference none, max logprob gap before it 0.292
+  mac-metal            vs m2-vulkan            first token difference none, max logprob gap before it 0.0328
+  mac-metal            vs m1max-vulkan-local   first token difference none, max logprob gap before it 0.0328
+  m2-vulkan            vs m1max-vulkan-local   first token difference none, max logprob gap before it 0
