@@ -425,10 +425,16 @@ def _spawn(cmd, log_name):
 
 
 def _start_gateway(state, port, engine):
+    from . import llamacpp_engine
     gateway_code = "from omarchy_cluster.gateway import serve; serve(port=%d, engine=%r)" % (port, engine)
     gateway, gw_log = _spawn([sys.executable, "-c", gateway_code], "gateway.log")
     state["gateway_pid"] = gateway.pid
     _write_state(state)
+    # serve returns to scripts that call the endpoint at once: be listening first
+    try:
+        llamacpp_engine.wait_http("http://127.0.0.1:%d/v1/models" % port, deadline_s=30.0, proc=gateway)
+    except (TimeoutError, RuntimeError) as e:
+        sys.exit("gateway did not start (log: %s): %s" % (gw_log, e))
     print("gateway pid: %s (log: %s)" % (gateway.pid, gw_log))
 
 

@@ -408,3 +408,24 @@ def test_tensor_split_keeps_every_device_under_budget_with_uneven_layers():
         assert on_devices == sorted(on_devices)  # one contiguous block per device, in order
         for d, cap in enumerate(caps):
             assert sum(s for s, x in zip(per_layer, devs) if x == d) <= cap
+
+
+def test_start_gateway_returns_only_once_the_gateway_answers(tmp_path, monkeypatch):
+    """serve printed the gateway pid and returned before it listened: a script that sent
+    its first request at once got connection refused on a loaded 157 GB model."""
+    import signal
+    from omarchy_cluster import cli
+    monkeypatch.setenv("HOME", str(tmp_path))
+    os.makedirs(str(tmp_path / ".local/state/omarchy-cluster"))
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    monkeypatch.setenv("PYTHONPATH", os.path.join(os.path.dirname(__file__), ".."))
+    state = {}
+    cli._start_gateway(state, port, "http://127.0.0.1:9")
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d/v1/models" % port, timeout=2) as r:
+            assert r.status == 200
+    finally:
+        os.killpg(state["gateway_pid"], signal.SIGTERM)

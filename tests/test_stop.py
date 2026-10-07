@@ -215,6 +215,8 @@ def test_cmd_serve_spawns_gateway_as_detached_child(tmp_path, monkeypatch):
         return FakeProc()
 
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    from omarchy_cluster import llamacpp_engine
+    monkeypatch.setattr(llamacpp_engine, "wait_http", lambda *a, **kw: None)  # no real gateway here
     cli.cmd_serve(args)
     assert any("omarchy_cluster.gateway" in c for c in captured["cmd"])
     # detached session guarantee
