@@ -112,7 +112,7 @@ laptop, llama.cpp 65840ed, `llama-bench -t 8 -n 64`.
 | All 28 layers on the phone GPU, `OMP_WAIT_POLICY=ACTIVE` | 35.1 | 424 |
 | 7 layers on the phone GPU | 35.5 | 334 |
 | 14 layers on the phone GPU | 31.6 | 341 |
-| 14 layers on the phone GPU, `OMP_WAIT_POLICY=ACTIVE` | 45.0 | |
+| 14 layers on the phone GPU, `OMP_WAIT_POLICY=ACTIVE` | 45.0 | not measured |
 | 14 layers on the phone CPU | 30.0 | 107 |
 
 The phone GPU processes a prompt faster than the laptop CPU. Decode is bound by the phone's
