@@ -21,18 +21,24 @@ over a Mac Studio on macOS and three Macs running Omarchy (Arch Linux ARM), thro
 
 ## Results
 
-| | request 1 | request 2 |
+Numbers from llama-server's own timing lines in [data/llamacpp-engine.log](data/llamacpp-engine.log).
+Two requests, n = 1 each; request 1 is the first after load (cold).
+
+| | request 1 (cold) | request 2 |
 |---|---|---|
-| decode | 1.39 tok/s | 1.57 tok/s |
-| prompt | 13.6 s | 2.7 s (prompt cache) |
-| completion | 64 tokens | 64 tokens |
+| decode | 1.36 tok/s (46180 ms, 64 tokens) | 1.54 tok/s (40883 ms, 64 tokens) |
+| prompt evaluated | 20 tokens in 13.6 s | 4 tokens in 2.7 s (16 reused from the prompt cache) |
+| stopped by | max_tokens (64) | max_tokens (64) |
 | text sha256 | `3ad4239e76aabcf2` | `3ad4239e76aabcf2` |
 
-- Same prompt, temperature 0, both times: identical text.
+- Same prompt, temperature 0, both times: identical text. The 64 tokens are the start of the
+  model's `<think>` reasoning; neither request reached the answer.
+- The recording prints 1.39 and 1.57 tok/s: the gateway then divided 64 tokens by the decode time,
+  but 64 tokens span 63 decode steps. Fixed in `dce97d2`; the table uses llama-server's figures.
+- The only uncached prompt time is request 1's. Request 2 hit the prompt cache.
 - Load: 1055 s. The host pushes about 149 GB over its one 2.35 Gb/s link; that alone takes about
   507 s.
-- Recording: [data/glm53-flash-4node.cast](data/glm53-flash-4node.cast) (`asciinema play`). Engine
-  log: [data/llamacpp-engine.log](data/llamacpp-engine.log).
+- Recording: [data/glm53-flash-4node.cast](data/glm53-flash-4node.cast) (`asciinema play`).
 
 ## What it took
 

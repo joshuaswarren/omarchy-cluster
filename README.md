@@ -20,9 +20,9 @@ On real hardware, 2026-10-07: GLM-5.3-Flash (156.8 GB, more than any one of
 these machines holds) split across four Macs. A 128 GB Mac Studio on macOS
 (Metal) took 14 layers. Two MacBook Pros on Omarchy Linux (Vulkan), an M2 Max
 and an M1 Max, took 17 and 12. A 13-inch M1 MacBook Pro on Omarchy Linux (CPU)
-took the last 3 and hosted the endpoint. It decoded at 1.39 and 1.57 tokens per
-second, and two greedy requests returned the same text. Loading took 1055
-seconds over 2.5 Gb Ethernet.
+took the last 3 and hosted the endpoint. Two greedy requests returned the same
+text and decoded at 1.36 tokens per second (the first, cold) and 1.54. Loading
+took 1055 seconds over 2.5 Gb Ethernet.
 
 On 2026-10-06: GLM-4.5-Air (106B parameters, 60.1 GB at 4 bits) split across
 the Mac Studio (31 layers) and the M1 Max (15 layers) over Thunderbolt and ran
@@ -65,7 +65,7 @@ Capacity: models that do not fit on the Omarchy machines.
 
 | Model | Weights | Nodes | Layers per node | Decode | Prompt time |
 |---|---|---|---|---|---|
-| GLM-5.3-Flash UD-IQ4_XS (llama.cpp RPC, 46 layers), 2026-10-07 | 156.8 GB | Mac Studio M1 Ultra 128 GB (Metal) + MacBook Pro M2 Max + MacBook Pro M1 Max (Omarchy, Vulkan) + MacBook Pro M1 13-inch (Omarchy, CPU), 2.5 Gb Ethernet | 14 + 17 + 12 + 3 | 1.39 and 1.57 tok/s, 64 tokens, same text | 13.6 s, 2.7 s (prompt cache) |
+| GLM-5.3-Flash UD-IQ4_XS (llama.cpp RPC, 46 layers), 2026-10-07 | 156.8 GB | Mac Studio M1 Ultra 128 GB (Metal) + MacBook Pro M2 Max + MacBook Pro M1 Max (Omarchy, Vulkan) + MacBook Pro M1 13-inch (Omarchy, CPU), 2.5 Gb Ethernet | 14 + 17 + 12 + 3 | 1.36 tok/s (first request, cold) and 1.54 tok/s, 64 tokens each (max_tokens), same text | 13.6 s for 20 tokens (first request; the second hit the prompt cache) |
 | GLM-4.5-Air-4bit (glm4_moe, 46 layers), 2026-10-06 | 60.1 GB | Mac Studio M1 Ultra 128 GB + MacBook Pro M1 Max 64 GB, Thunderbolt | 31 + 15 | 0.87 and 0.86 tok/s, 64 tokens, agree | 15.5 s, 13.2 s, 16.1 s |
 
 The GLM-4.5-Air recording shows 0.83 tok/s. Per token, the laptop's 15 layers
