@@ -410,10 +410,24 @@ def test_tensor_split_keeps_every_device_under_budget_with_uneven_layers():
             assert sum(s for s, x in zip(per_layer, devs) if x == d) <= cap
 
 
+SLOW_GATEWAY = """
+import sys, time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers()
+        self.wfile.write(b"{}")
+    def log_message(self, *a):
+        pass
+time.sleep(1.5)  # a gateway still importing when serve returns
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+"""
+
+
 def test_start_gateway_returns_only_once_the_gateway_answers(tmp_path, monkeypatch):
     """serve printed the gateway pid and returned before it listened: a script that sent
-    its first request at once got connection refused on a loaded 157 GB model."""
-    import signal
+    its first request at once got connection refused on a loaded 157 GB model. The
+    stand-in binds loopback only, so no host firewall sits between it and the test."""
     from omarchy_cluster import cli
     monkeypatch.setenv("HOME", str(tmp_path))
     os.makedirs(str(tmp_path / ".local/state/omarchy-cluster"))
@@ -421,11 +435,18 @@ def test_start_gateway_returns_only_once_the_gateway_answers(tmp_path, monkeypat
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
-    monkeypatch.setenv("PYTHONPATH", os.path.join(os.path.dirname(__file__), ".."))
-    state = {}
-    cli._start_gateway(state, port, "http://127.0.0.1:9")
+    procs = []
+
+    def slow_spawn(cmd, log_name):
+        p = subprocess.Popen([sys.executable, "-c", SLOW_GATEWAY, str(port)])
+        procs.append(p)
+        return p, str(tmp_path / log_name)
+
+    monkeypatch.setattr(cli, "_spawn", slow_spawn)
     try:
+        cli._start_gateway({}, port, "http://127.0.0.1:9")
         with urllib.request.urlopen("http://127.0.0.1:%d/v1/models" % port, timeout=2) as r:
             assert r.status == 200
     finally:
-        os.killpg(state["gateway_pid"], signal.SIGTERM)
+        procs[0].kill()
+        procs[0].wait()
