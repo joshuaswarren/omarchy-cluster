@@ -311,10 +311,10 @@ def _signal_all(pids, sig):
 
 def rpc_server_env(base=None, platform=None):
     """Environment for ggml-rpc-server. On macOS (Metal) it defaults to private GPU
-    buffers: with other GPU work on the Mac (an oMLX server held its GPU at 98-100%),
-    decode ran 2.3-2.6x faster than with ggml's shared buffers; on an idle GPU, shared
-    buffers were about 15% faster. Opt out by setting GGML_METAL_SHARED_BUFFERS_ENABLE (or
-    either variable) in the agent's own environment; ggml lets ENABLE win."""
+    buffers: while another LLM server kept the Mac's GPU 98-100% busy, decode ran
+    2.3-2.6x faster than with ggml's shared buffers; when that load eased, shared buffers
+    were about 15% faster. Opt out by setting GGML_METAL_SHARED_BUFFERS_ENABLE (or either
+    variable) in the agent's own environment; ggml lets ENABLE win."""
     env = dict(os.environ if base is None else base)
     if (platform or sys.platform) == "darwin" and not (
             "GGML_METAL_SHARED_BUFFERS_DISABLE" in env or "GGML_METAL_SHARED_BUFFERS_ENABLE" in env):

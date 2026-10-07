@@ -360,6 +360,7 @@ def test_mac_rpc_server_defaults_to_private_metal_buffers_unless_the_agent_env_s
     assert "GGML_METAL_SHARED_BUFFERS_DISABLE" not in kept
     assert agent.rpc_server_env({"PATH": "/bin"}, "darwin")["PATH"] == "/bin"
 
+
 def test_rpc_node_args_parse_names_and_optional_gb():
     from omarchy_cluster import cli
     assert cli._parse_rpc_nodes(["mac-a=50", "linux-b", "linux-c=7.5"]) == [
