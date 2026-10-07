@@ -314,7 +314,9 @@ def rpc_start(req):
     --rpc-node`. Binds all interfaces. "cache": true adds -c, so a later load reuses
     weights from local disk; off by default because the server then writes this node's
     whole share to disk (42 GB would have filled a 99% full Mac system disk). Binary:
-    req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH."""
+    req, else $OMARCHY_CLUSTER_RPC_SERVER, else PATH. "env": {KEY: VALUE} is added to the
+    server's environment (HK_SYSMEM, LLAMA_CACHE for -c, GGML_METAL_*), so a node needs no
+    wrapper script; the token already lets a caller pick the binary, so this adds no reach."""
     log_dir = os.path.expanduser("~/.local/share/omarchy-cluster")
     os.makedirs(log_dir, exist_ok=True)
     binary = req.get("binary") or os.environ.get("OMARCHY_CLUSTER_RPC_SERVER") or "ggml-rpc-server"
@@ -325,11 +327,13 @@ def rpc_start(req):
         cmd += ["-t", str(int(req["threads"]))]
     if req.get("device"):
         cmd += ["-d", str(req["device"])]
+    extra = {str(k): str(v) for k, v in (req.get("env") or {}).items()}
     log = os.path.join(log_dir, "rpc-server.log")
     with open(log, "w") as lf:
         pid = subprocess.Popen(cmd, cwd=log_dir, stdout=lf, stderr=subprocess.STDOUT,
-                               stdin=subprocess.DEVNULL, start_new_session=True).pid
-    return {"pid": pid, "log": log, "cmd": cmd}
+                               stdin=subprocess.DEVNULL, start_new_session=True,
+                               env=dict(os.environ, **extra)).pid
+    return {"pid": pid, "log": log, "cmd": cmd, "env": sorted(extra)}
 
 
 def gpu_cap(req=None):

@@ -146,6 +146,9 @@ allocate. `serve` then picks the node order and how many layers stay on the
 gateway machine so that the fewest of them are read from disk, then uses as few
 nodes as it can. `=GB` after a node sets its budget by hand; `--host-layers N`
 keeps exactly N layers on the gateway machine and the nodes in the order given.
+`--rpc-env NAME=KEY=VALUE` sets an environment variable for that node's RPC server
+(a Vulkan heap size, a cache folder) and `--rpc-threads NAME=N` its CPU threads,
+so no node needs a wrapper script.
 
 The `stop` command stops the gateway and every rank, and sweeps the ports. The
 `status` and `hub` commands print the node table with pinned routes and a 1 Hz

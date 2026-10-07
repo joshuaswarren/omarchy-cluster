@@ -186,3 +186,40 @@ def test_macos_memory_reads_free_and_reclaimable_pages(monkeypatch):
     assert m["memory_free_pages_bytes"] == 506592 * 16384
     assert m["memory_reclaimable_bytes"] == (2215576 + 158692) * 16384
     assert (m["memory_purgeable_bytes"], m["memory_file_backed_bytes"]) == (61035 * 16384, 1831055 * 16384)
+
+
+def test_rpc_start_passes_env_to_the_server_without_a_wrapper(tmp_path, monkeypatch):
+    """HK_SYSMEM, LLAMA_CACHE and GGML_METAL_* went through per-node wrapper scripts, which
+    broke twice in one night; the agent now sets them on the rpc-server it starts."""
+    from omarchy_cluster import agent
+    seen = {}
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            seen["cmd"], seen["env"] = cmd, kw["env"]
+            self.pid = 4242
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("KEEP_ME", "1")
+    monkeypatch.setattr(agent.subprocess, "Popen", FakePopen)
+    res = agent.rpc_start({"binary": "/x/rpc", "port": 50060, "threads": 8,
+                           "env": {"HK_SYSMEM": 60000000000, "LLAMA_CACHE": "/Volumes/ext/rpc-cache"}})
+    assert seen["env"]["HK_SYSMEM"] == "60000000000" and seen["env"]["LLAMA_CACHE"] == "/Volumes/ext/rpc-cache"
+    assert seen["env"]["KEEP_ME"] == "1"  # the agent's own environment is kept
+    assert seen["cmd"][-2:] == ["-t", "8"] and res["env"] == ["HK_SYSMEM", "LLAMA_CACHE"]
+
+
+def test_rpc_env_and_threads_flags_parse_per_node():
+    import argparse
+    args = argparse.Namespace(
+        rpc_env=["mac-ultra=GGML_METAL_SHARED_BUFFERS_DISABLE=1", "mac-ultra=LLAMA_CACHE=/Volumes/ext/c=d",
+                 "omarchy-m1=HK_SYSMEM=60000000000"],
+        rpc_threads=["omarchy-m2=6", "omarchy-m2=8"])
+    envs, threads = cli._rpc_node_options(args)
+    assert envs == {"mac-ultra": {"GGML_METAL_SHARED_BUFFERS_DISABLE": "1", "LLAMA_CACHE": "/Volumes/ext/c=d"},
+                    "omarchy-m1": {"HK_SYSMEM": "60000000000"}}
+    assert threads == {"omarchy-m2": 8}
+    for bad in (argparse.Namespace(rpc_env=["mac-ultra=NOVALUE"], rpc_threads=[]),
+                argparse.Namespace(rpc_env=[], rpc_threads=["omarchy-m2=many"])):
+        with pytest.raises(SystemExit):
+            cli._rpc_node_options(bad)

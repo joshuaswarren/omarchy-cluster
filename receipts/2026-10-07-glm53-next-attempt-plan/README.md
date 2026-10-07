@@ -21,16 +21,16 @@ loading. Since then:
 - The x86 laptop on wired Ethernet (Wi-Fi made most of the first run's 2724 s load).
 - The host on omarchy-cluster main at or after this commit's parent (`install-agent`).
 - The M1 Max's scratch space cleared (its budget assumes 60.3 GB available).
-- rpc-servers started with `-c`: on the Mac Studio with its cache on the external volume (`LLAMA_CACHE`),
-  never the system disk; the M2 Max CPU server by hand with `-c -t 8` (its 8 performance cores); the
-  x86 laptop's servers with `-c`.
+- rpc-servers with `-c` (`--rpc-cache`): the Mac Studio's cache on the external volume
+  (`--rpc-env mac-ultra=LLAMA_CACHE=...`), never the system disk; the M2 Max CPU server started by hand
+  with `-c -t 8` (its 8 performance cores); the x86 laptop's servers with `-c`.
 
 ## Session (one window, about 70 minutes)
 
 | arm | change | measured |
 |---|---|---|
 | A | new baseline: measured placement, macOS budget, performance-core threads, cache on, x86 wired | cold load time, the host paging check, 1 cold + 5 warm requests |
-| B | A, with only the Mac Studio's rpc-server restarted with `GGML_METAL_SHARED_BUFFERS_DISABLE=1` | warm reload time, 1 cold + 5 warm requests |
+| B | A plus `--rpc-env mac-ultra=GGML_METAL_SHARED_BUFFERS_DISABLE=1`, reloaded from the caches | warm reload time, 1 cold + 5 warm requests |
 
 Arm A changes several things at once against the first run and is reported as a new baseline, not as
 the effect of any one change. Arm B against arm A is a single-variable test of the Metal setting, in the
@@ -44,11 +44,15 @@ omarchy-cluster serve ~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.
   --llama-server ~/src/llama.cpp/build-cpu/bin/llama-server --rpc-cache \
   --rpc-node x86-laptop:50052 --rpc-node x86-laptop:50053 --rpc-node omarchy-m1 --rpc-node mac-ultra \
   --rpc-node omarchy-m2 --rpc-node omarchy-m2:50061 \
-  --rpc-binary omarchy-m1=~/.local/bin/rpc-vulkan-cache --rpc-binary omarchy-m2=~/.local/bin/rpc-vulkan-cache \
-  --rpc-binary mac-ultra=~/.local/bin/rpc-metal-cache --ctx 2048
+  --rpc-binary omarchy-m1=~/src/llama.cpp/build-vulkan/bin/ggml-rpc-server \
+  --rpc-binary omarchy-m2=~/src/llama.cpp/build-vulkan/bin/ggml-rpc-server \
+  --rpc-env omarchy-m1=HK_SYSMEM=60000000000 --rpc-env omarchy-m2=HK_SYSMEM=86000000000 \
+  --rpc-env mac-ultra=LLAMA_CACHE=/Volumes/ext/rpc-cache --ctx 2048
 ```
 
-No `=GB` and no `--host-layers`: the budgets are measured and the placement is chosen.
+No `=GB` and no `--host-layers`: the budgets are measured and the placement is chosen. No wrapper
+scripts: the heap sizes and the cache folder go to each node's RPC server with `--rpc-env` (amended
+before the run, when that flag landed; nothing measured changed).
 
 ## Expected (before the run)
 

@@ -513,6 +513,35 @@ def _parse_rpc_nodes(values):
     return out
 
 
+def _parse_node_values(values, flag):
+    """`NAME=VALUE` values -> {NAME: [VALUE, ...]}; VALUE may itself contain '='."""
+    out = {}
+    for v in values:
+        name, sep, rest = v.partition("=")
+        if not sep or not name or not rest:
+            sys.exit("%s %s: expected NAME=VALUE" % (flag, v))
+        out.setdefault(name, []).append(rest)
+    return out
+
+
+def _rpc_node_options(args):
+    """Per-node rpc-server options from --rpc-env NAME=KEY=VALUE and --rpc-threads NAME=N."""
+    envs = {}
+    for name, items in _parse_node_values(args.rpc_env, "--rpc-env").items():
+        for item in items:
+            key, sep, val = item.partition("=")
+            if not sep or not key:
+                sys.exit("--rpc-env %s=%s: expected NAME=KEY=VALUE" % (name, item))
+            envs.setdefault(name, {})[key] = val
+    threads = {}
+    for name, items in _parse_node_values(args.rpc_threads, "--rpc-threads").items():
+        try:
+            threads[name] = int(items[-1])
+        except ValueError:
+            sys.exit("--rpc-threads %s=%s: expected a number" % (name, items[-1]))
+    return envs, threads
+
+
 def _agent_post(node, path, payload, timeout=30):
     req = urllib.request.Request(
         "http://%s:%d%s" % (node["ip"], node.get("port", 8025), path),
@@ -556,6 +585,7 @@ def _serve_llamacpp_nodes(args, info):
     from . import facts as facts_mod, iosnode, llamacpp_engine
     wanted = _parse_rpc_nodes(args.rpc_node)
     binaries = dict(v.split("=", 1) for v in args.rpc_binary)
+    envs, threads = _rpc_node_options(args)
     nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
     by_ip = {d["ip"]: d for d in nodes.values()}
     local = platform.node().split(".")[0]
@@ -576,7 +606,8 @@ def _serve_llamacpp_nodes(args, info):
                 sys.exit("--rpc-node %s: not discovered (have %s)" % (name, ", ".join(sorted(nodes))))
             node = nodes[name]
             res = _agent_post(node, "/v1/rpc/start", {"binary": binaries.get(name), "port": args.rpc_node_port,
-                                                      "cache": args.rpc_cache})
+                                                      "cache": args.rpc_cache, "env": envs.get(name, {}),
+                                                      "threads": threads.get(name)})
             state["stages"].append({"node": node["ip"], "pid": str(res["pid"]), "port": args.rpc_node_port})
             _write_state(state)
             ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name)
@@ -777,6 +808,11 @@ def main(argv=None):
     p.add_argument("--rpc-binary", action="append", default=[], metavar="NAME=PATH",
                    help="llamacpp: ggml-rpc-server path on NAME (default: the node's PATH)")
     p.add_argument("--rpc-node-port", type=int, default=50060, help="llamacpp: rpc-server port on each node")
+    p.add_argument("--rpc-env", action="append", default=[], metavar="NAME=KEY=VALUE",
+                   help="llamacpp: environment for NAME's rpc-server, e.g. HK_SYSMEM=60000000000, "
+                        "LLAMA_CACHE=/Volumes/ext/rpc-cache, GGML_METAL_SHARED_BUFFERS_DISABLE=1 (repeat)")
+    p.add_argument("--rpc-threads", action="append", default=[], metavar="NAME=N",
+                   help="llamacpp: CPU threads for NAME's rpc-server (-t)")
     p.add_argument("--rpc-cache", action="store_true",
                    help="llamacpp: rpc-servers keep received weights on local disk (-c) for faster reloads; "
                         "each node then needs disk for its whole share")
