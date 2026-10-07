@@ -17,7 +17,9 @@ over a Mac Studio on macOS and three Macs running Omarchy (Arch Linux ARM), thro
 - llama.cpp `65840ed` on every node. omarchy-cluster `54ef8b1`.
 - Network: wired LAN. The host's 2.5GbE USB adapter measured 2.35 Gb/s to every node; RTT 0.2 to
   0.5 ms.
-- Command: [src/headline.sh](src/headline.sh), with `MACGB=42 M2GB=62 M1GB=45 HOSTGB=8`.
+- Command: [src/headline.sh](src/headline.sh), with `MACGB=42 M2GB=62 M1GB=45 HOSTGB=8`. Its failure
+  handling (`set -euo pipefail`, stop and exit 1 when serve or a request fails) was added after the
+  run; the success path is the one that ran.
 
 ## Results
 
