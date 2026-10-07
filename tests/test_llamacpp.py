@@ -24,7 +24,7 @@ def _gguf_string(s):
     return struct.pack("<Q", len(b)) + b
 
 
-def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128, value_dim=None):
+def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128, value_dim=None, nextn=0):
     """A minimal GGUF v3 file: metadata, tensor infos, and zero-filled data
     whose tensor sizes are given in bytes (multiples of the 32-byte alignment)."""
     meta = [("general.architecture", 8, _gguf_string("qwen3")),
@@ -37,6 +37,8 @@ def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128
              struct.pack("<IQ", 8, 2) + _gguf_string("a") + _gguf_string("b"))]
     if value_dim is not None:
         meta.append(("qwen3.attention.value_length", 4, struct.pack("<I", value_dim)))
+    if nextn:
+        meta.append(("qwen3.nextn_predict_layers", 4, struct.pack("<I", nextn)))
     tensors = [("token_embd.weight", other_sizes[0])]
     for i in range(n_layer):
         tensors += [("blk.%d.attn_q.weight" % i, layer_sizes[0]),
@@ -72,6 +74,13 @@ def test_gguf_info_rejects_other_files(tmp_path):
     p.write_bytes(b"NOPE" + bytes(64))
     with pytest.raises(ValueError):
         lce.gguf_info(str(p))
+
+
+def test_gguf_info_does_not_charge_skipped_mtp_layers(tmp_path):
+    """llama.cpp loads the trailing nextn (MTP) layers with TENSOR_SKIP: no device memory."""
+    p = tmp_path / "m.gguf"
+    make_gguf(str(p), 4, (64, 96), (320, 32), nextn=1)
+    assert lce.gguf_info(str(p))["per_layer"] == [160, 160, 160, 0]
 
 
 INFO = {"n_layer": 28, "layer_bytes": 40 * 10 ** 6, "other_bytes": 300 * 10 ** 6,

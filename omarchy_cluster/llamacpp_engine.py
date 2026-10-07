@@ -128,6 +128,10 @@ def gguf_info(path):
             per_layer[int(name.split(".")[1])] += size
         else:
             other += size
+    # MTP (next-token prediction) layers sit at the end; llama.cpp loads them with
+    # TENSOR_SKIP, so they take no device memory and must not be charged to a device.
+    for il in range(max(n_layer - int(meta.get("%s.nextn_predict_layers" % arch, 0)), 0), n_layer):
+        per_layer[il] = 0
     n_kv_head = meta.get("%s.attention.head_count_kv" % arch,
                          meta.get("%s.attention.head_count" % arch, 0))
     if isinstance(n_kv_head, list):
