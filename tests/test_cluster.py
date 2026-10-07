@@ -4,8 +4,20 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from omarchy_cluster import probe
+from omarchy_cluster import facts, probe
 from omarchy_cluster.discover import merge_discovered, read_hostfile
+
+
+def test_perf_cores_counts_only_the_fastest_cores(tmp_path, monkeypatch):
+    """llama.cpp threads must skip efficiency cores: one in the team slows every op to its pace."""
+    monkeypatch.setattr(facts.platform, "system", lambda: "Linux")
+    for i, cap in enumerate([485, 485] + [1024] * 8):  # M1 Max under Asahi: 2 E + 8 P
+        (tmp_path / ("cpu%d" % i)).mkdir()
+        (tmp_path / ("cpu%d" % i) / "cpu_capacity").write_text("%d\n" % cap)
+    (tmp_path / "cpufreq").mkdir()
+    assert facts.perf_cores(str(tmp_path)) == 8
+    monkeypatch.setattr(facts.os, "cpu_count", lambda: 6)
+    assert facts.perf_cores(str(tmp_path / "missing")) == 6
 
 
 def node(name, ifaces):

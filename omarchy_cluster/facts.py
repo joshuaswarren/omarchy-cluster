@@ -54,6 +54,25 @@ def _is_apple_silicon_linux():
     return platform.system() == "Linux" and _apple_chip_code() is not None
 
 
+def perf_cores(cpu_root="/sys/devices/system/cpu"):
+    """Number of the fastest CPU cores, the default llama.cpp thread count. One slow core in an
+    OpenMP team holds every op back: on an M1 Max, decode with 2 threads ran 37.7 tok/s on two
+    performance cores and 24.0 with one efficiency core in the pair. Linux: CPUs at the highest
+    cpu_capacity. macOS: hw.perflevel0.physicalcpu. Falls back to every CPU."""
+    if platform.system() == "Darwin":
+        out = _run(["sysctl", "-n", "hw.perflevel0.physicalcpu"]).strip()
+        return int(out) if out.isdigit() and int(out) > 0 else (os.cpu_count() or 4)
+    caps = []
+    try:
+        for name in os.listdir(cpu_root):
+            if re.fullmatch(r"cpu\d+", name):
+                with open(os.path.join(cpu_root, name, "cpu_capacity")) as f:
+                    caps.append(int(f.read()))
+    except (OSError, ValueError):
+        caps = []
+    return caps.count(max(caps)) if caps else (os.cpu_count() or 4)
+
+
 def chip():
     if platform.system() == "Darwin":
         out = _run(["sysctl", "-n", "machdep.cpu.brand_string"]).strip()

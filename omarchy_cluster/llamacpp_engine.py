@@ -436,7 +436,8 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=8031)
     ap.add_argument("--server-port", type=int, default=8032)
     ap.add_argument("--ctx", type=int, default=2048)
-    ap.add_argument("--threads", type=int, default=os.cpu_count() or 4)
+    ap.add_argument("--threads", type=int, default=None,
+                    help="llama-server threads (default: this machine's performance cores, facts.perf_cores)")
     ap.add_argument("--rpc", default=None, help="endpoint, or a comma list with --tensor-split")
     ap.add_argument("--rpc-layers", type=int, default=0)
     ap.add_argument("--tensor-split", default=None,
@@ -446,6 +447,9 @@ def main(argv=None):
     ap.add_argument("--load-timeout", type=float, default=3600.0,
                     help="seconds to wait for llama-server (RPC loads stream the weights)")
     args = ap.parse_args(argv)
+    if args.threads is None:
+        from .facts import perf_cores
+        args.threads = perf_cores()
     if args.tensor_split:
         cmd = server_cmd(args.llama_server, args.model, args.server_port, args.ctx, args.threads,
                          rpc=args.rpc.split(",") if args.rpc else None,
