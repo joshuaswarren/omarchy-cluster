@@ -8,16 +8,18 @@ hand-built P (run-P table): host layers 0-4 6.67 GB, paged from disk 0.00 GB, de
    mac-metal    layers 56-70   41.24 of  42.00 GB
    m2-cpu       layers 71-78   22.93 of  24.00 GB
 
-measured, M1 Max scratch cleared (avail 60.3 GB): host layers 0-19 48.81 GB, paged from disk 39.98 GB, devices used 5
-   x86-gpu      layers 20-20    2.67 of   2.90 GB
-   m1max-vulkan layers 21-39   51.11 of  53.30 GB
-   m2-vulkan    layers 40-63   66.47 of  66.65 GB
-   x86-cpu      layers 64-71   22.96 of  23.00 GB
-   m2-cpu       layers 72-78   19.86 of  21.42 GB
+measured, M1 Max scratch cleared (avail 60.3 GB): host layers 0-7 15.48 GB, paged from disk 6.65 GB, devices used 6
+   x86-cpu      layers  8-15   22.66 of  23.00 GB
+   x86-gpu      layers 16-16    2.67 of   2.90 GB
+   m1max-vulkan layers 17-35   51.11 of  53.30 GB
+   m2-vulkan    layers 36-59   66.47 of  66.65 GB
+   m2-cpu       layers 60-67   21.35 of  21.42 GB
+   mac-metal    layers 68-78   32.15 of  32.85 GB
 
-measured, M1 Max as at 02:27Z (avail 51.5 GB): host layers 0-22 56.82 GB, paged from disk 47.99 GB, devices used 5
-   x86-gpu      layers 23-23    2.67 of   2.90 GB
-   x86-cpu      layers 24-31   21.75 of  23.00 GB
-   m2-cpu       layers 32-39   21.35 of  21.42 GB
-   m2-vulkan    layers 40-63   66.47 of  66.65 GB
-   m1max-vulkan layers 64-78   42.82 of  44.50 GB
+measured, M1 Max as at 02:27Z (avail 51.5 GB): host layers 0-9 22.12 GB, paged from disk 13.29 GB, devices used 6
+   x86-gpu      layers 10-10    2.67 of   2.90 GB
+   m2-cpu       layers 11-18   21.35 of  21.42 GB
+   mac-metal    layers 19-30   32.43 of  32.85 GB
+   m2-vulkan    layers 31-54   66.47 of  66.65 GB
+   m1max-vulkan layers 55-70   43.91 of  44.50 GB
+   x86-cpu      layers 71-78   22.93 of  23.00 GB

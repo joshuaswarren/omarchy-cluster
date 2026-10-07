@@ -28,13 +28,13 @@ def devices(m1_ram_avail):
         # M1 Max: heap 60 GB (HK_SYSMEM wrapper, rec); RAM total 66.97 GB (rec); avail varies
         {"name": "m1max-vulkan", "ep": "m1max", "machine": "m1max", "budget": None, "free_bytes": 60 * GB,
          "total_bytes": 60 * GB, "ram_avail": m1_ram_avail, "ram_total": 66.97 * GB, "va_cap": None},
-        # Mac Studio Metal: working set assumed 103 GB (not recorded; RAM binds anyway). RAM from free
-        # pages only (node_ram_avail): 8.3 GB free, 36.3 inactive, 2.6 speculative at 00:49Z (rec),
-        # Data volume 60 GiB free (rec 07:29Z)
+        # Mac Studio Metal: working set assumed 103 GB (not recorded; RAM binds anyway). RAM by
+        # node_ram_avail from the 07:37Z sample (rec, after run P): free 31.79, purgeable 0.11,
+        # file-backed 15.95 GB, Data 59 GiB free. Budget 32.86 GB, validated on the Mac at 07:37Z.
         {"name": "mac-metal", "ep": "mac", "machine": "mac", "budget": None, "free_bytes": 103 * GB,
          "total_bytes": 103 * GB, "ram_total": 137.4 * GB, "va_cap": None,
-         "ram_avail": lce.node_ram_avail({"memory_free_pages_bytes": 8.3 * GB, "memory_reclaimable_bytes": 38.9 * GB,
-                                          "data_volume_free_bytes": 60 * GIB})},
+         "ram_avail": lce.node_ram_avail({"memory_free_pages_bytes": 31.79 * GB, "memory_purgeable_bytes": 0.11 * GB,
+                                          "memory_file_backed_bytes": 15.95 * GB, "data_volume_free_bytes": 59 * GIB})},
         # M2 Max CPU server: system RAM (rec: 89 GiB available at 02:27Z, total 101.2 GB)
         {"name": "m2-cpu", "ep": "m2:50061", "machine": "m2", "budget": None, "free_bytes": 89 * GIB,
          "total_bytes": 101.2 * GB, "ram_avail": 89 * GIB, "ram_total": 101.2 * GB, "va_cap": None},
