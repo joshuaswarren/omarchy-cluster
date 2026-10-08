@@ -280,6 +280,26 @@ def mcdma():
     return {"available": True, "reason": "ACTIVE port and peer tool", "devices": active}
 
 
+_DATA_VOLUME_JXA = ('ObjC.import("Foundation"); var k = "NSURLVolumeAvailableCapacityForImportantUsageKey"; '
+                    'ObjC.unwrap($.NSURL.fileURLWithPath("/System/Volumes/Data")'
+                    '.resourceValuesForKeysError($.NSArray.arrayWithObject($(k)), null).objectForKey(k));')
+
+
+def data_volume_free():
+    """(bytes, source) free on the macOS Data volume, the one that holds swap. "important": the space macOS
+    itself offers apps, which counts purgeable space (content caches, local snapshots) that df leaves out
+    (85 GB by df, 435 GB usable on the Mac Studio). "statvfs": df's number, used when that read fails; it
+    is a floor, not a fact. (None, None) when neither works."""
+    out = _run(["/usr/bin/osascript", "-l", "JavaScript", "-e", _DATA_VOLUME_JXA], timeout=10).strip()
+    if out.isdigit():
+        return int(out), "important"
+    try:
+        st = os.statvfs("/System/Volumes/Data")
+        return st.f_bavail * st.f_frsize, "statvfs"
+    except OSError:
+        return None, None
+
+
 def macos_memory():
     """macOS only: {"memory_free_pages_bytes": free pages, "memory_purgeable_bytes",
     "memory_file_backed_bytes": cached file pages (dropped without swapping),
@@ -292,18 +312,14 @@ def macos_memory():
         for k in pages:
             if line.startswith(k + ":"):
                 pages[k] = int(line.split()[-1].rstrip("."))
-    try:
-        st = os.statvfs("/System/Volumes/Data")
-        data_free = st.f_bavail * st.f_frsize
-    except OSError:
-        data_free = None
+    data_free, data_source = data_volume_free()
     m = re.search(r"percentage:\s*(\d+)%", _run(["memory_pressure", "-Q"]))
     return {"memory_pressure_free_pct": int(m.group(1)) if m else None,
             "memory_free_pages_bytes": pages["Pages free"] * pagesize,
             "memory_purgeable_bytes": pages["Pages purgeable"] * pagesize,
             "memory_file_backed_bytes": pages["File-backed pages"] * pagesize,
             "memory_reclaimable_bytes": (pages["Pages inactive"] + pages["Pages speculative"]) * pagesize,
-            "data_volume_free_bytes": data_free}
+            "data_volume_free_bytes": data_free, "data_volume_free_source": data_source}
 
 
 def collect_facts():

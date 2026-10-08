@@ -181,7 +181,7 @@ def test_macos_memory_reads_free_and_reclaimable_pages(monkeypatch):
                "Pages purgeable:                          61035.\n"
                "File-backed pages:                      1831055.\n"
                "Anonymous pages:                        2543213.\n")
-    outputs = {"sysctl": "16384\n", "vm_stat": vm_stat,
+    outputs = {"sysctl": "16384\n", "vm_stat": vm_stat, "/usr/bin/osascript": "",
                "memory_pressure": "The system has 137438953472 (8388608 pages with a page size of 16384).\n"
                                   "System-wide memory free percentage: 63%\n"}
     monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: outputs[cmd[0]])
@@ -190,6 +190,25 @@ def test_macos_memory_reads_free_and_reclaimable_pages(monkeypatch):
     assert m["memory_reclaimable_bytes"] == (2215576 + 158692) * 16384
     assert (m["memory_purgeable_bytes"], m["memory_file_backed_bytes"]) == (61035 * 16384, 1831055 * 16384)
     assert m["memory_pressure_free_pct"] == 63
+
+
+def test_data_volume_free_counts_purgeable_space(monkeypatch):
+    """df left out purgeable space (content caches, local snapshots): 85 GB by df, 435 GB usable on the Mac Studio."""
+    from omarchy_cluster import facts
+    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: "435080510087\n" if cmd[0] == "/usr/bin/osascript" else "")
+    assert facts.data_volume_free() == (435080510087, "important")
+
+
+def test_data_volume_free_falls_back_to_df_as_a_floor(monkeypatch):
+    from omarchy_cluster import facts
+
+    class St:
+        f_bavail, f_frsize = 5000, 4096
+    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: "")
+    monkeypatch.setattr(facts.os, "statvfs", lambda p: St())
+    assert facts.data_volume_free() == (5000 * 4096, "statvfs")
+    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: "not a number\n")
+    assert facts.data_volume_free() == (5000 * 4096, "statvfs")
 
 
 def test_rpc_start_passes_env_to_the_server_without_a_wrapper(tmp_path, monkeypatch):
