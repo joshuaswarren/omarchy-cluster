@@ -83,7 +83,7 @@ limit. 83 tests pass.
 ## The probe on hardware
 
 05:26Z, MacBook Pro 16-inch M1 Max (62.8 GiB visible to Linux), heap set to its RAM: 60 GiB
-(64.4 GB) allocated, then the driver refused with `DRM_IOCTL_ASAHI_VM_BIND failed`, not the
+(64.4 GB) allocated, then the driver refused the memory-bind request, not the
 address-space error the M2 Max hit at 63 GiB. Page cache fell from 18 to 1 GiB during the probe:
 blocks past free memory take real memory. The agent now caps the probe at available RAM minus
 the 6 GB headroom and reports `stopped_at_limit` when the driver never refused. The budget

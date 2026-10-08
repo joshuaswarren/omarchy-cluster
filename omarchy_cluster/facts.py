@@ -11,7 +11,7 @@ import subprocess
 
 from . import AGENT_VERSION
 
-# Apple Silicon device-tree target codes -> marketing names (Asahi SoC naming).
+# Apple Silicon device-tree target codes -> marketing names (Linux SoC naming).
 CHIP_NAMES = {
     "t8103": "Apple M1",
     "t6000": "Apple M1 Pro",
