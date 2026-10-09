@@ -203,13 +203,36 @@ def test_mcdma_on_linux_needs_an_active_port_and_the_peer_tool(tmp_path, monkeyp
     peer.write_text("#!/bin/sh\n")
     peer.chmod(0o755)
     f = _mcdma_env(monkeypatch, "Linux", {}, ib_root=str(tmp_path / "ib"), peer=str(peer))
-    assert f.mcdma() == {"available": True, "reason": "ACTIVE port and peer tool", "devices": ["mlx5_0/1"]}
+    assert f.mcdma() == {"available": True, "reason": "ACTIVE port and peer tool", "devices": ["mlx5_0/1"],
+                         "soft_transport": False}
+
+
+def test_mcdma_labels_software_verbs_providers_as_soft_transport(tmp_path, monkeypatch):
+    peer = tmp_path / "mcdma"
+    peer.write_text("#!/bin/sh\n")
+    peer.chmod(0o755)
+    for dev in ("rxe0", "mlx5_0"):
+        port = tmp_path / "ib" / dev / "ports" / "1"
+        port.mkdir(parents=True)
+        (port / "state").write_text("4: ACTIVE\n")
+    f = _mcdma_env(monkeypatch, "Linux", {}, ib_root=str(tmp_path / "ib"), peer=str(peer))
+    assert f.mcdma()["soft_transport"] is False
+    (tmp_path / "ib" / "mlx5_0" / "ports" / "1" / "state").write_text("1: DOWN\n")
+    got = f.mcdma()
+    assert got == {"available": True, "reason": "ACTIVE port and peer tool", "devices": ["rxe0/1"],
+                   "soft_transport": True}
+    f = _mcdma_env(monkeypatch, "Linux", {}, ib_root=str(tmp_path / "ib"))
+    assert f.mcdma()["soft_transport"] is True and f.mcdma()["available"] is False
 
 
 def test_probe_marks_mcdma_eligible_only_when_both_ends_report_it():
     up = {"transports": {"mcdma": {"available": True, "reason": "rdma_ctl enabled", "devices": ["rdma_en2"]}}}
     down = {"transports": {"mcdma": {"available": False, "reason": "rdma_ctl status: disabled", "devices": []}}}
     assert probe.mcdma_pair(up, up) == {"eligible": True, "reason": "both ends report MCDMA"}
+    soft = {"transports": {"mcdma": {"available": True, "reason": "ACTIVE port and peer tool",
+                                     "devices": ["rxe0/1"], "soft_transport": True}}}
+    assert probe.mcdma_pair(up, soft) == {"eligible": True, "reason": "both ends report MCDMA",
+                                          "soft_transport": True}
     assert probe.mcdma_pair(up, down) == {"eligible": False, "reason": "b: rdma_ctl status: disabled"}
     assert probe.mcdma_pair({}, up)["reason"] == "a: agent does not report transports"
 
