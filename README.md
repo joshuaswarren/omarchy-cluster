@@ -125,6 +125,9 @@ decode. Each node's agent also reports whether MCDMA (RDMA) is available. `probe
 records for every pair whether MCDMA could carry its traffic. Routes still use
 TCP. On the machines measured here, every node reports MCDMA as unavailable:
 RDMA is off on the Mac, and the Linux nodes have no InfiniBand device.
+A Linux node that exposes only a software verbs device (Soft-RoCE `rxe`, `siw`)
+reports `soft_transport: true`, and the pair record repeats it. Verbs numbers
+over such a device measure the kernel network stack, not an RDMA NIC.
 
 The `place MODEL` command checks that the model fits: every stage must hold at
 least one layer in 90 percent of its free memory, and all stages together must
