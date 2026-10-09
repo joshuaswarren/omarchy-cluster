@@ -363,6 +363,8 @@ def cmd_serve(args):
             pass
     if args.engine == "llamacpp":
         return _serve_llamacpp(args)
+    if args.engine == "sushi":
+        return _serve_sushi(args)
     plan = cmd_place(args)
     if plan["mode"] == "none":
         sys.exit("no feasible plan")
@@ -497,6 +499,48 @@ def _serve_llamacpp(args):
     except (TimeoutError, RuntimeError) as e:
         sys.exit("llama.cpp engine failed (log: %s): %s" % (log, e))
     print("llama.cpp engine pid %s (log: %s)" % (engine.pid, log))
+    _start_gateway(state, args.port, engine_url)
+
+
+def _sushi_launch(args):
+    """(`sushi serve` command or None, URL the proxy fronts). With --sushi-model this host
+    launches sushi on --sushi-port and the proxy fronts that port, so --sushi-url is ignored;
+    without it the proxy fronts the already-running server at --sushi-url."""
+    if not args.sushi_model:
+        return None, args.sushi_url
+    cmd = [args.sushi, "serve", "--model", args.sushi_model, "--port", str(args.sushi_port)] + args.sushi_arg
+    return cmd, "http://127.0.0.1:%d" % args.sushi_port
+
+
+def _serve_sushi(args):
+    """Sushi-quant model through the stand-alone sushi server on this host.
+    Sushi is a single-host engine (custom Metal kernels, EXL3/NAX), so it cannot
+    be sharded into ranks; one `sushi serve` plus the shared /generate proxy."""
+    from . import llamacpp_engine, sushi_engine
+    os.makedirs(os.path.expanduser("~/.local/state/omarchy-cluster"), exist_ok=True)
+    state = {"engine": "sushi", "stages": [], "local_pids": [], "gateway_port": args.port,
+             "engine_port": args.engine_port}
+    cmd, sushi_url = _sushi_launch(args)
+    if cmd:
+        server, log = _spawn(cmd, "sushi-serve.log")
+        state["local_pids"].append(server.pid)
+        _write_state(state)
+        try:
+            llamacpp_engine.wait_http(sushi_url + "/v1/models", deadline_s=3600.0, proc=server)
+        except (TimeoutError, RuntimeError) as e:
+            sys.exit("sushi serve failed (log: %s): %s" % (log, e))
+        print("sushi serve pid %s (log: %s)" % (server.pid, log))
+    engine, log = _spawn([sys.executable, "-m", "omarchy_cluster.sushi_engine",
+                          "--sushi-url", sushi_url, "--port", str(args.engine_port)],
+                         "sushi-engine.log")
+    state["local_pids"].append(engine.pid)
+    _write_state(state)
+    engine_url = "http://127.0.0.1:%d" % args.engine_port
+    try:
+        llamacpp_engine.wait_http(engine_url + "/health", proc=engine)
+    except (TimeoutError, RuntimeError) as e:
+        sys.exit("sushi engine failed (log: %s): %s" % (log, e))
+    print("sushi engine pid %s (log: %s)" % (engine.pid, log))
     _start_gateway(state, args.port, engine_url)
 
 
@@ -865,11 +909,21 @@ def main(argv=None):
     p.set_defaults(fn=cmd_place)
 
     p = sub.add_parser("serve", help="plan, launch ranks, serve OpenAI on :8020")
-    p.add_argument("model", help="MLX model (HF id or path), or a .gguf file with --engine llamacpp")
-    p.add_argument("--engine", choices=("mlx", "llamacpp"), default="mlx",
+    p.add_argument("model", help="MLX model (HF id or path), or a .gguf file with --engine llamacpp; "
+                                 "with --engine sushi it is a label only (the pack is --sushi-model)")
+    p.add_argument("--engine", choices=("mlx", "llamacpp", "sushi"), default="mlx",
                    help="mlx: pipeline ranks across nodes; llamacpp: llama-server on this "
                         "host, plus a USB iPhone RPC device when the model does not fit here")
     p.add_argument("--llama-server", default="llama-server", help="llama-server binary (llamacpp)")
+    p.add_argument("--sushi", default="sushi", help="sushi binary (sushi)")
+    p.add_argument("--sushi-model", default=None,
+                   help="Sushi pack path to launch `sushi serve` with on this host (sushi)")
+    p.add_argument("--sushi-url", default="http://127.0.0.1:12345",
+                   help="running sushi server the engine fronts (sushi)")
+    p.add_argument("--sushi-port", type=int, default=12345,
+                   help="sushi serve port when --sushi-model launches it (sushi)")
+    p.add_argument("--sushi-arg", action="append", default=[],
+                   help="extra `sushi serve` argument, repeatable (sushi)")
     p.add_argument("--ios-bundle", default=None,
                    help="bundle id of the rpc-server app on a USB iPhone (llamacpp); "
                         "without it the iPhone is not used")
