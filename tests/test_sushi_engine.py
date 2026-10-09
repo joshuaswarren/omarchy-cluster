@@ -79,3 +79,18 @@ def test_engine_health_follows_sushi_and_failures_reach_the_gateway():
             up.shutdown()
     finally:
         srv.shutdown()
+
+
+def _args(**kw):
+    import argparse
+    base = dict(sushi="sushi", sushi_model=None, sushi_url="http://127.0.0.1:12345", sushi_port=12345,
+                sushi_arg=[])
+    return argparse.Namespace(**dict(base, **kw))
+
+
+def test_the_proxy_fronts_the_port_sushi_is_launched_on():
+    from omarchy_cluster import cli
+    cmd, url = cli._sushi_launch(_args(sushi_model="/p", sushi_port=9000, sushi_arg=["--ctx-size", "8192"]))
+    assert cmd == ["sushi", "serve", "--model", "/p", "--port", "9000", "--ctx-size", "8192"]
+    assert url == "http://127.0.0.1:9000"
+    assert cli._sushi_launch(_args(sushi_url="http://127.0.0.1:7777")) == (None, "http://127.0.0.1:7777")

@@ -502,6 +502,16 @@ def _serve_llamacpp(args):
     _start_gateway(state, args.port, engine_url)
 
 
+def _sushi_launch(args):
+    """(`sushi serve` command or None, URL the proxy fronts). With --sushi-model this host
+    launches sushi on --sushi-port and the proxy fronts that port, so --sushi-url is ignored;
+    without it the proxy fronts the already-running server at --sushi-url."""
+    if not args.sushi_model:
+        return None, args.sushi_url
+    cmd = [args.sushi, "serve", "--model", args.sushi_model, "--port", str(args.sushi_port)] + args.sushi_arg
+    return cmd, "http://127.0.0.1:%d" % args.sushi_port
+
+
 def _serve_sushi(args):
     """Sushi-quant model through the stand-alone sushi server on this host.
     Sushi is a single-host engine (custom Metal kernels, EXL3/NAX), so it cannot
@@ -510,20 +520,18 @@ def _serve_sushi(args):
     os.makedirs(os.path.expanduser("~/.local/state/omarchy-cluster"), exist_ok=True)
     state = {"engine": "sushi", "stages": [], "local_pids": [], "gateway_port": args.port,
              "engine_port": args.engine_port}
-    if args.sushi_model:
-        cmd = [args.sushi, "serve", "--model", args.sushi_model,
-               "--port", str(args.sushi_port)] + args.sushi_arg
+    cmd, sushi_url = _sushi_launch(args)
+    if cmd:
         server, log = _spawn(cmd, "sushi-serve.log")
         state["local_pids"].append(server.pid)
         _write_state(state)
         try:
-            llamacpp_engine.wait_http("http://127.0.0.1:%d/v1/models" % args.sushi_port,
-                                      deadline_s=3600.0, proc=server)
+            llamacpp_engine.wait_http(sushi_url + "/v1/models", deadline_s=3600.0, proc=server)
         except (TimeoutError, RuntimeError) as e:
             sys.exit("sushi serve failed (log: %s): %s" % (log, e))
         print("sushi serve pid %s (log: %s)" % (server.pid, log))
     engine, log = _spawn([sys.executable, "-m", "omarchy_cluster.sushi_engine",
-                          "--sushi-url", args.sushi_url, "--port", str(args.engine_port)],
+                          "--sushi-url", sushi_url, "--port", str(args.engine_port)],
                          "sushi-engine.log")
     state["local_pids"].append(engine.pid)
     _write_state(state)
@@ -901,7 +909,8 @@ def main(argv=None):
     p.set_defaults(fn=cmd_place)
 
     p = sub.add_parser("serve", help="plan, launch ranks, serve OpenAI on :8020")
-    p.add_argument("model", help="MLX model (HF id or path), or a .gguf file with --engine llamacpp")
+    p.add_argument("model", help="MLX model (HF id or path), or a .gguf file with --engine llamacpp; "
+                                 "with --engine sushi it is a label only (the pack is --sushi-model)")
     p.add_argument("--engine", choices=("mlx", "llamacpp", "sushi"), default="mlx",
                    help="mlx: pipeline ranks across nodes; llamacpp: llama-server on this "
                         "host, plus a USB iPhone RPC device when the model does not fit here")
