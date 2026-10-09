@@ -195,7 +195,8 @@ def pin_pair(routes):
 
 
 def mcdma_pair(fa, fb):
-    """Whether MCDMA could carry this pair: only when both ends report it available.
+    """Whether MCDMA could carry this pair: only when both ends report it available. "soft_transport"
+    is true when either end runs a software provider (rxe, siw).
     Recorded in links.json; route choice is unchanged (TCP) until MCDMA is measured."""
     for side, f in (("a", fa), ("b", fb)):
         m = (f or {}).get("transports", {}).get("mcdma")
@@ -203,7 +204,10 @@ def mcdma_pair(fa, fb):
             return {"eligible": False, "reason": "%s: agent does not report transports" % side}
         if not m.get("available"):
             return {"eligible": False, "reason": "%s: %s" % (side, m.get("reason"))}
-    return {"eligible": True, "reason": "both ends report MCDMA"}
+    out = {"eligible": True, "reason": "both ends report MCDMA"}
+    if any(((f or {}).get("transports", {}).get("mcdma") or {}).get("soft_transport") for f in (fa, fb)):
+        out["soft_transport"] = True
+    return out
 
 
 def probe_all(nodes, seconds=3.0, names=None):

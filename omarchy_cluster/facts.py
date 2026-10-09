@@ -28,6 +28,7 @@ CHIP_NAMES = {
 # MCDMA (RDMA transport, github.com/ashhart/MCDMA) detection inputs.
 IB_ROOT = "/sys/class/infiniband"
 MCDMA_PEER = "~/.local/libexec/mcdma"
+SOFT_IB_PREFIXES = ("rxe", "siw")
 
 
 def _run(cmd, timeout=6):
@@ -242,7 +243,9 @@ def interfaces():
 def mcdma():
     """MCDMA (RDMA) on this node: {"available", "reason", "devices"}. Detection only.
     macOS: Apple Thunderbolt RDMA enabled (`rdma_ctl status`) with an rdma_en* interface.
-    Linux: an ACTIVE port under /sys/class/infiniband and the MCDMA peer tool."""
+    Linux: an ACTIVE port under /sys/class/infiniband and the MCDMA peer tool. "soft_transport" is true
+    when every active device is a software provider (rxe Soft-RoCE, siw): a verbs run over it measures
+    the kernel network stack, never an RDMA NIC, so its numbers must not be mixed with hardware ones."""
     if platform.system() == "Darwin":
         if not shutil.which("rdma_ctl"):
             return {"available": False, "reason": "no rdma_ctl", "devices": []}
@@ -275,9 +278,11 @@ def mcdma():
                 pass
     if not active:
         return {"available": False, "reason": "no ACTIVE infiniband port", "devices": []}
+    soft = all(a.startswith(SOFT_IB_PREFIXES) for a in active)
     if not os.access(os.path.expanduser(MCDMA_PEER), os.X_OK):
-        return {"available": False, "reason": "no MCDMA peer tool at %s" % MCDMA_PEER, "devices": active}
-    return {"available": True, "reason": "ACTIVE port and peer tool", "devices": active}
+        return {"available": False, "reason": "no MCDMA peer tool at %s" % MCDMA_PEER, "devices": active,
+                "soft_transport": soft}
+    return {"available": True, "reason": "ACTIVE port and peer tool", "devices": active, "soft_transport": soft}
 
 
 _DATA_VOLUME_JXA = ('ObjC.import("Foundation"); var k = "NSURLVolumeAvailableCapacityForImportantUsageKey"; '
