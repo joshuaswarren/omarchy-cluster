@@ -108,7 +108,7 @@ def test_a_window_layer_is_charged_its_window_not_the_context(tmp_path):
     # 4 bytes per cached token per layer (K and V, 1 head of dim 1, bf16): 8 layers, 2 full, 6 window
     ctx = 32768
     full_charge = 8 * 4 * ctx  # what the planner charged when every attention layer held the whole context
-    window_charge = 4 * (2 * ctx + 6 * 2048)
+    window_charge = 4 * (2 * ctx + 6 * (2048 + planner.PREFILL_STEP - 1))  # a window layer peaks at window + prefill step - 1
     free = (window_charge + 1024) / 0.9  # plus the helper's 1 KB of weights
     assert planner.max_layers(free, info, ctx) == 8
     assert planner.max_layers(free, dict(info, kv_window_layers=[False] * 8), ctx) < 8  # the old charge: full context everywhere

@@ -15,6 +15,7 @@ from . import probe
 
 BYTES_PER_KV_ELEMENT = 2  # KV stays fp16/bf16 even for 4-bit weights
 DEFAULT_CTX_TOKENS = 2048
+PREFILL_STEP = 2048  # mlx-lm stream_generate's default prefill_step_size; rank._stream leaves it unset
 
 
 def find_model_path(model_ref):
@@ -120,7 +121,8 @@ def max_layers(free_bytes, info, ctx_tokens=DEFAULT_CTX_TOKENS):
         per_token = 2 * info["kv_heads"] * info["head_dim"] * BYTES_PER_KV_ELEMENT
         flags = info.get("kv_window_layers") or [False] * layers
         window = info.get("kv_window") or 0
-        tokens = [(min(ctx_tokens, window) if flags[i] else ctx_tokens) if pattern[i] else 0 for i in range(layers)]
+        peak = window + PREFILL_STEP - 1  # RotatingKVCache._update_concat keeps up to max_size + S - 1 entries during a prefill chunk
+        tokens = [(min(ctx_tokens, peak) if flags[i] else ctx_tokens) if pattern[i] else 0 for i in range(layers)]
         budget = free_bytes * 0.9
         for n in range(layers, 0, -1):
             if n * info["weights_bytes"] / layers + per_token * worst_attention_layers(tokens, n) <= budget:
