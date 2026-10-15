@@ -557,3 +557,40 @@ def test_rpc_layers_uses_the_same_window_aware_charge():
     assert lce.rpc_layers(info, host_free, 8 * GB, ctx) > 0
     windowed = dict(info, swa_window=2048, swa_layers=[i % 4 != 1 for i in range(8)])
     assert lce.rpc_layers(windowed, host_free, 8 * GB, ctx) == 0
+
+
+def test_server_cmd_appends_extra_args_last_and_in_order():
+    cmd = lce.server_cmd("llama-server", "m.gguf", 8032, 4096, 8, rpc=["a:1", "b:2"], split=[3, 4], extra=["--no-warmup", "-fa", "on"])
+    assert cmd[-3:] == ["--no-warmup", "-fa", "on"]
+    assert lce.server_cmd("llama-server", "m.gguf", 8032, 4096, 8) == lce.server_cmd("llama-server", "m.gguf", 8032, 4096, 8, extra=())
+
+
+def test_engine_hands_llama_args_to_llama_server(monkeypatch):
+    seen = {}
+
+    class Server:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            pass
+
+    def popen(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return Server()
+
+    class Stop(Exception):
+        pass
+
+    def stop(*args, **kwargs):
+        raise Stop
+
+    monkeypatch.setattr(lce.subprocess, "Popen", popen)
+    monkeypatch.setattr(lce, "wait_http", lambda *a, **k: None)
+    monkeypatch.setattr(lce, "ThreadingHTTPServer", stop)
+    with pytest.raises(Stop):
+        lce.main(["--model", "m.gguf", "--threads", "4", "--llama-arg=--no-warmup", "--llama-arg=-fa", "--llama-arg=on"])
+    assert seen["cmd"][-3:] == ["--no-warmup", "-fa", "on"]

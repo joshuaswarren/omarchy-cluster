@@ -344,7 +344,7 @@ def place(info, budgets, host_cache, ctx_tokens, host_layers=None, keep_order=Fa
 
 
 def server_cmd(llama_server, model, port, ctx_tokens, threads, rpc=None, n_rpc_layers=0,
-               split=None, ngl=999):
+               split=None, ngl=999, extra=()):
     """llama-server argv. With `split`, `rpc` is a list of N endpoints and the last
     `ngl` layers (all by default) spread over RPC0..RPCn by those weights. Otherwise
     layers go to one RPC device only when n_rpc_layers > 0 (llama.cpp offloads the
@@ -364,7 +364,7 @@ def server_cmd(llama_server, model, port, ctx_tokens, threads, rpc=None, n_rpc_l
         cmd += ["--rpc", rpc, "-dev", "RPC0", "-ngl", str(n_rpc_layers), "-ot", LM_HEAD_ON_HOST]
     else:
         cmd += ["-dev", "none", "-ngl", "0"]
-    return cmd
+    return cmd + list(extra)
 
 
 def server_env(base=None):
@@ -489,6 +489,7 @@ def main(argv=None):
                     help="with --tensor-split: offload the last N layers (the rest stay on this CPU)")
     ap.add_argument("--load-timeout", type=float, default=3600.0,
                     help="seconds to wait for llama-server (RPC loads stream the weights)")
+    ap.add_argument("--llama-arg", action="append", default=[], help="an extra llama-server argument (repeat)")
     args = ap.parse_args(argv)
     if args.threads is None:
         from .facts import perf_cores
@@ -496,10 +497,10 @@ def main(argv=None):
     if args.tensor_split:
         cmd = server_cmd(args.llama_server, args.model, args.server_port, args.ctx, args.threads,
                          rpc=args.rpc.split(",") if args.rpc else None,
-                         split=[float(w) for w in args.tensor_split.split(",")], ngl=args.ngl)
+                         split=[float(w) for w in args.tensor_split.split(",")], ngl=args.ngl, extra=args.llama_arg)
     else:
         cmd = server_cmd(args.llama_server, args.model, args.server_port, args.ctx,
-                         args.threads, args.rpc, args.rpc_layers)
+                         args.threads, args.rpc, args.rpc_layers, extra=args.llama_arg)
     print("llama-server: %s" % " ".join(cmd), flush=True)
     server = subprocess.Popen(cmd, env=server_env(), stdin=subprocess.DEVNULL)
     server_url = "http://127.0.0.1:%d" % args.server_port

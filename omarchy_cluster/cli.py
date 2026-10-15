@@ -487,7 +487,7 @@ def _serve_llamacpp(args):
     cmd = [sys.executable, "-m", "omarchy_cluster.llamacpp_engine", "--model", args.model,
            "--llama-server", args.llama_server, "--port", str(args.engine_port),
            "--server-port", str(args.engine_port + 1), "--ctx", str(args.ctx),
-           "--rpc-layers", str(k)]
+           "--rpc-layers", str(k)] + ["--llama-arg=" + a for a in args.llama_arg]
     if rpc:
         cmd += ["--rpc", rpc]
     engine, log = _spawn(cmd, "llamacpp-engine.log")
@@ -719,7 +719,7 @@ def _serve_llamacpp_nodes(args, info):
            "--llama-server", args.llama_server, "--port", str(args.engine_port),
            "--server-port", str(args.engine_port + 1), "--ctx", str(args.ctx),
            "--rpc", ",".join(d["ep"] for d in ordered), "--tensor-split", ",".join("%g" % w for w in weights),
-           "--ngl", str(sum(weights))]
+           "--ngl", str(sum(weights))] + ["--llama-arg=" + a for a in args.llama_arg]
     engine, log = _spawn(cmd, "llamacpp-engine.log")
     state["local_pids"].append(engine.pid)
     _write_state(state)
@@ -953,6 +953,10 @@ def main(argv=None):
     p.add_argument("--rpc-cache", action="store_true",
                    help="llamacpp: rpc-servers keep received weights on local disk (-c) for faster reloads; "
                         "each node then needs disk for its whole share")
+    p.add_argument("--llama-arg", action="append", default=[], metavar="ARG",
+                   help="llamacpp: an extra llama-server argument, written with '=' because it starts with '-' "
+                        "(--llama-arg=--no-warmup --llama-arg=-fa --llama-arg=on); repeat. The planner assumes the "
+                        "default 4 slots (see receipts/2026-10-15-swa-kv-reservation)")
     p.add_argument("--host-layers", type=int, default=None,
                    help="llamacpp with --rpc-node: keep exactly the first N layers on this host's CPU "
                         "(mmapped from the GGUF) and the nodes in the given order. Default: choose the "

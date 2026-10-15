@@ -167,6 +167,9 @@ keeps exactly N layers on the gateway machine and the nodes in the order given.
 `--rpc-env NAME=KEY=VALUE` sets an environment variable for that node's RPC server
 (a Vulkan heap size, a cache folder) and `--rpc-threads NAME=N` its CPU threads,
 so no node needs a wrapper script.
+`--llama-arg=ARG` (repeat) adds an argument to the gateway's llama-server, for example `--llama-arg=--no-warmup`
+(warm-up would read every expert of a mixture-of-experts model) or `--llama-arg=-fa --llama-arg=on`. Write the `=`: an
+argument that starts with `-` is otherwise read as a `serve` option.
 
 On a GGUF model with sliding-window layers the planner charges each of those layers its window times 4 server slots plus
 512 tokens of batch (llama-server's default launch) instead of the full context. Muse Spark Open has 46 such layers of 62:
