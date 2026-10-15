@@ -32,7 +32,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LM_HEAD_ON_HOST = r"^output\.weight=CPU"
 HOST_FIT_FRACTION = 0.9
-SWA_UBATCH = 512  # llama.cpp's default n_ubatch; its sliding-window cache holds window + n_ubatch tokens
+SWA_UBATCH = 512  # llama.cpp's default n_ubatch
+SWA_SLOTS = 4  # llama-server's auto mode starts 4 slots on one unified KV cache; serve passes no --parallel
 
 # GGUF metadata value types
 _SCALARS = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?",
@@ -177,11 +178,12 @@ def gguf_info(path):
 
 def layer_kv_bytes(info, ctx_tokens):
     """KV cache bytes of each layer at ctx_tokens. A sliding-window layer (the GGUF
-    `sliding_window_pattern` marks it True) keeps only window + n_ubatch tokens, so on a
-    model with a few full-attention layers (Muse Spark Open: 16 of 62) the cache is a
-    fraction of what a full-context charge on every layer gives."""
+    `sliding_window_pattern` marks it True) keeps min(context, window * slots + n_ubatch)
+    tokens (llama.cpp's iSWA cache with a unified KV cache), so on a model with a few
+    full-attention layers (Muse Spark Open: 16 of 62) the cache is a fraction of what a
+    full-context charge on every layer gives."""
     per_token, swa = info["kv_bytes_per_token_layer"], info.get("swa_layers")
-    short = min(ctx_tokens, info.get("swa_window", 0) + SWA_UBATCH)
+    short = min(ctx_tokens, info.get("swa_window", 0) * SWA_SLOTS + SWA_UBATCH)
     return [per_token * (short if swa and swa[il] else ctx_tokens) for il in range(info["n_layer"])]
 
 

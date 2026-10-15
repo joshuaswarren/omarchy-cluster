@@ -1,9 +1,12 @@
 # Sliding-window KV reservation for GGUF models (2026-10-15)
 
 The llama.cpp engine planner (`gguf_info`, `rpc_layers`, `tensor_split`, `place`) charged every layer the KV cache of the full
-context. A model with sliding-window layers keeps only the window in those layers: llama.cpp sizes a sliding-window layer at
-the window plus `n_ubatch` tokens (512 by default). On Muse Spark Open (62 layers, 16 full attention, 46 window layers of 2048
-tokens) the old charge over-reserved by 2.0x at 8192 tokens and 3.2x at 32768 tokens.
+context. A model with sliding-window layers keeps only a window of tokens in those layers. llama.cpp sizes such a layer at
+the window times the number of server slots, plus `n_ubatch` tokens: `llama-server` starts 4 slots on one unified KV cache
+when `--parallel` is not given (auto mode), and `serve` does not pass it, so the charge is 4 x 2048 + 512 = 8704 tokens per
+window layer (llama.cpp `tools/server/server.cpp` auto mode and `src/llama-kv-cache-iswa.cpp`, read at commit 65840ed53). On
+Muse Spark Open (62 layers, 16 full attention, 46 window layers of 2048 tokens) the old charge over-reserved by 2.2x at 32768
+tokens and 3.3x at 131072 tokens; at 8192 tokens and below the window cache is not smaller than the context, so nothing changes.
 
 ## Source
 
@@ -21,9 +24,9 @@ tokens) the old charge over-reserved by 2.0x at 8192 tokens and 3.2x at 32768 to
 | Context (tokens) | KV, full context on every layer | KV, window layers capped |
 |---|---|---|
 | 2048 | 0.52 GB | 0.52 GB |
-| 8192 | 2.08 GB | 1.02 GB |
-| 32768 | 8.32 GB | 2.63 GB |
-| 131072 | 33.29 GB | 9.07 GB |
+| 8192 | 2.08 GB | 2.08 GB |
+| 32768 | 8.32 GB | 3.79 GB |
+| 131072 | 33.29 GB | 10.23 GB |
 
 ## Effect on the placement
 
@@ -34,7 +37,7 @@ devices and a gateway host that keeps 30 GB of layers in its page cache. `place(
 |---|---|---|---|
 | 8192 | 7 | 7 | 0 / 0 |
 | 32768 | 9 | 7 | 0 / 0 |
-| 131072 | 12 | 9 | 3.5 / 0 |
+| 131072 | 12 | 10 | 3.5 / 0 |
 
 The smaller KV charge leaves room for more layers on the devices, so fewer layers stay on the gateway host and nothing is
 paged from disk at 131072 tokens. This changes only the plan. It does not change what llama.cpp allocates, and no run was
@@ -44,5 +47,6 @@ made with this model for this receipt.
 
 - Hybrid models that mix attention and recurrent layers in a GGUF (the Qwen3.5 family) still get a KV charge on every layer.
   The MLX planner handles those from `config.json` (receipt `2026-10-15-hybrid-kv-reservation`).
-- The 512-token `n_ubatch` is llama.cpp's default. `serve` does not pass `-ub`.
+- 512 is llama.cpp's default `n_ubatch`; `serve` does not pass `-ub`. A caller that starts llama-server with `--parallel 1` would
+  need 2048 + 512 tokens per window layer; this planner would then over-reserve.
 - llama.cpp may round the window cache up to its own alignment; this planner does not. Not checked against a running server.

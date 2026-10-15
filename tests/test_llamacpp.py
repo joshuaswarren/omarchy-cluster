@@ -531,7 +531,7 @@ def test_layer_kv_bytes_charges_a_window_layer_its_window_not_the_context(tmp_pa
     info = lce.gguf_info(str(p))
     per_token = info["kv_bytes_per_token_layer"]
     kv = lce.layer_kv_bytes(info, 4096)
-    assert kv == [per_token * (128 + lce.SWA_UBATCH if s else 4096) for s in SWA_PATTERN]
+    assert kv == [per_token * (128 * lce.SWA_SLOTS + lce.SWA_UBATCH if s else 4096) for s in SWA_PATTERN]
     assert lce.layer_kv_bytes(info, 100) == [per_token * 100] * 8  # a short context is below every window
 
 
@@ -540,7 +540,7 @@ def test_tensor_split_fits_a_model_that_a_full_context_charge_on_every_layer_rej
     swa = [i % 4 != 1 for i in range(8)]  # 6 window layers, 2 full
     info = {"n_layer": 8, "per_layer": [layer] * 8, "layer_bytes": layer, "other_bytes": 0,
             "total_bytes": 8 * layer, "kv_bytes_per_token_layer": per_token}
-    caps = [4.4 * GB, 4.4 * GB]  # 4 layers per device need 4.17 GB with window caches but 4.54 GB with full caches
+    caps = [4.4 * GB, 4.4 * GB]  # 4 layers per device need 4.24 GB with window caches but 4.54 GB with full caches
     with pytest.raises(ValueError):
         lce.tensor_split(info, caps, ctx)
     windowed = dict(info, swa_window=2048, swa_layers=swa)
@@ -551,7 +551,7 @@ def test_tensor_split_fits_a_model_that_a_full_context_charge_on_every_layer_rej
 def test_rpc_layers_uses_the_same_window_aware_charge():
     per_token, ctx, layer = 4096, 32768, 1 * GB
     info = {"n_layer": 8, "layer_bytes": layer, "other_bytes": 0, "kv_bytes_per_token_layer": per_token}
-    host_free = 8.7 * GB / lce.HOST_FIT_FRACTION  # fits 8 layers plus window caches (8.33 GB), not full caches (9.07 GB)
+    host_free = 8.7 * GB / lce.HOST_FIT_FRACTION  # fits 8 layers plus window caches (8.48 GB), not full caches (9.07 GB)
     with pytest.raises(ValueError):
         lce.rpc_layers(info, 1 * GB, 1 * GB, ctx)
     assert lce.rpc_layers(info, host_free, 8 * GB, ctx) > 0
