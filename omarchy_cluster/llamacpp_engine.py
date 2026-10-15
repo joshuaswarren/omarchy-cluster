@@ -32,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LM_HEAD_ON_HOST = r"^output\.weight=CPU"
 HOST_FIT_FRACTION = 0.9
+SWA_UBATCH = 512  # llama.cpp's default n_ubatch; its sliding-window cache holds window + n_ubatch tokens
 
 # GGUF metadata value types
 _SCALARS = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?",
@@ -164,16 +165,32 @@ def gguf_info(path):
     n_head = int(meta.get("%s.attention.head_count" % arch, 1) or 1)
     k_dim = int(meta.get("%s.attention.key_length" % arch, n_embd // n_head))
     v_dim = int(meta.get("%s.attention.value_length" % arch, k_dim))
-    return {"arch": arch, "n_layer": n_layer, "layer_bytes": max(per_layer), "per_layer": per_layer,
+    info = {"arch": arch, "n_layer": n_layer, "layer_bytes": max(per_layer), "per_layer": per_layer,
             "other_bytes": other, "total_bytes": sum(sizes.values()), "shards": len(shards),
             "kv_bytes_per_token_layer": int(n_kv_head) * (k_dim + v_dim) * 2}
+    window = int(meta.get("%s.attention.sliding_window" % arch, 0) or 0)
+    pattern = meta.get("%s.attention.sliding_window_pattern" % arch)
+    if window and isinstance(pattern, list) and len(pattern) == n_layer:
+        info["swa_window"], info["swa_layers"] = window, [bool(x) for x in pattern]
+    return info
+
+
+def layer_kv_bytes(info, ctx_tokens):
+    """KV cache bytes of each layer at ctx_tokens. A sliding-window layer (the GGUF
+    `sliding_window_pattern` marks it True) keeps only window + n_ubatch tokens, so on a
+    model with a few full-attention layers (Muse Spark Open: 16 of 62) the cache is a
+    fraction of what a full-context charge on every layer gives."""
+    per_token, swa = info["kv_bytes_per_token_layer"], info.get("swa_layers")
+    short = min(ctx_tokens, info.get("swa_window", 0) + SWA_UBATCH)
+    return [per_token * (short if swa and swa[il] else ctx_tokens) for il in range(info["n_layer"])]
 
 
 def rpc_layers(info, host_free_bytes, rpc_cap_bytes, ctx_tokens, force=None):
     """How many of the last layers go to the RPC device: 0 when the model and
     its KV cache fit in HOST_FIT_FRACTION of host free memory, else the fewest
     that make the rest fit. Raises when host + device cannot hold the model."""
-    layer = info["layer_bytes"] + info["kv_bytes_per_token_layer"] * ctx_tokens
+    kv = layer_kv_bytes(info, ctx_tokens)
+    layer = info["layer_bytes"]
     n = info["n_layer"]
     host_budget = host_free_bytes * HOST_FIT_FRACTION
     if force is not None:
@@ -181,14 +198,14 @@ def rpc_layers(info, host_free_bytes, rpc_cap_bytes, ctx_tokens, force=None):
             raise ValueError("--rpc-layers %d is outside 0..%d" % (force, n))
         return force
     for k in range(n + 1):
-        on_host = info["other_bytes"] + (n - k) * layer
+        on_host = info["other_bytes"] + (n - k) * layer + sum(kv[:n - k])
         if on_host > host_budget:
             continue
-        if k * layer > rpc_cap_bytes:
+        if k * layer + sum(kv[n - k:]) > rpc_cap_bytes:
             break
         return k
     raise ValueError("model needs %.1f GB; host has %.1f GB usable and the RPC device %.1f GB"
-                     % ((info["other_bytes"] + n * layer) / 1e9, host_budget / 1e9,
+                     % ((info["other_bytes"] + n * layer + sum(kv)) / 1e9, host_budget / 1e9,
                         rpc_cap_bytes / 1e9))
 
 
@@ -203,17 +220,17 @@ def tensor_split(info, caps_bytes, ctx_tokens, host_layers=0):
     stay on the host CPU (mmapped, can page from disk) and are not charged here.
     Raises when the layers do not fit the budgets in order."""
     n_all = info["n_layer"]
-    kv = info["kv_bytes_per_token_layer"] * ctx_tokens
+    kv = layer_kv_bytes(info, ctx_tokens)
     per_layer = info.get("per_layer") or [
         (info["total_bytes"] - info["other_bytes"]) / n_all if info.get("total_bytes") else info["layer_bytes"]
     ] * n_all
     counts, dev, used = [0] * len(caps_bytes), 0, 0
     for il in range(host_layers, n_all):
-        size = per_layer[il] + kv
+        size = per_layer[il] + kv[il]
         while dev < len(caps_bytes) and used + size > caps_bytes[dev]:
             dev, used = dev + 1, 0
         if dev == len(caps_bytes):
-            need = sum(per_layer[host_layers:]) + kv * (n_all - host_layers)
+            need = sum(per_layer[host_layers:]) + sum(kv[host_layers:])
             raise ValueError("%d offloaded layers need %.1f GB; layer %d does not fit the RPC devices in order (%s GB)" % (
                 n_all - host_layers, need / 1e9, il, ", ".join("%.1f" % (c / 1e9) for c in caps_bytes)))
         counts[dev] += 1

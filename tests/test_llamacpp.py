@@ -24,7 +24,7 @@ def _gguf_string(s):
     return struct.pack("<Q", len(b)) + b
 
 
-def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128, value_dim=None, nextn=0):
+def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128, value_dim=None, nextn=0, swa=None):
     """A minimal GGUF v3 file: metadata, tensor infos, and zero-filled data
     whose tensor sizes are given in bytes (multiples of the 32-byte alignment)."""
     meta = [("general.architecture", 8, _gguf_string("qwen3")),
@@ -39,6 +39,10 @@ def make_gguf(path, n_layer, layer_sizes, other_sizes, n_kv_head=8, head_dim=128
         meta.append(("qwen3.attention.value_length", 4, struct.pack("<I", value_dim)))
     if nextn:
         meta.append(("qwen3.nextn_predict_layers", 4, struct.pack("<I", nextn)))
+    if swa:  # (window, one bool per layer, True = sliding window)
+        meta.append(("qwen3.attention.sliding_window", 4, struct.pack("<I", swa[0])))
+        meta.append(("qwen3.attention.sliding_window_pattern", 9,
+                     struct.pack("<IQ", 7, len(swa[1])) + bytes(int(b) for b in swa[1])))
     tensors = [("token_embd.weight", other_sizes[0])]
     for i in range(n_layer):
         tensors += [("blk.%d.attn_q.weight" % i, layer_sizes[0]),
@@ -505,3 +509,51 @@ def test_vmstat_deltas():
     from omarchy_cluster import paging
     a, b = {"pgmajfault": 10, "pgpgin": 100}, {"pgmajfault": 25, "pgpgin": 400}
     assert paging.delta(a, b) == {"pgmajfault": 15, "pgpgin": 300}
+
+
+SWA_PATTERN = [True, False, True, True, True, False, True, True]  # 2 of 8 layers are full attention
+
+
+def test_gguf_info_reads_the_sliding_window_pattern(tmp_path):
+    p = tmp_path / "m.gguf"
+    make_gguf(str(p), 8, (64, 96), (320, 32), swa=(128, SWA_PATTERN))
+    info = lce.gguf_info(str(p))
+    assert info["swa_window"] == 128
+    assert info["swa_layers"] == SWA_PATTERN
+    plain = tmp_path / "plain.gguf"
+    make_gguf(str(plain), 8, (64, 96), (320, 32))
+    assert "swa_layers" not in lce.gguf_info(str(plain))
+
+
+def test_layer_kv_bytes_charges_a_window_layer_its_window_not_the_context(tmp_path):
+    p = tmp_path / "m.gguf"
+    make_gguf(str(p), 8, (64, 96), (320, 32), swa=(128, SWA_PATTERN))
+    info = lce.gguf_info(str(p))
+    per_token = info["kv_bytes_per_token_layer"]
+    kv = lce.layer_kv_bytes(info, 4096)
+    assert kv == [per_token * (128 + lce.SWA_UBATCH if s else 4096) for s in SWA_PATTERN]
+    assert lce.layer_kv_bytes(info, 100) == [per_token * 100] * 8  # a short context is below every window
+
+
+def test_tensor_split_fits_a_model_that_a_full_context_charge_on_every_layer_rejects():
+    per_token, ctx, layer = 4096, 32768, 1 * GB
+    swa = [i % 4 != 1 for i in range(8)]  # 6 window layers, 2 full
+    info = {"n_layer": 8, "per_layer": [layer] * 8, "layer_bytes": layer, "other_bytes": 0,
+            "total_bytes": 8 * layer, "kv_bytes_per_token_layer": per_token}
+    caps = [4.4 * GB, 4.4 * GB]  # 4 layers per device need 4.17 GB with window caches but 4.54 GB with full caches
+    with pytest.raises(ValueError):
+        lce.tensor_split(info, caps, ctx)
+    windowed = dict(info, swa_window=2048, swa_layers=swa)
+    counts = lce.tensor_split(windowed, caps, ctx)
+    assert sum(counts) == 8 + 1  # every layer placed, plus the output slot
+
+
+def test_rpc_layers_uses_the_same_window_aware_charge():
+    per_token, ctx, layer = 4096, 32768, 1 * GB
+    info = {"n_layer": 8, "layer_bytes": layer, "other_bytes": 0, "kv_bytes_per_token_layer": per_token}
+    host_free = 8.7 * GB / lce.HOST_FIT_FRACTION  # fits 8 layers plus window caches (8.33 GB), not full caches (9.07 GB)
+    with pytest.raises(ValueError):
+        lce.rpc_layers(info, 1 * GB, 1 * GB, ctx)
+    assert lce.rpc_layers(info, host_free, 8 * GB, ctx) > 0
+    windowed = dict(info, swa_window=2048, swa_layers=[i % 4 != 1 for i in range(8)])
+    assert lce.rpc_layers(windowed, host_free, 8 * GB, ctx) == 0

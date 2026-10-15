@@ -168,6 +168,10 @@ keeps exactly N layers on the gateway machine and the nodes in the order given.
 (a Vulkan heap size, a cache folder) and `--rpc-threads NAME=N` its CPU threads,
 so no node needs a wrapper script.
 
+On a GGUF model with sliding-window layers the planner charges each of those layers the window (plus 512 tokens of batch)
+instead of the full context. Muse Spark Open has 46 such layers of 62: 2.63 GB of KV at 32768 tokens instead of 8.32 GB
+([receipt](receipts/2026-10-15-swa-kv-reservation)).
+
 The `stop` command stops the gateway and every rank, and sweeps the ports.
 The `guard` command watches every node of a running serve through its agent
 and stops the run when a Linux node drops under 2 GB available, a Mac's memory
