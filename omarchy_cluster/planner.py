@@ -56,6 +56,17 @@ def attention_layers(tc):
     return sum(attention_pattern(tc))
 
 
+def window_pattern(tc):
+    """(flags, window): flags[i] is True when layer i is a sliding-window layer, whose cache mlx-lm caps at `window`
+    tokens (RotatingKVCache). Needs `layer_types` and `sliding_window`; otherwise no layer is a window layer."""
+    total = int(tc.get("num_hidden_layers", 0))
+    types = tc.get("layer_types")
+    window = int(tc.get("sliding_window") or 0)
+    if window and isinstance(types, list) and len(types) == total:
+        return [t == "sliding_attention" for t in types], window
+    return [False] * total, 0
+
+
 def model_info(model_ref):
     path = find_model_path(model_ref)
     if not path:
@@ -77,6 +88,8 @@ def model_info(model_ref):
                         (tc.get("hidden_size", 0) // max(tc.get("num_attention_heads", 1), 1))),
         "kv_layers": attention_layers(tc),
         "kv_pattern": attention_pattern(tc),
+        "kv_window_layers": window_pattern(tc)[0],
+        "kv_window": window_pattern(tc)[1],
         "weights_bytes": weights,
     }
 
@@ -99,14 +112,18 @@ def max_layers(free_bytes, info, ctx_tokens=DEFAULT_CTX_TOKENS):
     """Decoder layers (weights + KV for ctx_tokens) that fit in 90 % of free_bytes.
 
     A pipeline stage owns contiguous layers, and in a hybrid model their attention layers are not spread evenly,
-    so the KV of n layers is charged for the n contiguous layers that hold the most attention layers."""
+    so the KV of n layers is charged for the n contiguous layers that hold the most cached tokens. A sliding-window
+    layer holds at most its window (mlx-lm's RotatingKVCache), a full-attention layer the whole context."""
     layers = max(info["layers"], 1)
     pattern = info.get("kv_pattern")
     if pattern and len(pattern) == info["layers"]:
-        per_attention = 2 * info["kv_heads"] * info["head_dim"] * BYTES_PER_KV_ELEMENT * ctx_tokens
+        per_token = 2 * info["kv_heads"] * info["head_dim"] * BYTES_PER_KV_ELEMENT
+        flags = info.get("kv_window_layers") or [False] * layers
+        window = info.get("kv_window") or 0
+        tokens = [(min(ctx_tokens, window) if flags[i] else ctx_tokens) if pattern[i] else 0 for i in range(layers)]
         budget = free_bytes * 0.9
         for n in range(layers, 0, -1):
-            if n * info["weights_bytes"] / layers + per_attention * worst_attention_layers(pattern, n) <= budget:
+            if n * info["weights_bytes"] / layers + per_token * worst_attention_layers(tokens, n) <= budget:
                 return n
         return 0
     per_layer = (info["weights_bytes"] + kv_bytes_per_token(info) * ctx_tokens) / layers

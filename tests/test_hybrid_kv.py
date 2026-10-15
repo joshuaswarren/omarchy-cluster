@@ -85,3 +85,31 @@ def test_a_stage_is_charged_for_its_most_attention_heavy_slice():
     assert planner.max_layers(free, dict(info, kv_pattern=None), 1000) == 3  # the model-wide average: 0.25 layer each
     assert planner.max_layers(free, info, 1000) == 0  # but one layer can be the attention layer
     assert planner.max_layers(4000 / 0.9, info, 1000) == 4  # four layers hold one attention layer, five can hold two
+
+
+def muse_text(layers=8, window=2048):
+    """A muse_spark-shaped text config: sliding-window layers with a full-attention layer after every third."""
+    return {"num_hidden_layers": layers, "hidden_size": 64, "num_attention_heads": 4, "num_key_value_heads": 1, "head_dim": 1,
+            "sliding_window": window,
+            "layer_types": ["full_attention" if i % 4 == 1 else "sliding_attention" for i in range(layers)]}
+
+
+def test_window_pattern_marks_sliding_layers_only_when_both_keys_are_present():
+    flags, window = planner.window_pattern(muse_text())
+    assert (flags, window) == ([True, False, True, True] * 2, 2048)
+    assert planner.window_pattern(dict(muse_text(), sliding_window=None)) == ([False] * 8, 0)
+    assert planner.window_pattern(dict(muse_text(), layer_types=None)) == ([False] * 8, 0)
+    assert planner.window_pattern(dict(muse_text(), layer_types=["sliding_attention"] * 3)) == ([False] * 8, 0)
+
+
+def test_a_window_layer_is_charged_its_window_not_the_context(tmp_path):
+    info = write_model(tmp_path, muse_text(), nested=True)
+    assert info["kv_window"] == 2048 and info["kv_layers"] == 8  # window layers still grow a cache
+    # 4 bytes per cached token per layer (K and V, 1 head of dim 1, bf16): 8 layers, 2 full, 6 window
+    ctx = 32768
+    full_charge = 8 * 4 * ctx  # what the planner charged when every attention layer held the whole context
+    window_charge = 4 * (2 * ctx + 6 * 2048)
+    free = (window_charge + 1024) / 0.9  # plus the helper's 1 KB of weights
+    assert planner.max_layers(free, info, ctx) == 8
+    assert planner.max_layers(free, dict(info, kv_window_layers=[False] * 8), ctx) < 8  # the old charge: full context everywhere
+    assert full_charge > window_charge

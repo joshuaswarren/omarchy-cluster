@@ -146,7 +146,8 @@ hold every layer. It prints each node's layer cap. A layer's share is its
 weights plus the KV cache for the planned context. In a hybrid model (Qwen3.5,
 Qwen3.8, Qwen3-Next) only the full-attention layers grow a per-token cache, so
 the planner reserves KV for those layers only: 16 of 64 on Qwen3.8-27B, 64 KiB
-per token instead of 256 KiB.
+per token instead of 256 KiB. A sliding-window layer (Muse Spark Open: 46 of 62 layers) holds at most its window, so the
+planner charges it min(context, window) tokens, the size of mlx-lm's rotating cache.
 
 The `serve MODEL` command plans, launches a pipeline rank on each node through
 its token-authed agent (no node-to-node ssh), and starts an OpenAI-compatible
