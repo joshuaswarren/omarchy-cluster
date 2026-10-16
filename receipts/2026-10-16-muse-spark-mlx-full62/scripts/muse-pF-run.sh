@@ -20,7 +20,7 @@ log "agent 8026 up"
 T0=$(date +%s)
 $CL serve local/muse-2bit --nodes ${STUDIO_NODE},${M2_NODE},${M2_NODE},${LAPTOP16_NODE},${LAPTOP13_NODE} --split "$SPLIT" --no-fit-check \
   --ring-ip ${STUDIO_NODE}=${STUDIO_IP} --ring-ip ${M2_NODE}=${M2_IP} --ring-ip ${LAPTOP16_NODE}=${LAPTOP16_IP} --ring-ip ${LAPTOP13_NODE}=${LAPTOP13_IP} \
-  --python-mac "$D/rankpy.sh" --python-linux $HOME/muse-run/rankpy.sh --port 18020 --engine-port 18031 --ctx 4096 \
+  --python-mac "$D/rankpy.sh" --python-linux "${LINUX_HOME}/muse-run/rankpy.sh" --port 18020 --engine-port 18031 --ctx 4096 \
   > "$OUT/serve.log" 2>&1 &
 log "serve pid $!"
 for _ in $(seq 1 600); do

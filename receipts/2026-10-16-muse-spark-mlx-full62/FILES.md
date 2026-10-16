@@ -1,7 +1,7 @@
 # Files in this receipt
 
 Run scripts and launch files of the full 62-layer run, plus the run results. Host names, LAN addresses, user names and home paths are replaced:
-shell variables in `scripts/` (`STUDIO_IP`, `M2_IP`, `LAPTOP16_IP`, `LAPTOP13_IP`, `NODE_USER`, `*_HOST`, `*_NODE`, `CAPTURE_TOOLS`, `RUN_ARTIFACT`) and
+shell variables in `scripts/` (`STUDIO_IP`, `M2_IP`, `LAPTOP16_IP`, `LAPTOP13_IP`, `NODE_USER`, `*_HOST`, `*_NODE`, `LINUX_HOME` (home folder on the Linux nodes), `CAPTURE_TOOLS`, `RUN_ARTIFACT`) and
 angle-bracket placeholders in `results/`. The local model id is `local/muse-2bit`; the node working folder is `muse-run`. No measured number was changed.
 
 ## scripts/
