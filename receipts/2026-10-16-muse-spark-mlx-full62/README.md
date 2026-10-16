@@ -19,7 +19,7 @@ All 62 layers, real weights, every layer on an Apple Silicon GPU through MLX (om
 
 - `MLX_OMARCHY_PIPELINE_PRUNE=1` (omarchy-mlx PR 199): each rank replaces the embedding / lm_head it never reads with a same-shape placeholder. Pipeline-stage tensor dropping only; no layer or expert is removed.
 - `MLX_DISABLE_COMPILE=1`, default kernels, raw `/v1/completions`, temperature 0 (greedy).
-- Gateway: `http://<studio>:18020`. Run scripts and launch files from this run will follow in this folder.
+- Gateway: `http://<studio>:18020`. Run scripts, launch files and result summaries are in `scripts/` and `results/`; see `FILES.md`.
 
 ## Measured (gateway timings, 159-token prompt, 64-token cap)
 

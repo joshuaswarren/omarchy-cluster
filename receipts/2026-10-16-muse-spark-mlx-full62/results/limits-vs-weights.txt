@@ -1,0 +1,15 @@
+Muse Spark Open 2-bit, 62 of 62 layers, 5 ranks on 4 Apple Silicon machines; text NOT CHECKED for coherence; quality NOT MEASURED
+weights per rank (this run's rank logs) against each node's MLX memory limit:
+== ST
+rank 0 sharded_load done: local/muse-2bit layers 38-61, active 92.372 GB, peak 92.372 GB
+previous memory limit 130567005798 bytes 130.57 GB
+== M2
+rank 1 sharded_load done: local/muse-2bit layers 26-37, active 45.514 GB, peak 45.514 GB
+rank 2 sharded_load done: local/muse-2bit layers 14-25, active 45.514 GB, peak 45.514 GB
+previous memory limit 57982058460 bytes 57.98 GB
+== JW
+rank 3 sharded_load done: local/muse-2bit layers 2-13, active 45.514 GB, peak 45.514 GB
+previous memory limit 53100000000 bytes 53.1 GB
+== M1
+rank 4 sharded_load done: local/muse-2bit layers 0-1, active 8.567 GB, peak 8.567 GB
+previous memory limit 9900000000 bytes 9.9 GB
