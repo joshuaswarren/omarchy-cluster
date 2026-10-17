@@ -638,14 +638,17 @@ class EngineHandler(BaseHTTPRequestHandler):
             messages = req["prompt"]
         if self.path == "/score":
             tokens = req.get("tokens")
+            self.engine.wait_ready()
             if tokens is None:
-                self.engine.wait_ready()
                 tokens = self.engine.tok.encode(req.get("text", ""), add_special_tokens=False)
             if req.get("limit"):
                 tokens = tokens[:int(req["limit"])]
             if len(tokens) < 2:
                 return self._json(400, {"error": "need at least 2 tokens"})
-            return self._json(200, self.engine.score([int(t) for t in tokens]))
+            vocab = self.engine.model.args.vocab_size
+            if not all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t < vocab for t in tokens):
+                return self._json(400, {"error": "token ids must be integers in [0, %d)" % vocab})
+            return self._json(200, self.engine.score(tokens))
         res = self.engine.generate(messages, max_tokens=int(req.get("max_tokens", 64)),
                                    timing=bool(req.get("timing")))
         return self._json(200, res)
