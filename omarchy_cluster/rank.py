@@ -76,15 +76,19 @@ def _host_recv():
 
 def _score_forward(model, tokens, want_nll):
     """One full forward over `tokens` on every rank (the ring collectives stay in lockstep). Rank 0 (want_nll) returns the
-    per-token negative log-likelihood of tokens[1:] given the prefix, in nats; the other ranks evaluate the logits and return None."""
+    per-token negative log-likelihood of tokens[1:] given the prefix, in nats. The other ranks run the layers and the ring
+    gather and stop before the lm_head: generation never runs the head on more than one row there. In the plumbing test a
+    head over every prompt row on the M2 ranks coincided with a 10 s Vulkan timeline timeout at 48 rows (32 rows ran);
+    the 6-bit matmul alone at 48 rows runs, so the cause is not found."""
     import mlx.core as mx
     from mlx_lm.models.cache import make_prompt_cache
     cache = make_prompt_cache(model)
+    x = mx.array(tokens)[None]
     with _host_recv():
-        logits = model(mx.array(tokens)[None], cache=cache)
         if not want_nll:
-            mx.eval(logits)
+            mx.eval(model.model(x, cache=cache))
             return None
+        logits = model(x, cache=cache)
         lp = logits[0, :-1].astype(mx.float32)
         picked = mx.take_along_axis(lp, mx.array(tokens[1:])[:, None], axis=-1)[:, 0]
         nll = mx.logsumexp(lp, axis=-1) - picked
