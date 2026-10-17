@@ -389,6 +389,15 @@ layers with `--split`. Plain HTTP with one
 shared token on your LAN: a homelab trust model, no TLS, no per-user auth. A
 node slowed by other GPU work is detected and reported, not preempted.
 
+A Vulkan rank whose GPU queue waits on a long ring operation can trip the omarchy-mlx watchdog, which throws when a timeline wait makes
+no progress for 10 s by default. A 256-token prefill over 62 layers on five machines takes about 40 s, and the first stage of the pipeline
+waits for all of it. The rank launcher therefore sets `MLX_OMARCHY_HANG_NO_PROGRESS_NS` to 120 s for every rank unless you set it yourself;
+the first wait in a process fixes the value, so it has to be in the rank's launch environment.
+
+Two switches help when you compare settings on a loaded ring. Each rank applies the `NAME=VALUE` lines of the file named by
+`OMARCHY_LIVE_ENV` before every job, so one load can run the same prompts with a route flag off and on. `POST /score` on the engine
+port runs one forward over the given text or token ids on every rank and returns rank 0's per-token negative log-likelihood.
+
 ## How is this different from exo?
 
 exo is the closest project, and strong at what it targets: Macs clustered with

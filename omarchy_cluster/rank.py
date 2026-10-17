@@ -57,21 +57,30 @@ def _apply_live_env():
 
 @contextlib.contextmanager
 def _host_recv():
-    """Evaluate every recv_like on the host, as _stream does: a GPU queue that waits on the network can trip the device watchdog."""
+    """Evaluate every recv_like and the all_gather on the host: a GPU queue that waits on the network can trip the device
+    watchdog. The all_gather input is evaluated first, so the local GPU work is done before the host waits for the other ranks.
+    A scoring forward is long (about 40 s over 256 tokens on the full model); the 13-inch rank timed out the Vulkan timeline
+    in the second and third full-model runs while its queue waited that long for the gather."""
     import mlx.core as mx
     dist = mx.distributed
-    op = dist.recv_like
+    recv, gather = dist.recv_like, dist.all_gather
 
-    def call(x, *a, **k):
-        y = op(x, *a, **k)
+    def recv_call(x, *a, **k):
+        y = recv(x, *a, **k)
         mx.eval(y)
         return y
 
-    dist.recv_like = call
+    def gather_call(x, *a, **k):
+        mx.eval(x)
+        y = gather(x, *a, **k)
+        mx.eval(y)
+        return y
+
+    dist.recv_like, dist.all_gather = recv_call, gather_call
     try:
         yield
     finally:
-        dist.recv_like = op
+        dist.recv_like, dist.all_gather = recv, gather
 
 
 def _score_forward(model, tokens, want_nll):

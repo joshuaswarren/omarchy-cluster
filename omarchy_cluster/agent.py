@@ -258,6 +258,9 @@ def rank_start(req):
         f.write(req["hostfile_content"])
     env = dict(os.environ, **{str(k): str(v) for k, v in (req.get("env") or {}).items()})
     env.update(MLX_RANK=str(req["rank"]), MLX_HOSTFILE=hostfile, HF_HUB_OFFLINE="1")
+    # A pipeline rank's GPU queue can wait on a long ring operation (a 256-token prefill over 62 layers takes about 40 s).
+    # omarchy-mlx stops a timeline wait that makes no progress for 10 s by default; the first wait in the process sets the limit.
+    env.setdefault("MLX_OMARCHY_HANG_NO_PROGRESS_NS", "120000000000")
     if req.get("pythonpath"):
         env["PYTHONPATH"] = ":".join(
             os.path.expanduser(p) for p in req["pythonpath"].split(":") if p)
