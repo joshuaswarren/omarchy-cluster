@@ -396,7 +396,9 @@ def _explicit_plan(args):
     for name in dict.fromkeys(names):
         held = sum(c for n, c in zip(names, counts) if n == name)
         cap = next(s["max_layers"] for s in stages if s["node"] == name)
-        if held > cap:
+        if held > cap and getattr(args, "no_fit_check", False):
+            print("OVERRIDE: %s holds %d layers, the planner's 90 percent rule allows %d" % (name, held, cap))
+        elif held > cap:
             sys.exit("%s: %d layers do not fit its free memory (it holds %d)" % (name, held, cap))
     return {"mode": "pipeline" if len(stages) > 1 else "replica", "model": info["ref"], "layers": info["layers"],
             "ctx_tokens": args.ctx, "stages": stages, "boundaries": [], "decode_tail": names[0]}
@@ -1032,6 +1034,9 @@ def main(argv=None):
     p.add_argument("--ring-ip", action="append", default=[], metavar="NAME=IP",
                    help="mlx engine: the ring address of NAME (a node whose neighbours reach it on another "
                         "address than its first interface, for example a Wi-Fi address; repeat)")
+    p.add_argument("--no-fit-check", action="store_true",
+                   help="mlx engine, --nodes: print instead of refusing when a node holds more layers than the planner's "
+                        "90 percent free-memory rule allows; state the headroom yourself")
     p.add_argument("--stages", type=int, default=None)
     p.add_argument("--port", type=int, default=8020)
     p.add_argument("--engine-port", type=int, default=8031)

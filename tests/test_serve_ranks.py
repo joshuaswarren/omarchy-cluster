@@ -114,3 +114,10 @@ def test_rank_env_and_the_adapter_path_reach_a_macos_rank_too(monkeypatch):
     cli._launch_rank_via_agent({"ip": "10.0.0.1"}, 1, "m", "4,4", "[]", args, "macOS 26")
     assert sent[0]["env"] == {"MLX_DISABLE_COMPILE": "1"}
     assert sent[0]["pythonpath"] == "~/.local/share/omarchy-cluster/src:~/adapters"
+
+
+def test_no_fit_check_prints_an_override_instead_of_refusing(tmp_path, monkeypatch, cluster, capsys):
+    monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **k: make_nodes(free=1_200_000))
+    cli.cmd_serve(serve_args(make_model(tmp_path), nodes="studio,m2,m2", split="2,3,3", no_fit_check=True))
+    assert "OVERRIDE: m2 holds 6 layers" in capsys.readouterr().out
+    assert len(cluster) == 3
