@@ -15,15 +15,81 @@ models upstream; use a single node for those.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import queue
+import struct
 import threading
 import time
 import urllib.request
 from urllib.parse import urlencode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+_LIVE_ENV_FILE = os.environ.get("OMARCHY_LIVE_ENV") or os.path.expanduser("~/.local/state/omarchy-cluster/live-env")
+_live_applied = {}
+
+
+def _apply_live_env():
+    """Apply the NAME=VALUE lines of the live-env file to this process before a job; a name dropped from the file is unset.
+    A route flag that the backend reads at dispatch time can then differ between two requests of one loaded ring."""
+    want = {}
+    try:
+        with open(_LIVE_ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    want[key.strip()] = value.strip()
+    except OSError:
+        pass
+    if want == _live_applied:
+        return dict(_live_applied)
+    for key in set(_live_applied) - set(want):
+        os.environ.pop(key, None)
+    os.environ.update(want)
+    _live_applied.clear()
+    _live_applied.update(want)
+    print("live env now: %s" % json.dumps(want), flush=True)
+    return dict(_live_applied)
+
+
+@contextlib.contextmanager
+def _host_recv():
+    """Evaluate every recv_like on the host, as _stream does: a GPU queue that waits on the network can trip the device watchdog."""
+    import mlx.core as mx
+    dist = mx.distributed
+    op = dist.recv_like
+
+    def call(x, *a, **k):
+        y = op(x, *a, **k)
+        mx.eval(y)
+        return y
+
+    dist.recv_like = call
+    try:
+        yield
+    finally:
+        dist.recv_like = op
+
+
+def _score_forward(model, tokens, want_nll):
+    """One full forward over `tokens` on every rank (the ring collectives stay in lockstep). Rank 0 (want_nll) returns the
+    per-token negative log-likelihood of tokens[1:] given the prefix, in nats; the other ranks evaluate the logits and return None."""
+    import mlx.core as mx
+    from mlx_lm.models.cache import make_prompt_cache
+    cache = make_prompt_cache(model)
+    with _host_recv():
+        logits = model(mx.array(tokens)[None], cache=cache)
+        if not want_nll:
+            mx.eval(logits)
+            return None
+        lp = logits[0, :-1].astype(mx.float32)
+        picked = mx.take_along_axis(lp, mx.array(tokens[1:])[:, None], axis=-1)[:, 0]
+        nll = mx.logsumexp(lp, axis=-1) - picked
+        mx.eval(nll)
+    return nll.tolist()
 
 
 def _get_engine(engine, path, params, timeout=600):
@@ -211,6 +277,11 @@ def rank1_worker(model_ref, engine, counts=None):
             continue
         last_id = job["id"]
         print("rank 1 job %s: %d prompt tokens" % (last_id, len(job["prompt"])), flush=True)
+        _apply_live_env()
+        if job.get("score"):
+            _score_forward(model, job["prompt"], False)
+            print("rank 1 completed score job %s" % last_id, flush=True)
+            continue
         marks = [] if job.get("timing") else None
         parts = [r.text for r in _stream(model, tokenizer, job["prompt"], job["max_tokens"], marks)]
         print("rank 1 completed job %s: text_sha256 %s" % (
@@ -372,10 +443,29 @@ class Engine:
         while True:
             messages, max_tokens, timing, out = self._jobs.get()
             try:
-                out["res"] = self._generate(messages, max_tokens, timing)
+                _apply_live_env()
+                if isinstance(messages, dict) and "score" in messages:
+                    out["res"] = self._score(messages["score"])
+                else:
+                    out["res"] = self._generate(messages, max_tokens, timing)
             except Exception as e:  # noqa: BLE001
                 out["res"] = {"error": "%s: %s" % (type(e).__name__, e)}
             self._jobs.task_done()
+
+    def _score(self, tokens):
+        """Teacher-forced scoring: publish the token ids to the other ranks, run the same single forward, return the NLL list."""
+        with self._cond:
+            self._id += 1
+            self._pending = {"id": self._id, "prompt": tokens, "max_tokens": 0, "timing": False, "score": True}
+            self._published, self._fetched = time.perf_counter(), None
+            self._cond.notify_all()
+        t0 = time.perf_counter()
+        nll = _score_forward(self.model, tokens, True)
+        forward_ms = 1000 * (time.perf_counter() - t0)
+        assert nll is not None
+        return {"tokens": len(tokens), "scored": len(nll), "mean_nll": sum(nll) / len(nll),
+                "nll_sha256": hashlib.sha256(struct.pack("<%df" % len(nll), *nll)).hexdigest(),
+                "forward_ms": round(forward_ms, 1), "env": dict(_live_applied), "nll": nll}
 
     def wait_ready(self):
         """Block until boot ends. No timeout: a rank can sit in its node's
@@ -475,6 +565,13 @@ class Engine:
         self._jobs.join()
         return out["res"]
 
+    def score(self, tokens):
+        self.wait_ready()
+        out = {}
+        self._jobs.put(({"score": tokens}, 0, False, out))
+        self._jobs.join()
+        return out["res"]
+
     POLL_WAIT_S = 30.0
 
     def pending_prompt(self, after):
@@ -515,7 +612,7 @@ class EngineHandler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/generate":
+        if self.path not in ("/generate", "/score"):
             return self._json(404, {"error": "not found"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -526,6 +623,16 @@ class EngineHandler(BaseHTTPRequestHandler):
                                             "content": req.get("prompt", "")}]
         if req.get("raw") and isinstance(req.get("prompt"), str):
             messages = req["prompt"]
+        if self.path == "/score":
+            tokens = req.get("tokens")
+            if tokens is None:
+                self.engine.wait_ready()
+                tokens = self.engine.tok.encode(req.get("text", ""), add_special_tokens=False)
+            if req.get("limit"):
+                tokens = tokens[:int(req["limit"])]
+            if len(tokens) < 2:
+                return self._json(400, {"error": "need at least 2 tokens"})
+            return self._json(200, self.engine.score([int(t) for t in tokens]))
         res = self.engine.generate(messages, max_tokens=int(req.get("max_tokens", 64)),
                                    timing=bool(req.get("timing")))
         return self._json(200, res)
