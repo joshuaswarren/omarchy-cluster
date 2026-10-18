@@ -16,7 +16,7 @@ DEFAULT_CTX_TOKENS = 2048
 
 
 def find_model_path(model_ref):
-    """Local dir, or a HF repo id resolved in the default HF cache."""
+    """Local dir, or cached HF main; inspect snapshots only when main has no ref."""
     if os.path.isdir(model_ref):
         return model_ref
     cache = os.path.expanduser("~/.cache/huggingface/hub")
@@ -25,7 +25,13 @@ def find_model_path(model_ref):
     if not os.path.isdir(base):
         return None
     snaps = os.path.join(base, "snapshots")
-    for entry in sorted(os.listdir(snaps)):
+    main_ref = os.path.join(base, "refs", "main")
+    if os.path.isfile(main_ref):
+        with open(main_ref) as f:
+            revisions = [f.read().strip()]
+    else:
+        revisions = sorted(os.listdir(snaps))
+    for entry in revisions:
         snap = os.path.join(snaps, entry)
         if os.path.isfile(os.path.join(snap, "config.json")):
             return snap
