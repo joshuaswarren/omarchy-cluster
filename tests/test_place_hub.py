@@ -26,6 +26,27 @@ INFO = {"ref": "m", "path": "/x", "layers": 28, "hidden": 2048, "kv_heads": 8,
         "head_dim": 128, "weights_bytes": int(1.2e9)}
 
 
+@pytest.mark.parametrize("main_revision", ["999-current", "missing"])
+def test_model_info_uses_cached_main_instead_of_an_old_snapshot(tmp_path, monkeypatch, main_revision):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache = tmp_path / ".cache/huggingface/hub/models--example--model"
+    for revision, layers, weights in [("000-old", 2, 32), ("999-current", 8, 128)]:
+        snapshot = cache / "snapshots" / revision
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text(json.dumps({"num_hidden_layers": layers}))
+        (snapshot / "model.safetensors").write_bytes(b"0" * weights)
+    (cache / "refs").mkdir()
+    (cache / "refs/main").write_text(main_revision + "\n")
+
+    info = planner.model_info("example/model")
+    if main_revision == "missing":
+        assert info is None
+    else:
+        assert info is not None
+        assert info["path"] == str(cache / "snapshots" / "999-current")
+        assert (info["layers"], info["weights_bytes"]) == (8, 128)
+
+
 def test_pipeline_plan_orders_decode_tail_and_caps_stages_by_free_memory():
     nodes = {"big-desktop": facts(100, 128), "laptop": facts(80, 94)}
     plan = planner.plan_placement(nodes, links_with("big-desktop", "laptop"), INFO)
