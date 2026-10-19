@@ -5,6 +5,8 @@ import time
 from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from omarchy_cluster import rank
@@ -243,3 +245,56 @@ def test_stream_completes_every_recv_on_the_host_before_gpu_work(monkeypatch):
     assert ("recv", "h0") in evald
     assert not [a for a in evald if isinstance(a, tuple) and a[0] == "gather"]
     assert dist.recv_like("x") == ("recv", "x")  # original ops restored
+
+
+@pytest.mark.parametrize("method", ["generate", "score"])
+@pytest.mark.parametrize("first_fails", [False, True])
+def test_completed_request_does_not_wait_for_later_inference(monkeypatch, method, first_fails):
+    mx = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "mlx", SimpleNamespace(core=mx))
+    monkeypatch.setitem(sys.modules, "mlx.core", mx)
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils",
+                        SimpleNamespace(load=lambda ref: (object(), object())))
+    first_started, finish_first = threading.Event(), threading.Event()
+    second_started, finish_second = threading.Event(), threading.Event()
+
+    def inference(self, value, *args):
+        if value == [1]:
+            first_started.set()
+            assert finish_first.wait(5)
+            if first_fails:
+                raise ValueError("first inference failed")
+        else:
+            second_started.set()
+            assert finish_second.wait(5)
+        return {"tokens": value}
+
+    monkeypatch.setattr(rank.Engine, "_generate", inference)
+    monkeypatch.setattr(rank.Engine, "_score", inference)
+    engine = rank.Engine("test-model", 1)
+    results = {}
+    call = getattr(engine, method)
+    first = threading.Thread(target=lambda: results.update(first=call([1])))
+    second = threading.Thread(target=lambda: results.update(second=call([2])))
+    try:
+        first.start()
+        assert first_started.wait(2)
+        second.start()
+        deadline = time.monotonic() + 2
+        while engine._jobs.empty() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert not engine._jobs.empty()
+        finish_first.set()
+        assert second_started.wait(2)
+        first.join(1)
+        assert not first.is_alive(), "completed request waited for later inference"
+        assert second.is_alive()
+        expected = {"error": "ValueError: first inference failed"} if first_fails else {"tokens": [1]}
+        assert results["first"] == expected
+    finally:
+        finish_first.set()
+        finish_second.set()
+        first.join(5)
+        if second.ident is not None:
+            second.join(5)
+    assert results["second"] == {"tokens": [2]}

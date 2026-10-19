@@ -410,7 +410,7 @@ class Engine:
         self.ready = threading.Event()
         self.tok = None
         self.model = None
-        self._jobs = queue.Queue()
+        self._jobs = queue.SimpleQueue()  # (messages, max_tokens, timing, result queue); one worker keeps runs serial
         self._id = 0
         self._pending = None  # {"id", "prompt" token ids, "max_tokens", "timing"} for rank1
         self._published = self._fetched = None  # perf_counter of publish / rank1's first fetch
@@ -454,16 +454,16 @@ class Engine:
             return
         self.ready.set()
         while True:
-            messages, max_tokens, timing, out = self._jobs.get()
+            messages, max_tokens, timing, result = self._jobs.get()
             try:
                 _apply_live_env()
                 if isinstance(messages, dict) and "score" in messages:
-                    out["res"] = self._score(messages["score"])
+                    res = self._score(messages["score"])
                 else:
-                    out["res"] = self._generate(messages, max_tokens, timing)
+                    res = self._generate(messages, max_tokens, timing)
             except Exception as e:  # noqa: BLE001
-                out["res"] = {"error": "%s: %s" % (type(e).__name__, e)}
-            self._jobs.task_done()
+                res = {"error": "%s: %s" % (type(e).__name__, e)}
+            result.put(res)
 
     def _score(self, tokens):
         """Teacher-forced scoring: publish the token ids to the other ranks, run the same single forward, return the NLL list."""
@@ -573,17 +573,15 @@ class Engine:
 
     def generate(self, messages, max_tokens=64, timing=False):
         self.wait_ready()
-        out = {}
-        self._jobs.put((messages, max_tokens, timing, out))
-        self._jobs.join()
-        return out["res"]
+        result = queue.SimpleQueue()
+        self._jobs.put((messages, max_tokens, timing, result))
+        return result.get()
 
     def score(self, tokens):
         self.wait_ready()
-        out = {}
-        self._jobs.put(({"score": tokens}, 0, False, out))
-        self._jobs.join()
-        return out["res"]
+        result = queue.SimpleQueue()
+        self._jobs.put(({"score": tokens}, 0, False, result))
+        return result.get()
 
     POLL_WAIT_S = 30.0
 
