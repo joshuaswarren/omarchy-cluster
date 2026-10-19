@@ -3,6 +3,7 @@
 Proxies /v1/chat/completions and /v1/completions to the rank-0 engine and
 answers /health for router-style checks. Not registered in LiteLLM by this
 command; the router side happens under the router rules.
+Malformed completion bodies receive HTTP 400 before reaching the engine.
 """
 from __future__ import annotations
 
@@ -54,11 +55,13 @@ class Gateway(BaseHTTPRequestHandler):
         try:
             n = int(self.headers.get("Content-Length") or 0)
             req = json.loads(self.rfile.read(n) or b"{}")
-        except (ValueError, json.JSONDecodeError) as e:
+            if not isinstance(req, dict):
+                raise TypeError("request body must be a JSON object")
+            payload = {"prompt": req.get("prompt"), "messages": req.get("messages"),
+                       "max_tokens": int(req.get("max_tokens", 64)), "greedy": True,
+                       "timing": bool(req.get("timing")), "raw": bool(req.get("raw"))}
+        except (ValueError, TypeError, OverflowError) as e:
             return self._json(400, {"error": str(e)})
-        payload = {"prompt": req.get("prompt"), "messages": req.get("messages"),
-                   "max_tokens": int(req.get("max_tokens", 64)), "greedy": True,
-                   "timing": bool(req.get("timing")), "raw": bool(req.get("raw"))}
         if req.get("temperature", 0) not in (0, None):
             return self._json(400, {"error": "gateway serves temperature 0 only"})
         data = json.dumps(payload).encode()
