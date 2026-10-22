@@ -492,13 +492,16 @@ If financial support is not an option, you can still make a big difference: [sta
 
 ## Contributing
 
-PRs welcome. The tests need no GPU or network:
+PRs welcome. The tests need pytest and local loopback sockets.
+They run without a GPU, model downloads or access to other hosts.
 
 ```sh
-python3 -m pytest tests/
+python3 -m pip install pytest==8.4.2
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q tests
 ```
 
-54 tests, stdlib only.
+CI runs these tests on Ubuntu 24.04 and macOS 15 with Python 3.9 and 3.13.
+The `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` prefix stops pytest from loading plugins from your environment.
 
 ## License
 
