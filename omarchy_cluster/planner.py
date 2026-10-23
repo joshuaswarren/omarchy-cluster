@@ -33,7 +33,10 @@ def find_model_path(model_ref):
         with open(main_ref) as f:
             revisions = [f.read().strip()]
     else:
-        revisions = sorted(os.listdir(snaps))
+        try:
+            revisions = sorted(os.listdir(snaps))
+        except (FileNotFoundError, NotADirectoryError):
+            return None
     for entry in revisions:
         snap = os.path.join(snaps, entry)
         if os.path.isfile(os.path.join(snap, "config.json")):
