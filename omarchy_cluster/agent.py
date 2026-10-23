@@ -225,13 +225,14 @@ def udp_echo_server(port=DEFAULT_UDP_PORT, stop=None):
     s.close()
 
 
-def hub_heartbeat(hub, hb, stop):
+def hub_heartbeat(hub, hb, stop, name=None):
     """Optional: POST a 1 s heartbeat to the control hub (task-4 surface)."""
+    name = name or socket.gethostname().split(".")[0]
     while not stop.is_set():
         try:
             req = urllib.request.Request(
                 hub.rstrip("/") + "/v1/heartbeat",
-                data=json.dumps({"seq": hb.seq, "t": time.time()}).encode(),
+                data=json.dumps({"name": name, "seq": hb.seq, "t": time.time()}).encode(),
                 headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=2).read()
         except Exception:
@@ -543,13 +544,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port=DEFAULT_HTTP_PORT, name=None, hub=None):
+    name = name or socket.gethostname().split(".")[0]
     hb = Heartbeat()
     hb.start()
     stop = threading.Event()
     threading.Thread(target=udp_echo_server, args=(DEFAULT_UDP_PORT, stop), daemon=True).start()
     if hub:
-        threading.Thread(target=hub_heartbeat, args=(hub, hb, stop), daemon=True).start()
-    adv = advertise_start(name or socket.gethostname().split(".")[0], port)
+        threading.Thread(target=hub_heartbeat, args=(hub, hb, stop, name), daemon=True).start()
+    adv = advertise_start(name, port)
     Handler.agent = AgentState(hb)
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     srv.daemon_threads = True
@@ -566,7 +568,7 @@ def serve(port=DEFAULT_HTTP_PORT, name=None, hub=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="omarchy-cluster agent")
     ap.add_argument("--port", type=int, default=DEFAULT_HTTP_PORT)
-    ap.add_argument("--name", default=None, help="mDNS service name (default: short hostname)")
+    ap.add_argument("--name", default=None, help="mDNS and hub node name (default: short hostname)")
     ap.add_argument("--hub", default=None, help="control-hub base URL for 1 s heartbeats")
     args = ap.parse_args(argv)
     serve(port=args.port, name=args.name, hub=args.hub)
