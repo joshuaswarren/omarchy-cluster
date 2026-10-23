@@ -54,13 +54,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": "not found"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
+            if not 0 <= n <= 64 * 1024:
+                raise ValueError("heartbeat body length must be between 0 and 65536 bytes")
             req = json.loads(self.rfile.read(n) or b"{}")
+            if not isinstance(req, dict):
+                raise TypeError("heartbeat body must be a JSON object")
             name = req.get("name") or self.headers.get("X-Node-Name")
-            if not name:
-                return self._json(400, {"error": "missing name"})
+            if not isinstance(name, str) or not name:
+                return self._json(400, {"error": "name must be a nonempty string"})
             self.registry.beat(name, int(req.get("seq", 0)))
             self._json(200, {"ok": True})
-        except (ValueError, json.JSONDecodeError) as e:
+        except (ValueError, TypeError, OverflowError) as e:
             self._json(400, {"error": str(e)})
 
 
