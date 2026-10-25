@@ -19,7 +19,9 @@ the llama.cpp engine.
 3. Boundary cost is the bf16 activation (2 bytes x hidden x 2) over the pinned
    route's measured Gb/s plus its TCP RTT, printed as ms/token.
 4. `serve` without an explicit `--nodes`/`--split` launches the planned stages:
-   two ranks on a two-node plan. With `--nodes N1,...` and `--split N0,N1,...`
+   two ranks on a two-node plan. If the plan has more than two stages,
+   `serve` without `--nodes` and `--split` stops with an error. For three or
+   more ranks, give both options. With `--nodes N1,...` and `--split N0,N1,...`
    the ranks are exactly what you listed, any number; rank 0 samples and runs
    the last layers (`--nodes studio,m2,m1max --split 25,21,16` puts layers
    37-61 on `studio`, 16-36 on `m2`, 0-15 on `m1max`). More than two ranks has
