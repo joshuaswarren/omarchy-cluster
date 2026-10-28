@@ -321,6 +321,36 @@ def test_rank_start_without_python_uses_this_nodes_mlx_python(tmp_path, monkeypa
     assert seen["cmd"][0] == sys.executable  # nothing else installed: the agent's own python
 
 
+def test_rank_start_lifts_the_gpu_heap_to_the_nodes_ram_unless_set(tmp_path, monkeypatch):
+    """Honeykrisp's default heap is half the RAM (issue 11: a 16 GB M1 failed at 8.07 GB). The rank gets HK_SYSMEM = RAM;
+    a value from the request or the agent's environment wins."""
+    from omarchy_cluster import agent
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HK_SYSMEM", raising=False)
+    monkeypatch.setattr(agent.sys, "platform", "linux")
+    monkeypatch.setattr(agent.facts_mod, "memory_total_bytes", lambda: 16_221_847_552)
+    seen = {}
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            seen["env"] = kw["env"]
+            self.pid = 1
+
+    monkeypatch.setattr(agent.subprocess, "Popen", FakePopen)
+    req = {"rank": 0, "model": "m", "layers": "", "hostfile_content": "[]", "python": "/bin/true"}
+    agent.rank_start(req)
+    assert seen["env"]["HK_SYSMEM"] == "16221847552"
+    agent.rank_start(dict(req, env={"HK_SYSMEM": "60000000000"}))
+    assert seen["env"]["HK_SYSMEM"] == "60000000000"
+    monkeypatch.setenv("HK_SYSMEM", "9000000000")
+    agent.rank_start(req)
+    assert seen["env"]["HK_SYSMEM"] == "9000000000"
+    monkeypatch.delenv("HK_SYSMEM")
+    monkeypatch.setattr(agent.sys, "platform", "darwin")
+    agent.rank_start(req)
+    assert "HK_SYSMEM" not in seen["env"]
+
+
 def test_gateway_returns_engine_error_as_502_not_empty_reply():
     """The engine answers {"error": ...} when generation raises. The gateway
     used to KeyError on it and drop the connection (curl: empty reply)."""
