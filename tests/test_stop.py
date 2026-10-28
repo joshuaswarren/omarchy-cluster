@@ -327,6 +327,7 @@ def test_rank_start_lifts_the_gpu_heap_to_the_nodes_ram_unless_set(tmp_path, mon
     from omarchy_cluster import agent
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("HK_SYSMEM", raising=False)
+    monkeypatch.setattr(agent.sys, "platform", "linux")
     monkeypatch.setattr(agent.facts_mod, "memory_total_bytes", lambda: 16_221_847_552)
     seen = {}
 
@@ -344,6 +345,10 @@ def test_rank_start_lifts_the_gpu_heap_to_the_nodes_ram_unless_set(tmp_path, mon
     monkeypatch.setenv("HK_SYSMEM", "9000000000")
     agent.rank_start(req)
     assert seen["env"]["HK_SYSMEM"] == "9000000000"
+    monkeypatch.delenv("HK_SYSMEM")
+    monkeypatch.setattr(agent.sys, "platform", "darwin")
+    agent.rank_start(req)
+    assert "HK_SYSMEM" not in seen["env"]
 
 
 def test_gateway_returns_engine_error_as_502_not_empty_reply():
