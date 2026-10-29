@@ -94,3 +94,9 @@ def test_the_proxy_fronts_the_port_sushi_is_launched_on():
     assert cmd == ["sushi", "serve", "--model", "/p", "--port", "9000", "--ctx-size", "8192"]
     assert url == "http://127.0.0.1:9000"
     assert cli._sushi_launch(_args(sushi_url="http://127.0.0.1:7777")) == (None, "http://127.0.0.1:7777")
+
+
+def test_generate_returns_error_object_when_sushi_is_unreachable():
+    from omarchy_cluster import sushi_engine as se
+    result = se.generate("http://127.0.0.1:1", {"prompt": "x", "max_tokens": 1})
+    assert "error" in result and result["finish_reason"] == "error"

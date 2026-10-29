@@ -19,6 +19,7 @@ import argparse
 import json
 import sys
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -31,7 +32,16 @@ def _post(url, payload, timeout=3600.0):
 
 
 def generate(server_url, req):
-    """Serve one gateway /generate request through the sushi server, greedy."""
+    """Serve one gateway /generate request through the sushi server, greedy.
+    An unreachable/failed upstream returns {"error": ...} instead of raising (gateway contract)."""
+    try:
+        return _generate(server_url, req)
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as err:
+        return {"error": "%s: %s" % (type(err).__name__, err), "finish_reason": "error"}
+
+
+def _generate(server_url, req):
+    """Serve one gateway /generate request (raises on upstream failure)."""
     max_tokens = int(req.get("max_tokens", 64))
     started = time.monotonic()
     if req.get("messages"):
