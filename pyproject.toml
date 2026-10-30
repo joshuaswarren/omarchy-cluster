@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omarchy-cluster"
-version = "0.3.2"
+version = "0.3.3"
 description = "Split one local MLX model across Apple Silicon Macs (macOS) and Omarchy Linux machines over LAN; OpenAI-compatible gateway."
 readme = "README.md"
 requires-python = ">=3.9"
