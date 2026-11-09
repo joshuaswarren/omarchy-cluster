@@ -73,10 +73,26 @@ No other drift.
   work happened here and none references joshuaswarren/mesa).
 - omarchy-cluster: this receipt. ANE: none. macOS parity: none (the Metal path is untouched).
 
-## Next step (lane owner)
+## Next step (lane owner) — DONE 2026-11-09, see addendum
 
 Run the device contract battery on the w7m 13-inch M1 (`stage4-gpu-run`, gdn contract,
 pointwise/attention/greedy/qmm contracts) and record receipts; compare the f32 layers 0-3
 cases against the w7p device findings (argmax V==A 64/64, pooled upper95 bound). The private
 notebook entry for this run: `~/.local/share/apple-silicon-lab/entries/w7m/20261109T0400Z-omp-studio-local-tf-1544-f32-port.md`
 (transcripts under `artifacts/w7m/20261109-run1/`).
+
+## Addendum 2026-11-09T12:15Z — device receipts delivered (w7m M1)
+
+The device contract battery ran end to end on the w7m 13-inch M1 (`jwm1-linux`, T8103, boot
+`1cb0310d`), pinned to the gated tip `7db9b04f5` (the fork branch had moved two docs/cli
+commits past it; verified ancestor, battery ran at the gated tip exactly). Device: `Apple M1
+(G13G B1)`, Honeykrisp `Mesa 26.3.0-devel (git-9323171c12)` (coreglass ICD, mesa-1 lineage —
+no Mesa work in this lane). Result: 7/7 exit 0 — `zig fmt --check`, `stage4-gpu-run` (cold
+aarch64 build 121 s), the gdn contract (`-Dcontract-root=…/contract_gdn_main.zig`),
+`contract-pointwise`, `attention-contract-run`, `greedy-contract-run`, the qmm contract
+(default root), and `vulkan-gpu-test` passing on hardware (run1's exit 1 was the llvmpipe
+software-device refusal only). Every planted control red; no gate failure, no GPU fault.
+Full receipts, per-step logs and SHA256SUMS: apple-silicon-lab
+`artifacts/w7m/20261109-run2-jwm1-device-battery/RECEIPTS.md` (private notebook, not
+reproduced here). The recorded w7p model-level f32 receipts stand: packet v4 `device-out-v4`
+COMPLETE, probe rc 0 on all three cases (exact oracle ids, equal repeats).
