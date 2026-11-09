@@ -43,6 +43,20 @@ model alone. These rows are reference points, not a universal speed claim.
 | same two machines | same | 14 + 13, a naive even split | 5.6 to 9.6 tok/s |
 | same two machines | same | 24 + 3 | 28.6 to 31.0 tok/s |
 
+## NVIDIA backend choice on the GB10 Spark (2026-11-09)
+
+The fleet's NVIDIA node is a DGX Spark (GB10, ARM64, 121 GiB unified memory). Same card, same llama.cpp commit `c7fc509`, same model (unsloth Qwen3.8-27B Q4_0, sha256 `ede16c7b...`), greedy, flash attention on, `llama-bench -p 512 -n 128 -fa 1 -t 8`, CUDA then Vulkan back to back inside each window. One resident server (86 GiB) was a co-tenant through both runs, so the numbers are contended-host numbers and the pair inside a window is matched. Full record: [receipt](../receipts/2026-11-09-gb10-cuda-vs-vulkan).
+
+| Window (UTC) | Backend | n | pp512 (t/s) | tg128 (t/s) |
+|---|---|---|---|---|
+| 13:44 | CUDA only | 3 | 548.61 ± 199.70 | 6.60 ± 0.96 |
+| 13:47 | CUDA | 5 | 458.58 ± 19.88 | 5.38 ± 0.54 |
+| 13:47 | Vulkan | 5 | 347.20 ± 50.04 | 7.34 ± 1.68 |
+| 14:05 | CUDA | 9 | 623.54 ± 227.82 | 10.33 ± 1.60 |
+| 14:05 | Vulkan | 9 | 287.46 ± 21.25 | 4.95 ± 0.48 |
+
+CUDA is faster on prompt processing in both matched windows (1.32x and 2.17x). Generation changed sign between them: a non-significant Vulkan edge at 13:47 (bands touching), a clear CUDA lead at 14:05 (disjoint bands), so a contended unified-memory day does not give a stable tg128 ranking. For shape, the enclosure cards on record differ: the RTX 5060 Ti 16 GB and the third-party RTX 3090/3090 Ti pairs have CUDA ahead on both workloads. Decision for the planner: CUDA is the NVIDIA rank default; a quiet-window pair pins the GB10 decode ranking before per-card tg128 values are hard-coded.
+
 ## Where a token's time goes
 
 Per token in the GLM-4.5-Air split: the laptop's 15 layers take about 1.1 s and the Studio's

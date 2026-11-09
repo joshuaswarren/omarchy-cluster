@@ -1,0 +1,10 @@
+TU: error: ../src/freedreno/vulkan/tu_knl.cc:387: failed to open device /dev/dri/renderD128 (VK_ERROR_INCOMPATIBLE_DRIVER)
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = NVIDIA GB10 (NVIDIA) | uma: 1 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 49152 | int dot: 0 | matrix cores: KHR_coopmat
+| model                          |       size |     params | backend    | ngl | threads |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ------: | --: | --------------: | -------------------: |
+| qwen35 27B Q4_0                |  14.94 GiB |    27.32 B | Vulkan     |  -1 |       8 |   1 |           pp512 |       347.20 ± 50.04 |
+| qwen35 27B Q4_0                |  14.94 GiB |    27.32 B | Vulkan     |  -1 |       8 |   1 |           tg128 |          7.34 ± 1.68 |
+
+build: c7fc509 (1)
+RC=0

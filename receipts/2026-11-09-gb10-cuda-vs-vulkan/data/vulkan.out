@@ -1,0 +1,9 @@
+TU: error: ../src/freedreno/vulkan/tu_knl.cc:387: failed to open device /dev/dri/renderD128 (VK_ERROR_INCOMPATIBLE_DRIVER)
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = NVIDIA GB10 (NVIDIA) | uma: 1 | fp16: 1 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 49152 | int dot: 0 | matrix cores: KHR_coopmat
+llama_model_load: error loading model: vk::PhysicalDevice::createDevice: ErrorInitializationFailed
+llama_model_load_from_file_impl: failed to load model
+llama_bench: error: failed to load model '/home/joshuawarren/models/gguf/w7g-43/Qwen3.8-27B-Q4_0.gguf'
+| model                          |       size |     params | backend    | ngl | threads |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ------: | --: | --------------: | -------------------: |
+VK_RC=1
