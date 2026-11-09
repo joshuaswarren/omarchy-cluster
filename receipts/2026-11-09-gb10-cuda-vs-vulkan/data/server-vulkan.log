@@ -1,0 +1,34 @@
+TU: error: ../src/freedreno/vulkan/tu_knl.cc:387: failed to open device /dev/dri/renderD128 (VK_ERROR_INCOMPATIBLE_DRIVER)
+0.00.667.093 I srv  llama_server: initializing ...
+0.00.667.129 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.667.952 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.669.894 I srv    load_model: loading model '/home/joshuawarren/models/gguf/w7g-43/Qwen3.8-27B-Q4_0.gguf'
+0.01.626.282 W model has unused tensor blk.64.attn_norm.weight (size = 20480 bytes) -- ignoring
+0.01.626.290 W model has unused tensor blk.64.post_attention_norm.weight (size = 20480 bytes) -- ignoring
+0.01.626.296 W model has unused tensor blk.64.attn_q.weight (size = 35389440 bytes) -- ignoring
+0.01.626.298 W model has unused tensor blk.64.attn_k.weight (size = 2949120 bytes) -- ignoring
+0.01.626.300 W model has unused tensor blk.64.attn_v.weight (size = 2949120 bytes) -- ignoring
+0.01.626.307 W model has unused tensor blk.64.attn_output.weight (size = 17694720 bytes) -- ignoring
+0.01.626.309 W model has unused tensor blk.64.attn_q_norm.weight (size = 1024 bytes) -- ignoring
+0.01.626.311 W model has unused tensor blk.64.attn_k_norm.weight (size = 1024 bytes) -- ignoring
+0.01.626.313 W model has unused tensor blk.64.ffn_gate.weight (size = 50135040 bytes) -- ignoring
+0.01.626.315 W model has unused tensor blk.64.ffn_down.weight (size = 50135040 bytes) -- ignoring
+0.01.626.317 W model has unused tensor blk.64.ffn_up.weight (size = 50135040 bytes) -- ignoring
+0.01.626.320 W model has unused tensor blk.64.nextn.eh_proj.weight (size = 55705600 bytes) -- ignoring
+0.01.626.322 W model has unused tensor blk.64.nextn.enorm.weight (size = 20480 bytes) -- ignoring
+0.01.626.324 W model has unused tensor blk.64.nextn.hnorm.weight (size = 20480 bytes) -- ignoring
+0.01.626.330 W model has unused tensor blk.64.nextn.shared_head_norm.weight (size = 20480 bytes) -- ignoring
+0.20.676.661 I cmn          init: llama threadpool init, n_threads = 20
+0.22.572.906 I srv    load_model: initializing, n_slots = 4, n_ctx_slot = 2048, kv_unified = 'true'
+0.22.579.472 W srv          init: chat template supports preserving reasoning, it is enabled by default (may use more tokens, disable via --no-reasoning-preserve)
+0.22.579.555 I srv  llama_server: model loaded
+0.22.579.560 I srv  llama_server: listening on http://127.0.0.1:8084
+0.25.023.779 I slot get_availabl: id  0 | task -1 | selected slot by LRU, n_tokens = 0, t_last = -1
+0.25.023.962 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.29.991.540 I slot print_timing: id  0 | task 0 | prompt eval time =    2895.05 ms /    57 tokens (   50.79 ms per token,    19.69 tokens per second)
+0.29.991.546 I slot print_timing: id  0 | task 0 |        eval time =    2071.27 ms /     8 tokens (  295.90 ms per token,     3.38 tokens per second)
+0.29.991.546 I slot print_timing: id  0 | task 0 |       total time =    4966.32 ms /    65 tokens
+0.29.991.556 I slot print_timing: id  0 | task 0 |    graphs reused =          7
+0.29.991.557 I slot print_timing: id  0 | task 0 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.29.993.924 I slot      release: id  0 | task 0 | stop processing: n_tokens = 64, truncated = 0
+0.30.003.986 I srv    operator(): operator(): cleaning up before exit...

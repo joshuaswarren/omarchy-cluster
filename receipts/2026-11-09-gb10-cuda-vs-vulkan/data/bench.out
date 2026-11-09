@@ -1,0 +1,23 @@
+=== environment ===
+2026-11-09T13:42:03Z
+gn100-7f30
+aarch64
+NVIDIA GB10, 580.178.04
+Build cuda_13.0.r13.0/compiler.36424714_0
+c7fc5094179bf8a9c73c18593db714f8da41a402
+ M src/llama-memory-hybrid-idx.cpp
+ M src/models/qwen4exp.cpp
+ M tools/server/server-context.cpp
+ M tools/server/server-queue.cpp
+=== CUDA bench ===
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 124544 MiB):
+  Device 0: NVIDIA GB10, compute capability 12.1, VMM: yes, VRAM: 124544 MiB
+| model                          |       size |     params | backend    | ngl | threads |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | ------: | --: | --------------: | -------------------: |
+| qwen35 27B Q4_0                |  14.94 GiB |    27.32 B | CUDA       |  -1 |       8 |   1 |           pp512 |      548.61 ± 199.70 |
+| qwen35 27B Q4_0                |  14.94 GiB |    27.32 B | CUDA       |  -1 |       8 |   1 |           tg128 |          6.60 ± 0.96 |
+
+build: c7fc509 (1)
+=== Vulkan bench ===
+/home/joshuawarren/scratch/w7g-spark-43/run-bench.sh: line 34: /home/joshuawarren/llama.cpp/build-vulkan/bin/llama-bench: No such file or directory
+ALL_DONE 2026-11-09T13:44:56Z
