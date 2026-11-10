@@ -41,6 +41,9 @@ class Gateway(BaseHTTPRequestHandler):
         if self.path == "/v1/models":
             return self._json(200, {"object": "list", "data": [
                 {"id": "omarchy-cluster", "object": "model", "owned_by": "omarchy-cluster"}]})
+        if self.path in ("/models", "/v1/models/local"):
+            from . import models
+            return self._json(200, {"object": "list", "data": models.list_local()})
         if self.path in ("/status", "/v1/status"):
             try:
                 with urllib.request.urlopen(self.engine + "/status", timeout=5) as r:
@@ -50,6 +53,24 @@ class Gateway(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path in ("/models/pull", "/v1/models/pull"):
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                req = json.loads(self.rfile.read(n) or b"{}")
+                repo = req.get("repo")
+                if not repo or not isinstance(repo, str) or "/" not in repo:
+                    raise ValueError("body must be a JSON object with a \"repo\" field like \"org/name\"")
+            except (ValueError, TypeError) as e:
+                return self._json(400, {"error": str(e)})
+            from . import models
+            try:
+                path = models.pull(repo)
+            except SystemExit as e:
+                return self._json(500, {"error": str(e)})
+            except Exception as e:  # noqa: BLE001 - a failed download is a client-visible error
+                return self._json(502, {"error": "pull: %s" % e})
+            total, weights = models._snapshot_info(path)
+            return self._json(200, {"repo": repo, "path": path, "bytes": total, "weights": weights})
         if self.path not in ("/v1/chat/completions", "/v1/completions"):
             return self._json(404, {"error": "not found"})
         try:
