@@ -24,6 +24,28 @@ def _agent_src_dir():
 
 # ---- agent ----
 
+def cmd_models_list(args):
+    from . import models
+    rows = models.list_local()
+    if not rows:
+        print("no models in %s" % models.cache_dir())
+        return 1
+    for r in rows:
+        print("%-60s %8.1f GB  %d weight files" % (r["repo"], r["bytes"] / 1e9, r["weights"]))
+    return 0
+
+
+def cmd_models_pull(args):
+    from . import models
+
+    def step(info):
+        print("downloaded %s: %.1f GB, %d weight files" % (info["repo"], info["bytes"] / 1e9, info["weights"]))
+
+    path = models.pull(args.repo, progress=step)
+    print(path)
+    return 0
+
+
 def cmd_hub(args):
     from . import hub
     hub.main(["--port", str(args.port)])
@@ -1067,6 +1089,14 @@ def main(argv=None):
     p = sub.add_parser("hub", help="run the heartbeat hub")
     p.add_argument("--port", type=int, default=8030)
     p.set_defaults(fn=cmd_hub)
+
+    p = sub.add_parser("models", help="list and download models for serve")
+    msub = p.add_subparsers(dest="models_cmd", required=True)
+    mp = msub.add_parser("list", help="list models in the local Hugging Face cache")
+    mp.set_defaults(fn=cmd_models_list)
+    mp = msub.add_parser("pull", help="download a Hugging Face repo into the cache (serves it with serve --model <repo>)")
+    mp.add_argument("repo", help="repo id, e.g. mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit")
+    mp.set_defaults(fn=cmd_models_pull)
 
     args = ap.parse_args(argv)
     args.fn(args)
