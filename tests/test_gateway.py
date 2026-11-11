@@ -138,3 +138,76 @@ def test_nonzero_temperature_is_rejected_before_the_engine(path, monkeypatch, ht
     with error.value as response:
         assert response.code == 400
         assert "temperature" in json.load(response)["error"]
+
+
+@pytest.fixture
+def remote_peer(monkeypatch, tmp_path):
+    """Every request reaches the gateway as if it came from another machine."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Gateway, "_peer_is_local", lambda self: False)
+    return tmp_path
+
+
+def write_token(home, token):
+    path = home / ".config" / "omarchy-cluster" / "token"
+    path.parent.mkdir(parents=True)
+    path.write_text(token + "\n")
+
+
+def remote_request(gateway, path, bearer=None, data=None):
+    headers = {"Content-Type": "application/json"}
+    if bearer is not None:
+        headers["Authorization"] = "Bearer " + bearer
+    return urllib.request.Request(base_url(gateway) + path, data=data, headers=headers)
+
+
+@pytest.mark.parametrize("path,data", [
+    ("/v1/models", None),
+    ("/v1/status", None),
+    ("/models", None),
+    ("/v1/chat/completions", b"{}"),
+    ("/models/pull", b'{"repo": "org/name"}'),
+])
+def test_remote_request_without_a_token_is_refused(path, data, remote_peer, http_server):
+    write_token(remote_peer, "secret-token")
+    gateway = http_server(Gateway)
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(remote_request(gateway, path, data=data), timeout=2)
+    with error.value as response:
+        assert response.code == 401
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+        assert isinstance(json.load(response)["error"], str)
+
+
+def test_remote_request_with_a_wrong_token_is_refused(remote_peer, http_server):
+    write_token(remote_peer, "secret-token")
+    gateway = http_server(Gateway)
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(remote_request(gateway, "/v1/models", bearer="guess"), timeout=2)
+    assert error.value.code == 401
+    error.value.close()
+
+
+def test_remote_request_is_refused_when_the_node_has_no_token(remote_peer, http_server):
+    gateway = http_server(Gateway)
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(remote_request(gateway, "/v1/models", bearer=""), timeout=2)
+    assert error.value.code == 401
+    error.value.close()
+
+
+def test_remote_request_with_the_cluster_token_is_served(remote_peer, http_server):
+    write_token(remote_peer, "secret-token")
+    gateway = http_server(Gateway)
+    with urllib.request.urlopen(
+            remote_request(gateway, "/v1/models", bearer="secret-token"), timeout=2) as response:
+        assert response.code == 200
+        assert json.load(response)["data"][0]["id"] == "omarchy-cluster"
+
+
+def test_health_needs_no_token_from_a_remote_peer(remote_peer, monkeypatch, http_server):
+    engine = http_server(stub_engine({"/health": (200, b"{}")}))
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    gateway = http_server(Gateway)
+    with urllib.request.urlopen(remote_request(gateway, "/health"), timeout=2) as response:
+        assert response.code == 200

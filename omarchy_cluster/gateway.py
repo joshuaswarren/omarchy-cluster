@@ -8,10 +8,14 @@ Malformed completion bodies receive HTTP 400 before reaching the engine.
 from __future__ import annotations
 
 import argparse
+import hmac
+import ipaddress
 import json
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from . import token as cluster_token
 
 GATEWAY_PORT = 8020
 
@@ -30,6 +34,26 @@ class Gateway(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _peer_is_local(self):
+        return ipaddress.ip_address(self.client_address[0]).is_loopback
+
+    def _authorized(self):
+        """Loopback callers are this machine's own. Any other caller needs the cluster token."""
+        if self._peer_is_local():
+            return True
+        token = cluster_token.read()
+        return bool(token) and hmac.compare_digest(
+            (self.headers.get("Authorization") or "").encode(), ("Bearer " + token).encode())
+
+    def _refuse(self):
+        body = json.dumps({"error": "bearer token required: send the cluster token as Authorization: Bearer"}).encode()
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", "Bearer")
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         if self.path in ("/health", "/v1/health"):
             try:
@@ -38,6 +62,8 @@ class Gateway(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             except Exception:  # noqa: BLE001 - health check reports failure, not stack
                 return self._json(503, {"ok": False})
+        if not self._authorized():
+            return self._refuse()
         if self.path == "/v1/models":
             return self._json(200, {"object": "list", "data": [
                 {"id": "omarchy-cluster", "object": "model", "owned_by": "omarchy-cluster"}]})
@@ -53,6 +79,8 @@ class Gateway(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if not self._authorized():
+            return self._refuse()
         if self.path in ("/models/pull", "/v1/models/pull"):
             try:
                 n = int(self.headers.get("Content-Length") or 0)

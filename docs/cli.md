@@ -8,7 +8,7 @@ Files the tools read and write:
 
 | Path | Purpose |
 |---|---|
-| `~/.config/omarchy-cluster/token` | the cluster token agents require (HMAC-compared on every request) |
+| `~/.config/omarchy-cluster/token` | the cluster token agents require (HMAC-compared on every request) and remote gateway callers send as a bearer token |
 | `~/.local/share/omarchy-cluster/` | `agent.log`, `gateway.log`, `rankN.log`, the installed source copy |
 | `~/.local/state/omarchy-cluster/links.json` | probe's measured routes (override with `--links` / `--out`) |
 | `~/.local/state/omarchy-cluster/layer-ms.json` | fastest decode ms/layer seen per node |
@@ -131,7 +131,12 @@ default).
   given text or token ids on every rank and returns rank 0's per-token negative
   log-likelihood for comparing settings on a loaded ring.
 
-Point an OpenAI-compatible client at the gateway and set its temperature to 0. With LiteLLM:
+Callers on the gateway machine need no token. A client on another machine must send
+`Authorization: Bearer <cluster token>` (the contents of `~/.config/omarchy-cluster/token`)
+and gets HTTP 401 without it. `/health` is open to everyone.
+
+Point an OpenAI-compatible client at the gateway and set its temperature to 0. With LiteLLM
+on another machine, put the cluster token in `api_key`:
 
 ```yaml
 model_list:
@@ -139,7 +144,7 @@ model_list:
     litellm_params:
       model: openai/mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit
       api_base: http://gateway-node:8020/v1
-      api_key: local
+      api_key: <cluster token>
 ```
 
 ```sh

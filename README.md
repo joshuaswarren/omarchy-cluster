@@ -111,6 +111,9 @@ python3 -m venv ~/mlx && ~/mlx/bin/pip install mlx mlx-lm git+https://github.com
 
 - The agent on :8025 requires the cluster token (HMAC-checked on every request);
   ranks are started only through the agent, so there is no node-to-node ssh.
+- The gateway on :8020 serves callers on the same machine without a token. Any other
+  caller must send `Authorization: Bearer <cluster token>`; without it the gateway
+  answers 401. Only `/health` is open.
 - The token file is the cluster's secret. All nodes need the same token:
 
   ```sh
