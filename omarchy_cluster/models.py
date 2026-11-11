@@ -8,6 +8,15 @@ into the same cache layout planner.find_model_path already resolves, so
 from __future__ import annotations
 
 import os
+import re
+
+# Hugging Face's own rule for a repo id: "org/name", word characters, dots and single dashes, at most 96 characters.
+_REPO_ID = re.compile(r"[\w.-]+/[\w.-]+")
+
+
+def valid_repo(repo):
+    return (isinstance(repo, str) and len(repo) <= 96 and _REPO_ID.fullmatch(repo) is not None
+            and "--" not in repo and ".." not in repo)
 
 
 def cache_dir() -> str:
@@ -17,7 +26,8 @@ def cache_dir() -> str:
 def _repo_from_dir(name):
     if not name.startswith("models--"):
         return None
-    return name[len("models--"):].replace("--", "/")
+    org, sep, repo = name[len("models--"):].partition("--")
+    return "{}/{}".format(org, repo) if sep and valid_repo("{}/{}".format(org, repo)) else None
 
 
 def _snapshot_info(snap):

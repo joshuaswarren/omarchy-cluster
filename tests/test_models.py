@@ -115,3 +115,39 @@ def test_gateway_models_routes(http_server, fake_cache, monkeypatch):
         raise AssertionError("bare repo name must be rejected")
     except urllib.error.HTTPError as e:
         assert e.code == 400
+
+
+def _post(url, body):
+    req = urllib.request.Request(url + "/models/pull", data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+@pytest.fixture
+def gateway_url(http_server, fake_cache):
+    from omarchy_cluster.gateway import Gateway
+    Gateway.engine = "http://127.0.0.1:1"
+    return "http://127.0.0.1:{}".format(http_server(Gateway).server_address[1])
+
+
+@pytest.mark.parametrize("body", [b"[]", b'"x"', b"null", b"3"])
+def test_gateway_pull_rejects_a_body_that_is_not_an_object(gateway_url, body):
+    status, out = _post(gateway_url, body)
+    assert status == 400 and "JSON object" in out["error"]
+
+
+@pytest.mark.parametrize("repo", ["a/b/c", "org/na me", "../x/y", "org/a--b", "org/", "/name", "org/" + "n" * 100])
+def test_gateway_pull_rejects_a_repo_name_huggingface_would_refuse(gateway_url, monkeypatch, repo):
+    monkeypatch.setattr(models, "_downloader", lambda: pytest.fail("a bad name must not reach the download"))
+    status, out = _post(gateway_url, json.dumps({"repo": repo}).encode())
+    assert status == 400 and "org/name" in out["error"]
+
+
+def test_list_local_skips_a_directory_that_is_not_a_repo_name(fake_cache):
+    snap = fake_cache / "models--org--a--b" / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text("{}")
+    assert [r["repo"] for r in models.list_local()] == ["org/good"]
