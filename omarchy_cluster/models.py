@@ -10,13 +10,15 @@ from __future__ import annotations
 import os
 import re
 
-# Hugging Face's own rule for a repo id: "org/name", word characters, dots and single dashes, at most 96 characters.
-_REPO_ID = re.compile(r"[\w.-]+/[\w.-]+")
+# Hugging Face's rule for a repo id: "org/name", each part starting and ending with a word character,
+# dots and single dashes inside, at most 96 characters, no ".." and no ".git" ending.
+_PART = r"\w(?:[\w.-]*\w)?"
+_REPO_ID = re.compile(_PART + "/" + _PART)
 
 
 def valid_repo(repo):
     return (isinstance(repo, str) and len(repo) <= 96 and _REPO_ID.fullmatch(repo) is not None
-            and "--" not in repo and ".." not in repo)
+            and "--" not in repo and ".." not in repo and not repo.endswith(".git"))
 
 
 def cache_dir() -> str:

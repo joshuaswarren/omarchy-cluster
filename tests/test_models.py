@@ -139,7 +139,8 @@ def test_gateway_pull_rejects_a_body_that_is_not_an_object(gateway_url, body):
     assert status == 400 and "JSON object" in out["error"]
 
 
-@pytest.mark.parametrize("repo", ["a/b/c", "org/na me", "../x/y", "org/a--b", "org/", "/name", "org/" + "n" * 100])
+@pytest.mark.parametrize("repo", ["a/b/c", "org/na me", "../x/y", "org/a--b", "org/", "/name", "org/" + "n" * 100,
+                                  "org/..", "org/a..b", "-org/name", "org/-name", ".org/name", "org/.name", "org/name-", "org/name.", "org/name.git"])
 def test_gateway_pull_rejects_a_repo_name_huggingface_would_refuse(gateway_url, monkeypatch, repo):
     monkeypatch.setattr(models, "_downloader", lambda: pytest.fail("a bad name must not reach the download"))
     status, out = _post(gateway_url, json.dumps({"repo": repo}).encode())
