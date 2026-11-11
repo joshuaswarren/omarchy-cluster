@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import AGENT_VERSION
 from . import facts as facts_mod
+from . import token as cluster_token
 from .discover import advertise_start
 
 DEFAULT_HTTP_PORT = 8025
@@ -238,14 +239,6 @@ def hub_heartbeat(hub, hb, stop, name=None):
         except Exception:
             pass
         stop.wait(1.0)
-
-
-def _read_token():
-    try:
-        with open(os.path.expanduser("~/.config/omarchy-cluster/token")) as f:
-            return f.read().strip()
-    except OSError:
-        return None
 
 
 def rank_start(req):
@@ -493,7 +486,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start", "/v1/gpu-cap"):
-            token = _read_token()
+            token = cluster_token.read()
             supplied = self.headers.get("X-Cluster-Token", "")
             if not token or not hmac.compare_digest(token, supplied):
                 return self._json(403, {"error": "bad or missing cluster token"})
