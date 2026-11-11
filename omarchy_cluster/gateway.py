@@ -85,8 +85,9 @@ class Gateway(BaseHTTPRequestHandler):
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 req = json.loads(self.rfile.read(n) or b"{}")
-                repo = req.get("repo")
-                if not repo or not isinstance(repo, str) or "/" not in repo:
+                from . import models
+                repo = req.get("repo") if isinstance(req, dict) else None
+                if not models.valid_repo(repo):
                     raise ValueError("body must be a JSON object with a \"repo\" field like \"org/name\"")
             except (ValueError, TypeError) as e:
                 return self._json(400, {"error": str(e)})
