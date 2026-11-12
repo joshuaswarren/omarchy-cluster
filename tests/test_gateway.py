@@ -211,3 +211,114 @@ def test_health_needs_no_token_from_a_remote_peer(remote_peer, monkeypatch, http
     gateway = http_server(Gateway)
     with urllib.request.urlopen(remote_request(gateway, "/health"), timeout=2) as response:
         assert response.code == 200
+
+
+class GateEngine:
+    """Engine stub that counts requests inside /generate and holds each until released."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.inside = 0
+        self.peak = 0
+        self.release = threading.Event()
+        self.entered = threading.Semaphore(0)
+
+    def handler(self):
+        gate = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                with gate.lock:
+                    gate.inside += 1
+                    gate.peak = max(gate.peak, gate.inside)
+                gate.entered.release()
+                gate.release.wait(10)
+                with gate.lock:
+                    gate.inside -= 1
+                body = json.dumps({"text": "ok", "prompt_tokens": 1, "completion_tokens": 1,
+                                   "prefill_ms": 0.0, "decode_ms": 0.0, "tokps": 1.0}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        return Handler
+
+
+def post_completion(gateway, results):
+    request = urllib.request.Request(
+        base_url(gateway) + "/v1/completions", data=b'{"prompt": "hi"}',
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            results.append((response.code, None))
+    except urllib.error.HTTPError as e:
+        results.append((e.code, e.headers.get("Retry-After")))
+        e.close()
+
+
+def run_clients(gateway, count):
+    results = []
+    threads = [threading.Thread(target=post_completion, args=(gateway, results)) for _ in range(count)]
+    for t in threads:
+        t.start()
+    return threads, results
+
+
+def test_gateway_runs_as_many_requests_at_once_as_it_has_slots(monkeypatch, http_server):
+    gate = GateEngine()
+    engine = http_server(gate.handler())
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    monkeypatch.setattr(Gateway, "slots", threading.BoundedSemaphore(2))
+    gateway = http_server(Gateway)
+    threads, results = run_clients(gateway, 4)
+    for _ in range(2):
+        assert gate.entered.acquire(timeout=5)
+    assert not gate.entered.acquire(timeout=0.3)  # the other two wait at the gateway
+    assert gate.inside == 2
+    gate.release.set()
+    for t in threads:
+        t.join(timeout=10)
+    assert sorted(code for code, _ in results) == [200] * 4
+    assert gate.peak == 2
+
+
+def test_gateway_answers_503_with_retry_after_when_the_wait_for_a_slot_runs_out(monkeypatch, http_server):
+    gate = GateEngine()
+    engine = http_server(gate.handler())
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    monkeypatch.setattr(Gateway, "slots", threading.BoundedSemaphore(1))
+    monkeypatch.setattr(Gateway, "queue_wait_s", 0.3)
+    gateway = http_server(Gateway)
+    first, first_results = run_clients(gateway, 1)
+    assert gate.entered.acquire(timeout=5)
+    late, late_results = run_clients(gateway, 1)
+    late[0].join(timeout=10)
+    assert late_results == [(503, "5")]
+    gate.release.set()
+    first[0].join(timeout=10)
+    assert first_results == [(200, None)]
+    assert gate.peak == 1
+
+
+def test_a_failed_engine_call_frees_its_slot(monkeypatch, http_server):
+    monkeypatch.setattr(Gateway, "engine", "http://127.0.0.1:1")
+    monkeypatch.setattr(Gateway, "slots", threading.BoundedSemaphore(1))
+    gateway = http_server(Gateway)
+    for _ in range(2):
+        results = []
+        post_completion(gateway, results)
+        assert results == [(502, None)]
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_serve_rejects_a_slot_count_below_one(value, capsys):
+    from omarchy_cluster import cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["serve", "--model", "m", "--max-concurrent", value])
+    assert e.value.code == 2
+    assert "must be at least 1" in capsys.readouterr().err

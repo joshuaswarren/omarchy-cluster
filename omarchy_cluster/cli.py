@@ -494,7 +494,7 @@ def cmd_serve(args):
         engine_host = "127.0.0.1"
     engine = "http://%s:%d" % (engine_host, args.engine_port)
     print("gateway engine: %s" % engine)
-    _start_gateway(state, args.port, engine)
+    _start_gateway(state, args.port, engine, args.max_concurrent)
 
 
 def _write_state(state):
@@ -512,9 +512,10 @@ def _spawn(cmd, log_name):
     return child, log
 
 
-def _start_gateway(state, port, engine):
+def _start_gateway(state, port, engine, max_concurrent=4):
     from . import llamacpp_engine
-    gateway_code = "from omarchy_cluster.gateway import serve; serve(port=%d, engine=%r)" % (port, engine)
+    gateway_code = ("from omarchy_cluster.gateway import serve; serve(port=%d, engine=%r, max_concurrent=%d)"
+                    % (port, engine, max_concurrent))
     gateway, gw_log = _spawn([sys.executable, "-c", gateway_code], "gateway.log")
     state["gateway_pid"] = gateway.pid
     _write_state(state)
@@ -585,7 +586,7 @@ def _serve_llamacpp(args):
     except (TimeoutError, RuntimeError) as e:
         sys.exit("llama.cpp engine failed (log: %s): %s" % (log, e))
     print("llama.cpp engine pid %s (log: %s)" % (engine.pid, log))
-    _start_gateway(state, args.port, engine_url)
+    _start_gateway(state, args.port, engine_url, args.max_concurrent)
 
 
 def _sushi_launch(args):
@@ -627,7 +628,7 @@ def _serve_sushi(args):
     except (TimeoutError, RuntimeError) as e:
         sys.exit("sushi engine failed (log: %s): %s" % (log, e))
     print("sushi engine pid %s (log: %s)" % (engine.pid, log))
-    _start_gateway(state, args.port, engine_url)
+    _start_gateway(state, args.port, engine_url, args.max_concurrent)
 
 
 def _parse_rpc_nodes(values):
@@ -815,7 +816,7 @@ def _serve_llamacpp_nodes(args, info):
     except (TimeoutError, RuntimeError) as e:
         sys.exit("llama.cpp engine failed (log: %s): %s" % (log, e))
     print("llama.cpp engine pid %s (log: %s)" % (engine.pid, log))
-    _start_gateway(state, args.port, engine_url)
+    _start_gateway(state, args.port, engine_url, args.max_concurrent)
 
 
 def _sweep_listening_port(port):
@@ -950,6 +951,13 @@ def node_table(nodes):
     return "\n".join(lines)
 
 
+def _at_least_one(text):
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be at least 1, got %d" % n)
+    return n
+
+
 # ---- entry ----
 
 def main(argv=None):
@@ -1061,6 +1069,9 @@ def main(argv=None):
                         "90 percent free-memory rule allows; state the headroom yourself")
     p.add_argument("--stages", type=int, default=None)
     p.add_argument("--port", type=int, default=8020)
+    p.add_argument("--max-concurrent", type=_at_least_one, default=4, metavar="N",
+                   help="requests the gateway passes to the engine at once; more wait for a slot. llamacpp "
+                        "batches them in its slots; the mlx ring runs one at a time (default %(default)s)")
     p.add_argument("--engine-port", type=int, default=8031)
     p.add_argument("--python-mac", default=None,
                    help="python with mlx on macOS ranks (default: each node's agent picks its own)")

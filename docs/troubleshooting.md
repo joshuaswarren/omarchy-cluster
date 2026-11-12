@@ -98,5 +98,7 @@ log-likelihood for one forward, a teacher-forced check that needs no generation.
 
 Plain HTTP with one shared token on your LAN: a homelab trust model, no TLS, no
 per-user auth. A node slowed by other GPU work is detected and reported, not
-preempted. One request at a time: concurrent requests queue, and they add no
-throughput.
+preempted. The MLX ring engine runs one request at a time and queues the rest. The
+llama.cpp engine serves concurrent requests in llama-server's slots (see the README).
+When all `--max-concurrent` gateway slots stay busy for 10 minutes, a request gets
+HTTP 503 with `Retry-After`: retry it.

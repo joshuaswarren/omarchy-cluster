@@ -71,7 +71,14 @@ Realistic expectations:
   there as memory allows, but a naive even split can be five to ten times slower
   than a good one.
 - Other GPU work on a Mac can slow its node several-fold; `GET /status` reports it.
-- One request at a time. Concurrent requests queue and add no throughput.
+- Concurrent requests: the llama.cpp engine serves them in llama-server's slots (4 by
+  default). In a one-machine test with a 0.5B model, four at once gave 1.58 times the
+  tokens per second of one at a time on the CPU path and 4.06 times on Metal
+  ([receipt](receipts/2026-11-12-concurrent-serving)). Vulkan, multi-machine RPC and
+  larger models are not measured yet. The MLX ring
+  engine runs one request at a time; the others queue. `serve --max-concurrent N`
+  (default 4) sets how many requests the gateway passes on at once; the rest wait,
+  and a request that waits 10 minutes gets HTTP 503 with `Retry-After`.
 - Sampling is greedy only: the gateway rejects requests with a temperature other
   than 0.
 - Ranks agree on every token within one backend. Metal and Vulkan can differ by a
