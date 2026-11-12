@@ -54,7 +54,13 @@ Node table: OS, chip, memory, backend, up-state, IP, pinned routes, with hub
 liveness when `--hub` is given.
 
 ### `hub [--port 8030]`
-The 1 Hz heartbeat hub agents POST to; answers node liveness.
+The 1 Hz heartbeat hub agents POST to; answers node liveness. Open `http://HUB:8030/` in
+a browser for the cluster view: one card per node (chip, memory used, load, up or out)
+and the pinned route of each probed pair as a labelled edge with its measured Gb/s. The
+page polls `GET /v1/topology` once a second; that JSON holds the heartbeat nodes, each
+with the `facts` its agent sent (chip, OS, memory, load, cores), and the pinned links
+from the hub machine's `links.json`. Like `/v1/nodes`, it needs no token. A node
+appears when its agent runs with `--hub`.
 
 ### `stop`
 Stops the gateway and every rank it started (locally and through each agent) and

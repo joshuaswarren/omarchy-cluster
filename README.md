@@ -46,7 +46,8 @@ decode); `place` checks the model fits and prints each node's layer cap; `serve`
 plans, launches one pipeline rank per node through its token-authed agent, and
 serves the gateway on :8020. `stop` stops the run; `guard` watches memory and
 stops when a node crosses its safety thresholds. `status` and `hub` show nodes,
-pinned routes and 1 Hz liveness. `--engine llamacpp` spreads a GGUF over RPC servers with
+pinned routes and 1 Hz liveness; the hub also serves a browser page at `/` that draws
+the nodes as cards (chip, memory, load) joined by their pinned links. `--engine llamacpp` spreads a GGUF over RPC servers with
 per-node memory budgets measured from the real heaps. All commands and flags:
 [docs/cli.md](docs/cli.md).
 
