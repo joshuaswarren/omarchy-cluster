@@ -16,6 +16,3 @@
 {"max_concurrent": 1, "rep": 5, "clients": 4, "tokens": 384, "wall_s": 2.55, "agg_tok_s": 150.41, "load1": 15.5}
 {"max_concurrent": 2, "rep": 5, "clients": 4, "tokens": 384, "wall_s": 1.96, "agg_tok_s": 195.48, "load1": 15.5}
 {"max_concurrent": 4, "rep": 5, "clients": 4, "tokens": 384, "wall_s": 1.54, "agg_tok_s": 249.0, "load1": 15.7}
-median max_concurrent=1: 154.63 tok/s over 6 runs (min 144.71 max 161.17)
-median max_concurrent=2: 187.50 tok/s over 6 runs (min 174.44 max 195.48)
-median max_concurrent=4: 243.99 tok/s over 6 runs (min 231.90 max 251.54)

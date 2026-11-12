@@ -313,3 +313,12 @@ def test_a_failed_engine_call_frees_its_slot(monkeypatch, http_server):
         results = []
         post_completion(gateway, results)
         assert results == [(502, None)]
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_serve_rejects_a_slot_count_below_one(value, capsys):
+    from omarchy_cluster import cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["serve", "--model", "m", "--max-concurrent", value])
+    assert e.value.code == 2
+    assert "must be at least 1" in capsys.readouterr().err

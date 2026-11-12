@@ -951,6 +951,13 @@ def node_table(nodes):
     return "\n".join(lines)
 
 
+def _at_least_one(text):
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be at least 1, got %d" % n)
+    return n
+
+
 # ---- entry ----
 
 def main(argv=None):
@@ -1062,7 +1069,7 @@ def main(argv=None):
                         "90 percent free-memory rule allows; state the headroom yourself")
     p.add_argument("--stages", type=int, default=None)
     p.add_argument("--port", type=int, default=8020)
-    p.add_argument("--max-concurrent", type=int, default=4, metavar="N",
+    p.add_argument("--max-concurrent", type=_at_least_one, default=4, metavar="N",
                    help="requests the gateway passes to the engine at once; more wait for a slot. llamacpp "
                         "batches them in its slots; the mlx ring runs one at a time (default %(default)s)")
     p.add_argument("--engine-port", type=int, default=8031)
