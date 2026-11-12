@@ -113,3 +113,14 @@ def test_links_table_says_why_a_pair_has_no_rdma():
     assert "rdma: not available (a: rdma_ctl status: disabled)" in cli.links_table({"pairs": [pair]})
     pair["mcdma"] = {"eligible": True, "reason": "both ends report MCDMA"}
     assert "rdma: eligible (both ends report MCDMA)" in cli.links_table({"pairs": [pair]})
+
+
+def test_linux_rdma_netdev_found_after_unreadable_gid_slots(tmp_path):
+    ib = str(tmp_path)
+    _write("%s/mlx5_0/ports/1/state" % ib, "4: ACTIVE\n")
+    ndevs = tmp_path / "mlx5_0" / "ports" / "1" / "gid_attrs" / "ndevs"
+    ndevs.mkdir(parents=True)
+    for i in range(5):  # an empty GID slot: the kernel answers read() with an error
+        os.symlink("/nonexistent/%d" % i, ndevs / str(i))
+    _write(str(ndevs / "5"), "eth2\n")
+    assert facts._linux_rdma_netdevs(ib) == {"eth2"}

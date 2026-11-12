@@ -170,6 +170,15 @@ def _linux_thunderbolt(name, net_root="/sys/class/net"):
     return os.path.basename(bus) == "thunderbolt"
 
 
+def _read_text(path):
+    """File content, or "" when it cannot be read (empty GID slots raise OSError)."""
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
 def _linux_rdma_netdevs(ib_root=IB_ROOT):
     """Network interfaces behind an ACTIVE hardware RDMA port (Soft-RoCE and siw excluded)."""
     names = set()
@@ -182,16 +191,11 @@ def _linux_rdma_netdevs(ib_root=IB_ROOT):
             continue
         ports = os.path.join(ib_root, dev, "ports")
         for port in sorted(os.listdir(ports)) if os.path.isdir(ports) else []:
-            try:
-                with open(os.path.join(ports, port, "state")) as f:
-                    if "ACTIVE" not in f.read():
-                        continue
-                gids = os.path.join(ports, port, "gid_attrs", "ndevs")
-                for gid in os.listdir(gids):
-                    with open(os.path.join(gids, gid)) as f:
-                        names.add(f.read().strip())
-            except OSError:
+            if "ACTIVE" not in _read_text(os.path.join(ports, port, "state")):
                 continue
+            gids = os.path.join(ports, port, "gid_attrs", "ndevs")
+            for gid in sorted(os.listdir(gids)) if os.path.isdir(gids) else []:
+                names.add(_read_text(os.path.join(gids, gid)).strip())
     names.discard("")
     return names
 
