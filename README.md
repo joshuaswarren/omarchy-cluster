@@ -73,8 +73,9 @@ Realistic expectations:
 - Other GPU work on a Mac can slow its node several-fold; `GET /status` reports it.
 - Concurrent requests: the llama.cpp engine serves them in llama-server's slots (4 by
   default). In a one-machine test with a 0.5B model, four at once gave 1.58 times the
-  tokens per second of one at a time ([receipt](receipts/2026-11-12-concurrent-serving)).
-  Multi-machine RPC and large models are not measured yet. The MLX ring
+  tokens per second of one at a time on the CPU path and 4.06 times on Metal
+  ([receipt](receipts/2026-11-12-concurrent-serving)). Vulkan, multi-machine RPC and
+  larger models are not measured yet. The MLX ring
   engine runs one request at a time; the others queue. `serve --max-concurrent N`
   (default 4) sets how many requests the gateway passes on at once; the rest wait,
   and a request that waits 10 minutes gets HTTP 503 with `Retry-After`.

@@ -24,7 +24,8 @@ env = dict(os.environ, PYTHONPATH=REPO)
 
 engine = subprocess.Popen(
     [sys.executable, "-m", "omarchy_cluster.llamacpp_engine", "--model", MODEL, "--llama-server", LLAMA,
-     "--port", str(ENGINE_PORT), "--server-port", str(ENGINE_PORT + 1), "--ctx", "2048", "--threads", THREADS],
+     "--port", str(ENGINE_PORT), "--server-port", str(ENGINE_PORT + 1), "--ctx", "2048", "--threads", THREADS]
+    + ["--llama-arg=" + a for a in os.environ.get("LLAMA_ARGS", "").split(",") if a],
     env=env, stdout=open("/tmp/w7j-bench-engine.log", "w"), stderr=subprocess.STDOUT)
 
 
