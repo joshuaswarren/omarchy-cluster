@@ -143,3 +143,29 @@ def test_the_cli_bootstraps_every_target_and_exits_1_when_one_fails(monkeypatch,
     assert e.value.code == 1
     assert seen == [("bad@host", None, 9025), ("ok@host", None, 9025)]
     assert "bootstrap: no route" in capsys.readouterr().err
+
+
+def test_ssh_puts_the_target_after_dashes_so_it_cannot_be_read_as_an_option(monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kw):
+        calls.append((argv, kw))
+
+        class Done:
+            returncode, stdout, stderr = 0, b"", b""
+        return Done()
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_run)
+    bootstrap.ssh_run("-oProxyCommand=id", "uname -s")
+    bootstrap.ssh_run("me@node1", "cat", stdin=b"x")
+    first, second = calls
+    assert first[0][-3:] == ["--", "-oProxyCommand=id", "uname -s"]
+    assert first[1]["stdin"] is bootstrap.subprocess.DEVNULL and "input" not in first[1]
+    assert second[1]["input"] == b"x"
+
+
+def test_an_unreadable_token_file_is_a_clean_error(monkeypatch, tmp_path):
+    from omarchy_cluster import cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["bootstrap", "me@node1", "--token-file", str(tmp_path / "missing")])
+    assert "cannot read --token-file" in str(e.value)

@@ -27,7 +27,8 @@ Sets up new nodes over ssh (keys only, `BatchMode`). Per node, in order: detect 
 to `~/.local/share/omarchy-cluster/src`, copy the cluster token (this machine's, or
 `--token-file`), run `install-agent`, wait for `/v1/health`, and print the node's
 `discover` name. A failing node is reported and the rest still run; the exit status is 1
-if any failed. It installs no MLX.
+if any failed. It overwrites the node's token file with the token it sends. It installs
+no MLX.
 
 ### `agent [--port 8025] [--name NAME] [--hub URL]`
 Run the agent in the foreground. Serves facts, rank start/stop and probe helpers on

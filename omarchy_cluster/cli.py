@@ -222,8 +222,11 @@ def cmd_bootstrap(args):
     from . import bootstrap
     token = None
     if args.token_file:
-        with open(args.token_file) as f:
-            token = f.read().strip()
+        try:
+            with open(args.token_file) as f:
+                token = f.read().strip()
+        except OSError as e:
+            sys.exit("bootstrap: cannot read --token-file: %s" % e)
     failed = 0
     for target in args.targets:
         try:

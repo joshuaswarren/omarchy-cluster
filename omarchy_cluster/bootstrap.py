@@ -31,8 +31,9 @@ class BootstrapError(Exception):
 
 def ssh_run(target, command, stdin=None):
     """Run one command on target. Returns (exit code, stdout, stderr)."""
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, command],
-                       input=stdin, capture_output=True, timeout=600)
+    feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", target, command],
+                       capture_output=True, timeout=600, **feed)
     return r.returncode, r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
 
 
