@@ -23,7 +23,7 @@ def test_default_sender_payload_is_accepted_by_hub_without_a_socket(monkeypatch)
         assert req.full_url == "http://unused.invalid/v1/heartbeat"
         assert timeout == 2
         body = json.loads(req.data)
-        assert body == {"name": "worker", "seq": 4, "t": 123.0}
+        assert {k: v for k, v in body.items() if k != "facts"} == {"name": "worker", "seq": 4, "t": 123.0}
         handler = object.__new__(hub.Handler)
         handler.path = "/v1/heartbeat"
         handler.headers = {"Content-Length": str(len(req.data))}
@@ -32,7 +32,9 @@ def test_default_sender_payload_is_accepted_by_hub_without_a_socket(monkeypatch)
         handler._json = Mock()
         handler.do_POST()
         replies.append(handler._json.call_args.args[0])
-        assert handler.registry.nodes()["worker"]["seq"] == 4
+        node = handler.registry.nodes()["worker"]
+        assert node["seq"] == 4
+        assert node["facts"]["memory_total_bytes"] > 0
         return Mock()
 
     send = Mock(side_effect=deliver)

@@ -226,14 +226,25 @@ def udp_echo_server(port=DEFAULT_UDP_PORT, stop=None):
     s.close()
 
 
+def beat_facts(static):
+    """What a heartbeat tells the hub page: fixed facts once (cached in `static`),
+    free memory and load every beat."""
+    if not static:
+        static.update(chip=facts_mod.chip(), os=facts_mod.os_name(), gpu_backend=facts_mod.gpu_backend(),
+                      memory_total_bytes=facts_mod.memory_total_bytes(), cpus=os.cpu_count() or 0)
+    return {**static, "memory_free_bytes": facts_mod.memory_free_bytes(), "load1": os.getloadavg()[0]}
+
+
 def hub_heartbeat(hub, hb, stop, name=None):
     """Optional: POST a 1 s heartbeat to the control hub (task-4 surface)."""
     name = name or socket.gethostname().split(".")[0]
+    static = {}
     while not stop.is_set():
         try:
             req = urllib.request.Request(
                 hub.rstrip("/") + "/v1/heartbeat",
-                data=json.dumps({"name": name, "seq": hb.seq, "t": time.time()}).encode(),
+                data=json.dumps({"name": name, "seq": hb.seq, "t": time.time(),
+                                 "facts": beat_facts(static)}).encode(),
                 headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=2).read()
         except Exception:
