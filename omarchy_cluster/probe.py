@@ -46,6 +46,8 @@ def candidate_routes(a, b):
                 "b_iface": ifb["name"], "b_ip": ipb,
                 "media": "tailscale" if ts else ("wifi" if wireless else "wired"),
                 "eligible_for_decode": not (wireless or ts),
+                "thunderbolt": bool(ifa.get("thunderbolt") and ifb.get("thunderbolt")),
+                "rdma_capable": bool(ifa.get("rdma") and ifb.get("rdma")),
                 "rtt_tcp_ms": None, "rtt_udp_ms": None,
                 "gbps_a2b": None, "gbps_b2a": None,
             })
