@@ -11,6 +11,7 @@ import argparse
 import hmac
 import ipaddress
 import json
+import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,10 +19,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import token as cluster_token
 
 GATEWAY_PORT = 8020
+MAX_CONCURRENT = 4  # llama-server's default slot count; the MLX ranks queue behind their own worker
+QUEUE_WAIT_S = 600.0
 
 
 class Gateway(BaseHTTPRequestHandler):
     engine = None  # base url of rank-0 engine
+    max_concurrent = MAX_CONCURRENT
+    slots = threading.BoundedSemaphore(MAX_CONCURRENT)  # engine calls in flight at once
+    queue_wait_s = QUEUE_WAIT_S  # how long a request waits for a slot before the 503
 
     def log_message(self, *args):
         pass
@@ -117,11 +123,21 @@ class Gateway(BaseHTTPRequestHandler):
         data = json.dumps(payload).encode()
         rq = urllib.request.Request(self.engine + "/generate", data=data,
                                     headers={"Content-Type": "application/json"})
+        if not self.slots.acquire(timeout=self.queue_wait_s):
+            body = json.dumps({"error": "all %d request slots are busy; retry" % self.max_concurrent}).encode()
+            self.send_response(503)
+            self.send_header("Retry-After", "5")
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
         try:
             with urllib.request.urlopen(rq, timeout=600) as r:
                 res = json.loads(r.read())
         except Exception as e:  # noqa: BLE001
             return self._json(502, {"error": "engine: %s" % e})
+        finally:
+            self.slots.release()
         if "error" in res:
             return self._json(502, {"error": "engine: %s" % res["error"]})
         now = int(time.time())
@@ -147,8 +163,10 @@ class Gateway(BaseHTTPRequestHandler):
             "index": 0, "text": res["text"], "finish_reason": finish}]})
 
 
-def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031"):
+def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031", max_concurrent=MAX_CONCURRENT):
     Gateway.engine = engine.rstrip("/")
+    Gateway.max_concurrent = max_concurrent
+    Gateway.slots = threading.BoundedSemaphore(max_concurrent)
     srv = ThreadingHTTPServer(("0.0.0.0", port), Gateway)
     srv.daemon_threads = True
     print("omarchy-cluster gateway on :%d -> engine %s" % (port, Gateway.engine), flush=True)
@@ -159,8 +177,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="omarchy-cluster gateway")
     ap.add_argument("--port", type=int, default=GATEWAY_PORT)
     ap.add_argument("--engine", default="http://127.0.0.1:8031")
+    ap.add_argument("--max-concurrent", type=int, default=MAX_CONCURRENT, metavar="N",
+                    help="requests the gateway passes to the engine at once; more wait for a slot (default %(default)s)")
     args = ap.parse_args(argv)
-    serve(port=args.port, engine=args.engine)
+    if args.max_concurrent < 1:
+        ap.error("--max-concurrent must be at least 1")
+    serve(port=args.port, engine=args.engine, max_concurrent=args.max_concurrent)
 
 
 if __name__ == "__main__":

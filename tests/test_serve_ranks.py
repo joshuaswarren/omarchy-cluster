@@ -26,7 +26,7 @@ def make_nodes(free=64 * GB):
 
 
 def serve_args(model, **kw):
-    base = dict(model=model, engine="mlx", port=18020, engine_port=18031, python_mac="/usr/bin/true", python_linux="/usr/bin/true",
+    base = dict(model=model, engine="mlx", port=18020, max_concurrent=4, engine_port=18031, python_mac="/usr/bin/true", python_linux="/usr/bin/true",
                 rank_pythonpath=None, gpu_turn=0, ctx=2048, links=None, no_decode=[], stages=None, split=None, nodes=None, ring_ip=[])
     base.update(kw)
     return argparse.Namespace(**base)
@@ -44,7 +44,7 @@ def cluster(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **k: nodes)
     monkeypatch.setattr(cli, "_launch_rank_via_agent", launch)
-    monkeypatch.setattr(cli, "_start_gateway", lambda state, port, engine: state.update(engine=engine))
+    monkeypatch.setattr(cli, "_start_gateway", lambda state, port, engine, max_concurrent: state.update(engine=engine))
     monkeypatch.setattr(llamacpp_engine, "wait_http", lambda *a, **k: None)
     return launches
 

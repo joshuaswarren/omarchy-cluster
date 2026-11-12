@@ -1,0 +1,21 @@
+{"max_concurrent": 1, "rep": 0, "clients": 4, "tokens": 384, "wall_s": 2.38, "agg_tok_s": 161.17, "load1": 14.2}
+{"max_concurrent": 2, "rep": 0, "clients": 4, "tokens": 384, "wall_s": 2.04, "agg_tok_s": 188.65, "load1": 14.2}
+{"max_concurrent": 4, "rep": 0, "clients": 4, "tokens": 384, "wall_s": 1.53, "agg_tok_s": 251.54, "load1": 14.2}
+{"max_concurrent": 1, "rep": 1, "clients": 4, "tokens": 384, "wall_s": 2.65, "agg_tok_s": 144.71, "load1": 14.1}
+{"max_concurrent": 2, "rep": 1, "clients": 4, "tokens": 384, "wall_s": 2.04, "agg_tok_s": 188.24, "load1": 14.1}
+{"max_concurrent": 4, "rep": 1, "clients": 4, "tokens": 384, "wall_s": 1.54, "agg_tok_s": 249.7, "load1": 14.1}
+{"max_concurrent": 1, "rep": 2, "clients": 4, "tokens": 384, "wall_s": 2.53, "agg_tok_s": 151.94, "load1": 14.1}
+{"max_concurrent": 2, "rep": 2, "clients": 4, "tokens": 384, "wall_s": 2.2, "agg_tok_s": 174.44, "load1": 14.4}
+{"max_concurrent": 4, "rep": 2, "clients": 4, "tokens": 384, "wall_s": 1.66, "agg_tok_s": 231.9, "load1": 14.4}
+{"max_concurrent": 1, "rep": 3, "clients": 4, "tokens": 384, "wall_s": 2.39, "agg_tok_s": 160.74, "load1": 14.4}
+{"max_concurrent": 2, "rep": 3, "clients": 4, "tokens": 384, "wall_s": 2.06, "agg_tok_s": 186.76, "load1": 15.1}
+{"max_concurrent": 4, "rep": 3, "clients": 4, "tokens": 384, "wall_s": 1.61, "agg_tok_s": 238.98, "load1": 15.1}
+{"max_concurrent": 1, "rep": 4, "clients": 4, "tokens": 384, "wall_s": 2.44, "agg_tok_s": 157.33, "load1": 15.3}
+{"max_concurrent": 2, "rep": 4, "clients": 4, "tokens": 384, "wall_s": 2.06, "agg_tok_s": 186.43, "load1": 15.3}
+{"max_concurrent": 4, "rep": 4, "clients": 4, "tokens": 384, "wall_s": 1.62, "agg_tok_s": 237.68, "load1": 15.3}
+{"max_concurrent": 1, "rep": 5, "clients": 4, "tokens": 384, "wall_s": 2.55, "agg_tok_s": 150.41, "load1": 15.5}
+{"max_concurrent": 2, "rep": 5, "clients": 4, "tokens": 384, "wall_s": 1.96, "agg_tok_s": 195.48, "load1": 15.5}
+{"max_concurrent": 4, "rep": 5, "clients": 4, "tokens": 384, "wall_s": 1.54, "agg_tok_s": 249.0, "load1": 15.7}
+median max_concurrent=1: 154.63 tok/s over 6 runs (min 144.71 max 161.17)
+median max_concurrent=2: 187.50 tok/s over 6 runs (min 174.44 max 195.48)
+median max_concurrent=4: 243.99 tok/s over 6 runs (min 231.90 max 251.54)
