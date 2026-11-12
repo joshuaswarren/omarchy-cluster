@@ -162,6 +162,44 @@ def _prefix_from_netmask_hex(hexstr):
         return 0
 
 
+def _linux_thunderbolt(name, net_root="/sys/class/net"):
+    """True for a thunderbolt-net interface: its device sits on the thunderbolt bus."""
+    if name.startswith("thunderbolt"):
+        return True
+    bus = os.path.realpath(os.path.join(net_root, name, "device", "subsystem"))
+    return os.path.basename(bus) == "thunderbolt"
+
+
+def _read_text(path):
+    """File content, or "" when it cannot be read (empty GID slots raise OSError)."""
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _linux_rdma_netdevs(ib_root=IB_ROOT):
+    """Network interfaces behind an ACTIVE hardware RDMA port (Soft-RoCE and siw excluded)."""
+    names = set()
+    try:
+        devs = sorted(os.listdir(ib_root))
+    except OSError:
+        return names
+    for dev in devs:
+        if dev.startswith(SOFT_IB_PREFIXES):
+            continue
+        ports = os.path.join(ib_root, dev, "ports")
+        for port in sorted(os.listdir(ports)) if os.path.isdir(ports) else []:
+            if "ACTIVE" not in _read_text(os.path.join(ports, port, "state")):
+                continue
+            gids = os.path.join(ports, port, "gid_attrs", "ndevs")
+            for gid in sorted(os.listdir(gids)) if os.path.isdir(gids) else []:
+                names.add(_read_text(os.path.join(gids, gid)).strip())
+    names.discard("")
+    return names
+
+
 def _linux_interfaces():
     out = _run(["ip", "-j", "addr"])
     try:
@@ -169,6 +207,7 @@ def _linux_interfaces():
     except ValueError:
         return []
     result = []
+    rdma = _linux_rdma_netdevs()
     for dev in data:
         name = dev.get("ifname", "")
         if name in ("lo", ""):
@@ -192,6 +231,8 @@ def _linux_interfaces():
             "ips": ips,
             "speed_mbps": speed,
             "wireless": os.path.isdir("/sys/class/net/%s/wireless" % name) or name.startswith("wl"),
+            "thunderbolt": _linux_thunderbolt(name),
+            "rdma": name in rdma,
         })
     return result
 
@@ -206,6 +247,8 @@ def _mac_interfaces():
         elif line.startswith("Device:"):
             ports[line.split(":", 1)[1].strip()] = portname
 
+    transport = mcdma()
+    rdma = {d[len("rdma_"):] for d in transport["devices"]} if transport["available"] else set()
     out = _run(["ifconfig", "-a"])
     result = []
     cur = None
@@ -217,7 +260,9 @@ def _mac_interfaces():
                 result.append(info)
             cur = m.group(1) if m else None
             info = {"name": cur, "ips": [], "speed_mbps": None,
-                    "wireless": ports.get(cur) in ("Wi-Fi", "AirPort")} if cur else None
+                    "wireless": ports.get(cur) in ("Wi-Fi", "AirPort"),
+                    "thunderbolt": ports.get(cur, "").startswith("Thunderbolt"),
+                    "rdma": cur in rdma} if cur else None
             if cur == "lo0":
                 cur, info = None, None
             continue

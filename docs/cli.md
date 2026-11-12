@@ -49,9 +49,18 @@ pair whether MCDMA (RDMA) could carry its traffic; routes stay TCP until MCDMA i
 measured. A software verbs device (Soft-RoCE `rxe`, `siw`) is flagged
 `soft_transport: true`; numbers over that device measure the kernel network stack.
 
+Each route also records `thunderbolt` (both ends are Thunderbolt interfaces: a
+`thunderbolt-net` device on the Thunderbolt bus on Linux, a "Thunderbolt" hardware port
+on macOS) and `rdma_capable` (both ends sit on an active hardware RDMA port: a netdev
+behind an ACTIVE non-`rxe`/`siw` port in `/sys/class/infiniband` on Linux, an
+`rdma_en*` interface with `rdma_ctl` enabled on macOS). These two flags only label the
+route. The pinned route is still the fastest measured decode-eligible one.
+
 ### `status [--links PATH] [--hub URL]`
 Node table: OS, chip, memory, backend, up-state, IP, pinned routes, with hub
-liveness when `--hub` is given.
+liveness when `--hub` is given. Routes that carry the flags print `TB` and `RDMA` tags,
+and each pair says whether RDMA is available and why
+not (for example `rdma_ctl status: disabled`).
 
 ### `hub [--port 8030]`
 The 1 Hz heartbeat hub agents POST to; answers node liveness. Open `http://HUB:8030/` in
