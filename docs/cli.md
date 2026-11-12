@@ -58,8 +58,8 @@ route. The pinned route is still the fastest measured decode-eligible one.
 
 ### `status [--links PATH] [--hub URL]`
 Node table: OS, chip, memory, backend, up-state, IP, pinned routes, with hub
-liveness when `--hub` is given. The pinned routes print `TB` and `RDMA` tags on
-routes that carry those flags, and each pair says whether RDMA is available and why
+liveness when `--hub` is given. Routes that carry the flags print `TB` and `RDMA` tags,
+and each pair says whether RDMA is available and why
 not (for example `rdma_ctl status: disabled`).
 
 ### `hub [--port 8030]`
