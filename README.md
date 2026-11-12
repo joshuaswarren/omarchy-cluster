@@ -177,6 +177,10 @@ curl -s http://127.0.0.1:8020/v1/chat/completions \
        "max_tokens":64,"temperature":0}'
 ```
 
+Or chat in the terminal: `omarchy-cluster chat` talks to the gateway on :8020
+(`--gateway URL` for another one), keeps the conversation, and prints the speed
+of each reply in tokens per second. `/reset` starts over, `/exit` leaves.
+
 `omarchy-cluster stop` stops everything. For a model bigger than one node, pick
 the split yourself so a machine you use for other work keeps free memory, for
 example `serve mlx-community/GLM-4.5-Air-4bit --split 31,15`. `--nodes` with

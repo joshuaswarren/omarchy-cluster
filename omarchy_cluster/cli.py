@@ -249,6 +249,11 @@ def cmd_discover(args):
     return nodes
 
 
+def cmd_chat(args):
+    from . import chat
+    chat.main(args)
+
+
 # ---- probe ----
 
 def cmd_probe(args):
@@ -1007,6 +1012,13 @@ def main(argv=None):
     p = sub.add_parser("discover", help="list discovered nodes")
     p.add_argument("--mdns-timeout", type=float, default=4.0)
     p.set_defaults(fn=cmd_discover)
+
+    p = sub.add_parser("chat", help="chat with a running serve through its gateway")
+    p.add_argument("--gateway", default="http://127.0.0.1:8020", metavar="URL")
+    p.add_argument("--model", default="omarchy-cluster", help="model id sent with each request (the gateway echoes it)")
+    p.add_argument("--max-tokens", type=int, default=256)
+    p.add_argument("--system", default=None, help="system prompt")
+    p.set_defaults(fn=cmd_chat)
 
     p = sub.add_parser("probe", help="measure every pair/route, write links.json")
     p.add_argument("--seconds", type=float, default=3.0,

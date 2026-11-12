@@ -124,6 +124,15 @@ Gateway flags: `--port 8020`, `--engine-port 8031`, `--ctx 2048`, `--links`,
 `--no-decode`. The engine starts llama-server on port `engine-port + 1` (8032 by
 default).
 
+### `chat [--gateway URL] [--model ID] [--max-tokens 256] [--system TEXT]`
+
+A terminal chat with a running `serve`. It sends the whole conversation to
+`POST /v1/chat/completions` on the gateway (default `http://127.0.0.1:8020`)
+with the cluster token if this machine has one, prints each reply, and then the
+gateway's `tokens_per_s` when the engine reports it. Replies are not streamed.
+`/reset` clears the history; `/exit`, `/quit` or end of input leave. A request
+that fails prints the error and leaves the conversation as it was.
+
 ## Gateway API
 
 - `POST /v1/chat/completions` serves OpenAI chat completions; the MLX engine applies the
