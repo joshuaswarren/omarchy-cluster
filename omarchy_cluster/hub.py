@@ -100,13 +100,17 @@ setInterval(tick, 1000);
 """
 
 
+def _count(v):
+    """A number the page can draw and /v1/topology can serialize: not NaN, not infinite, not negative."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 2 ** 63
+
+
 def clean_facts(raw):
-    """Keep only the facts the page draws, with bounded types."""
+    """Keep only the facts the page draws, with bounded types and values."""
     if not isinstance(raw, dict):
         raise TypeError("heartbeat facts must be a JSON object")
     out = {k: raw[k][:120] for k in STR_FACTS if isinstance(raw.get(k), str)}
-    out.update({k: raw[k] for k in NUM_FACTS
-                if isinstance(raw.get(k), (int, float)) and not isinstance(raw[k], bool)})
+    out.update({k: raw[k] for k in NUM_FACTS if _count(raw.get(k))})
     return out
 
 

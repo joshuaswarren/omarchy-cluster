@@ -138,3 +138,13 @@ def test_root_serves_a_page_that_polls_the_topology_endpoint():
     code, ctype, body = handler._send.call_args.args
     assert (code, ctype) == (200, "text/html; charset=utf-8")
     assert b"/v1/topology" in body
+
+
+def test_non_finite_and_negative_numeric_facts_never_reach_the_topology_json():
+    body = ('{"name": "n", "facts": {"load1": NaN, "memory_total_bytes": Infinity, "cpus": 1e999,'
+            ' "memory_free_bytes": -1, "chip": "M1"}}').encode()
+    handler = request(body)
+    handler.do_POST()
+    facts = handler.registry.nodes()["n"]["facts"]
+    assert facts == {"chip": "M1"}
+    json.dumps({"nodes": handler.registry.nodes()}, allow_nan=False)
