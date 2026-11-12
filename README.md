@@ -114,6 +114,20 @@ python3 -m venv ~/mlx && ~/mlx/bin/pip install mlx mlx-lm git+https://github.com
 `install-agent` starts the node agent on :8025 and writes a token to
 `~/.config/omarchy-cluster/token`.
 
+From a machine that already has a token, add new nodes over ssh in one command:
+
+```sh
+omarchy-cluster bootstrap me@node2 me@node3
+```
+
+For each node, `bootstrap` detects Linux or macOS, checks `python3` is 3.9 or newer,
+installs Avahi on Linux when it is missing (`sudo -n`, so it needs passwordless sudo),
+copies this package and your cluster token, runs `install-agent`, waits for the agent
+to answer, and prints the name the node shows up under in `omarchy-cluster discover`.
+It uses the node's system `python3` and installs no MLX: macOS nodes that run MLX
+ranks still need `mlx` and `mlx-lm` in a Python the agent can use. Use ssh keys;
+`bootstrap` never asks for a password.
+
 ## Security
 
 - The agent on :8025 requires the cluster token (HMAC-checked on every request);
