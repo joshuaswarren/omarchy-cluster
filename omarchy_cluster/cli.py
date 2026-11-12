@@ -218,6 +218,23 @@ def _self_test_inbound(port, py):
         print("WARN: inbound self-test bind failed: %s" % e)
 
 
+def cmd_bootstrap(args):
+    from . import bootstrap
+    token = None
+    if args.token_file:
+        with open(args.token_file) as f:
+            token = f.read().strip()
+    failed = 0
+    for target in args.targets:
+        try:
+            bootstrap.bootstrap(target, token=token, port=args.port)
+        except bootstrap.BootstrapError as e:
+            print("bootstrap: %s" % e, file=sys.stderr)
+            failed += 1
+    if failed:
+        sys.exit(1)
+
+
 # ---- discover ----
 
 def cmd_discover(args):
@@ -968,6 +985,13 @@ def main(argv=None):
     p.add_argument("--token-file", default=None,
                    help="provision this shared cluster token instead of generating one")
     p.set_defaults(fn=cmd_install_agent)
+
+    p = sub.add_parser("bootstrap", help="over ssh: install the agent and Avahi on new nodes and print their discover names")
+    p.add_argument("targets", nargs="+", metavar="user@host")
+    p.add_argument("--port", type=int, default=8025)
+    p.add_argument("--token-file", default=None,
+                   help="send this cluster token instead of this machine's own")
+    p.set_defaults(fn=cmd_bootstrap)
 
     p = sub.add_parser("discover", help="list discovered nodes")
     p.add_argument("--mdns-timeout", type=float, default=4.0)

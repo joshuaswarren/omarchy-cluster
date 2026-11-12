@@ -20,6 +20,15 @@ Files the tools read and write:
 Installs and starts the node agent as a boot-persistent daemon. Refuses a venv under
 `/tmp` (it would break after a reboot). Writes the token next to the agent config.
 
+### `bootstrap user@host [user@host ...] [--port 8025] [--token-file PATH]`
+Sets up new nodes over ssh (keys only, `BatchMode`). Per node, in order: detect the OS
+(Linux or macOS), check `python3` is 3.9 or newer, install Avahi on Linux when missing
+(`sudo -n`; without passwordless sudo it prints the command to run), copy this package
+to `~/.local/share/omarchy-cluster/src`, copy the cluster token (this machine's, or
+`--token-file`), run `install-agent`, wait for `/v1/health`, and print the node's
+`discover` name. A failing node is reported and the rest still run; the exit status is 1
+if any failed. It installs no MLX.
+
 ### `agent [--port 8025] [--name NAME] [--hub URL]`
 Run the agent in the foreground. Serves facts, rank start/stop and probe helpers on
 its port; every request needs the cluster token. With `--hub`, POSTs a 1 s heartbeat
