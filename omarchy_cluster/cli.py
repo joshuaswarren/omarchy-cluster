@@ -12,7 +12,7 @@ import urllib.request
 import signal
 
 from . import AGENT_VERSION
-from . import discover, probe as probe_mod
+from . import client, discover, probe as probe_mod
 
 GB = 1024.0 ** 3
 
@@ -925,8 +925,7 @@ def guard_verdict(facts_by_node):
 
 def _agent_facts(ip, port=8025, timeout=5):
     try:
-        with urllib.request.urlopen("http://%s:%d/v1/facts" % (ip, port), timeout=timeout) as r:
-            return json.loads(r.read())
+        return client.fetch_facts(ip, port, timeout)
     except (OSError, ValueError):
         return None
 

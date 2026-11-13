@@ -13,6 +13,7 @@ import tarfile
 import time
 import urllib.request
 
+from . import client
 from . import token as cluster_token
 
 AGENT_PORT = 8025
@@ -37,11 +38,12 @@ def ssh_run(target, command, stdin=None):
     return r.returncode, r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
 
 
-def agent_answers(host, port, wait_s=30.0):
+def agent_answers(host, port, wait_s=30.0, token=None):
     end = time.monotonic() + wait_s
     while True:
         try:
-            with urllib.request.urlopen("http://%s:%d/v1/health" % (host, port), timeout=3) as r:
+            req = urllib.request.Request("http://%s:%d/v1/health" % (host, port), headers=client._headers(token=token))
+            with urllib.request.urlopen(req, timeout=3) as r:
                 if r.status == 200:
                     return True
         except OSError:
@@ -59,10 +61,11 @@ def _package_tarball(src_dir):
     return buf.getvalue()
 
 
-def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, check=agent_answers,
+def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, check=None,
               say=print):
     """Install and start the agent on target (user@host). Returns the node's discover name."""
     token = token or cluster_token.read()
+    check = check or (lambda host, port: agent_answers(host, port, token=token))  # the new agent wants the token we copy
     if not token:
         raise BootstrapError("no cluster token on this machine: run `omarchy-cluster install-agent` "
                              "here first, or pass --token-file")
