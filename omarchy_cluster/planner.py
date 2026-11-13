@@ -184,6 +184,7 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
 
     L = info["layers"]
     plan = None
+    route_missing = False  # a candidate had the memory but a boundary had no pinned route
     if max_stages:
         # exact request (e.g. --stages 2): use the requested stage count.
         counts = [min(max_stages, len(ranks))]
@@ -231,6 +232,7 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
                 "per_token_ms": round(act_bytes * 8 / 1e9 / gbps * 1000 + rtt, 4),
             })
         if not ok:
+            route_missing = True
             continue
         plan = {"mode": "pipeline" if n_stages > 1 else "replica",
                 "model": info["ref"], "layers": L, "ctx_tokens": ctx_tokens,
@@ -241,8 +243,8 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
         break
     if plan is None:
         plan = {"mode": "none",
-                "reason": "no feasible plan: the candidate stages cannot hold the model in "
-                          "free memory, or a boundary lacks a measured pinned route"}
+                "reason": "no feasible plan: a boundary lacks a measured pinned route" if route_missing
+                else "no feasible plan: the candidate stages cannot hold the model in free memory"}
     return plan
 
 
