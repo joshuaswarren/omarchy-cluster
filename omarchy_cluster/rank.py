@@ -265,12 +265,25 @@ def _share_token(model):
     model.lm_head = head
 
 
+def _init_ring(mx, wait_s=1800, pause_s=2.0):
+    """mx.distributed.init(ring), retried while the peer is not listening yet.
+    Ranks take their GPU turns independently, so either can start first."""
+    end = time.monotonic() + wait_s
+    while True:
+        try:
+            return mx.distributed.init(backend="ring")
+        except RuntimeError as exc:
+            if "Couldn't connect" not in str(exc) or time.monotonic() >= end:
+                raise
+            time.sleep(pause_s)
+
+
 def rank1_worker(model_ref, engine, counts=None):
     """rank 1: poll rank0's engine for prompts and run the identical
     stream_generate so the pipeline collectives stay in lockstep."""
     import mlx.core as mx
 
-    group = mx.distributed.init(backend="ring")
+    group = _init_ring(mx)
     print("rank 1 ring: rank=%d size=%d device=%s"
           % (group.rank(), group.size(), mx.default_device()), flush=True)
     model, tokenizer, _, _ = _sharded_load(model_ref, group, counts)
@@ -437,7 +450,7 @@ class Engine:
                 self.model, self.tok = load(self.model_ref)
                 print("rank 0 replica load done: %s" % self.model_ref, flush=True)
             else:
-                group = mx.distributed.init(backend="ring")
+                group = _init_ring(mx)
                 if group.size() != self.world:
                     raise RuntimeError("ring size %d != %d" % (group.size(), self.world))
                 print("rank 0 ring: rank=%d size=%d device=%s"
