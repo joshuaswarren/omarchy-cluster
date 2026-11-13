@@ -13,6 +13,7 @@ Files the tools read and write:
 | `~/.local/state/omarchy-cluster/links.json` | probe's measured routes (override with `--links` / `--out`) |
 | `~/.local/state/omarchy-cluster/layer-ms.json` | fastest decode ms/layer seen per node |
 | `~/.local/state/omarchy-cluster/live-env` | default `OMARCHY_LIVE_ENV` file |
+| `~/.local/state/omarchy-cluster/join.log` | join's appended record: one line per joined peer with the clock time |
 
 ## Node commands
 
@@ -29,6 +30,17 @@ to `~/.local/share/omarchy-cluster/src`, copy the cluster token (this machine's,
 `discover` name. A failing node is reported and the rest still run; the exit status is 1
 if any failed. It overwrites the node's token file with the token it sends. It installs
 no MLX.
+
+### `join CANDIDATE [--user NAME] [--port 8025] [--token-file PATH] [--auth approved-key|one-time-code]`
+The zero-setup front door (one command; `CANDIDATE` is a name from `discover`, or `user@host`).
+It resolves the candidate from discover (mDNS lists the peers first; a Thunderbolt-bridged
+link is just another network interface), refuses any peer that is not Omarchy Linux and names
+why, then runs the same steps as `bootstrap`. The peer approves the join through `--auth`:
+`approved-key` (default) means this machine's ssh key was approved once on the peer
+(`ssh-copy-id`); `one-time-code` (a code typed on the peer) is not built yet and is tracked in
+issue 64. Every completed join appends one line to `~/.local/state/omarchy-cluster/join.log`
+with the clock time; the peer then shows up in `discover` and `status` with its memory and
+pinned-route line. It writes no configuration file by hand.
 
 ### `agent [--port 8025] [--name NAME] [--hub URL]`
 Run the agent in the foreground. Serves facts, rank start/stop and probe helpers on

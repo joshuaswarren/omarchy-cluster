@@ -238,6 +238,24 @@ def cmd_bootstrap(args):
         sys.exit(1)
 
 
+# ---- join ----
+
+def cmd_join(args):
+    from . import bootstrap
+    token = None
+    if args.token_file:
+        try:
+            with open(args.token_file) as f:
+                token = f.read().strip()
+        except OSError as e:
+            sys.exit("join: cannot read --token-file: %s" % e)
+    try:
+        bootstrap.join(args.candidate, user=args.user, token=token, port=args.port, mode=args.auth)
+    except bootstrap.BootstrapError as e:
+        print("join: %s" % e, file=sys.stderr)
+        sys.exit(1)
+
+
 # ---- discover ----
 
 def cmd_discover(args):
@@ -1031,6 +1049,18 @@ def main(argv=None):
     p.add_argument("--token-file", default=None,
                    help="send this cluster token instead of this machine's own")
     p.set_defaults(fn=cmd_bootstrap)
+
+    p = sub.add_parser("join", help="one command: resolve a candidate from discover, refuse "
+                                    "non-Omarchy peers, install the agent and journal the join")
+    p.add_argument("candidate", metavar="CANDIDATE",
+                   help="a name from `omarchy-cluster discover`, or user@host")
+    p.add_argument("--user", default=None, help="ssh user for bare candidate names (default: this user)")
+    p.add_argument("--port", type=int, default=8025)
+    p.add_argument("--token-file", default=None,
+                   help="send this cluster token instead of this machine's own")
+    p.add_argument("--auth", choices=("approved-key", "one-time-code"), default="approved-key",
+                   help="how the peer approves the join; one-time-code is issue 64")
+    p.set_defaults(fn=cmd_join)
 
     p = sub.add_parser("discover", help="list discovered nodes")
     p.add_argument("--mdns-timeout", type=float, default=4.0)
