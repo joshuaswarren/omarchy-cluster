@@ -331,3 +331,18 @@ def test_init_ring_gives_up_after_the_wait_and_ignores_other_errors():
 
     with pytest.raises(RuntimeError, match="bad hostfile"):
         rank._init_ring(SimpleNamespace(distributed=Broken()), wait_s=5, pause_s=0)
+
+
+def test_init_ring_does_not_retry_other_connect_errors():
+    """Only ECONNREFUSED (111, peer not listening yet) is worth waiting for;
+    113 (no route to host) is a wrong address and must fail at once."""
+    calls = []
+
+    class NoRoute:
+        def init(self, backend):
+            calls.append(backend)
+            raise RuntimeError("[ring] Couldn't connect (error: 113)")
+
+    with pytest.raises(RuntimeError, match="113"):
+        rank._init_ring(SimpleNamespace(distributed=NoRoute()), wait_s=5, pause_s=0)
+    assert calls == ["ring"]
