@@ -45,3 +45,32 @@ average 33 to 72) was discarded: the same run varied from 19 to 110 tokens per s
 Reproduce: `bench.py REPO MODEL LLAMA_SERVER`, with `CLIENTS=4 MAX_TOKENS=96 THREADS=8
 LIMITS=1,2,4 REPS=6` (add `LLAMA_ARGS=-dev,MTL0,-ngl,999` for the Metal path). Stop the
 leftover llama-server between runs: the engine's exit leaves it running.
+
+## k=1 against k=2, machine and command per row (DH-P7-03)
+
+Same runs as the tables above (`bench.jsonl`, `bench-gpu.jsonl`); medians with min and max,
+recomputed from those files, nothing new measured.
+
+| machine | command | k=1 tok/s (median, min–max) | k=2 tok/s (median, min–max) |
+|---|---|---|---|
+| Mac Studio, Apple M1 Ultra, macOS 26.6.2; llama.cpp 0.9.0 build 12110, Qwen2.5-0.5B-Instruct Q4_K_M, 8 threads; CPU path (`-dev none -ngl 0`); load average 11–16 | `bench.py REPO MODEL LLAMA_SERVER` with `CLIENTS=4 MAX_TOKENS=96 THREADS=8 LIMITS=1,2,4 REPS=6` | 154.63 (144.71–161.17) | 187.50 (174.44–195.48) |
+| Same machine, Metal path (`LLAMA_ARGS=-dev,MTL0,-ngl,999`) | Same command plus `LLAMA_ARGS=-dev,MTL0,-ngl,999` | 146.56 (131.05–163.15) | 206.12 (187.57–213.47) |
+
+The on/off floor from step 3 lives in one place: `CONCURRENCY_FLOOR_TOKPS` in
+`omarchy_cluster/gateway.py`, set to the CPU k=1 median above (154.63). While the gateway's
+own wall-clock aggregate decode rate over the last 8 completions is above the floor, the
+configured `--max-concurrent` runs; at or below it the gate switches off and requests queue
+one at a time. `GET /status` carries the running count.
+
+### Not run here
+
+Two concurrent short chats on the real lab pool. The exact command, once a pooled model is
+served (`omarchy-cluster serve --model REPO --max-concurrent 2`), from the serve node:
+
+    ( echo 'Count from one to twelve.' | omarchy-cluster chat --gateway http://127.0.0.1:8020 ) &
+    ( echo 'Count from twelve down to one.' | omarchy-cluster chat --gateway http://127.0.0.1:8020 ) &
+    curl -s http://127.0.0.1:8020/status   # "running": 2 while both chats are mid-turn
+    wait
+
+Reason not run: this session has no lab-pool machines attached (the assignment excludes the
+real-pool step); run it where the pool is served. Issue 62's 30x4 two-node batch stays open.
