@@ -525,10 +525,13 @@ def cmd_serve(args):
         with open(os.path.expanduser("~/.local/state/omarchy-cluster/serve.json"), "w") as f:
             json.dump(state, f, indent=2)
 
-    engine_host = rank_ips[0]
     local_name = platform.node().split(".")[0]
     if stages[0]["node"] == local_name:
         engine_host = "127.0.0.1"
+    elif len(stages) == 1:
+        engine_host = nodes[stages[0]["node"]]["ip"]  # a one-rank ring is loopback on its own node, not here
+    else:
+        engine_host = rank_ips[0]
     engine = "http://%s:%d" % (engine_host, args.engine_port)
     print("gateway engine: %s" % engine)
     _start_gateway(state, args.port, engine, args.max_concurrent)
