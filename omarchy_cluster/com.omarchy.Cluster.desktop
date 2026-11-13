@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Omarchy Cluster
+Comment=Browse local models and chat with your cluster
+Exec=omarchy-cluster app
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;

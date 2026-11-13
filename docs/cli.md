@@ -148,6 +148,15 @@ gateway's `tokens_per_s` when the engine reports it. Replies are not streamed.
 `/reset` clears the history; `/exit`, `/quit` or end of input leave. A request
 that fails prints the error and leaves the conversation as it was.
 
+### `app`
+
+Shows models cached on the gateway and only offers models advertised by its
+`/v1/models` endpoint for chat; downloading a model does not switch a running
+engine. Start `serve` with a downloaded model before using it. Requires GTK 4 and
+PyGObject on the desktop; a venv launch re-enters with `/usr/bin/python3` so distro
+PyGObject remains visible. Run `omarchy-cluster app --install-launcher` once to
+install a desktop entry in the user's XDG applications directory.
+
 ## Gateway API
 
 - `POST /v1/chat/completions` serves OpenAI chat completions; the MLX engine applies the

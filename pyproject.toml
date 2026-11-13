@@ -16,3 +16,6 @@ omarchy-cluster = "omarchy_cluster.cli:main"
 
 [tool.setuptools]
 packages = ["omarchy_cluster"]
+
+[tool.setuptools.package-data]
+omarchy_cluster = ["com.omarchy.Cluster.desktop"]
