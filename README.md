@@ -80,7 +80,7 @@ Realistic expectations:
   engine runs one request at a time; the others queue. `serve --max-concurrent N`
   (default 4) sets how many requests the gateway passes on at once; the rest wait,
   and a request that waits 10 minutes gets HTTP 503 with `Retry-After`.
-- Sampling: The gateway accepts `temperature` (0-2), `top_p` (0-1] and an integer `seed`; 0 or absent is greedy. Only the llama.cpp engine samples so far: the MLX ranks and Sushi answer a sampled request with an error (#68). Rank 0 is the only rank that samples (it all_gathers its token), so a split run needs no sampling-state agreement; the same seed gives the same text once the MLX ranks land.
+- Sampling: The gateway accepts `temperature` (0-2), `top_p` (0-1] and an integer `seed`; 0 or absent is greedy. The llama.cpp engine and the MLX ranks sample; Sushi answers a sampled request with an error. On the MLX ranks, rank 0 is the only rank that samples (from one seeded key, then it all_gathers its token), so a split run needs no sampling-state agreement.
 - Ranks agree on every token within one backend. Metal and Vulkan can differ by a
   near-tie token (up to 1 bf16 ulp); each backend is deterministic run to run.
 
