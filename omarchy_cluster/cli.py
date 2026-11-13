@@ -256,6 +256,9 @@ def cmd_chat(args):
 
 def cmd_app(args):
     from . import app
+    if args.install_launcher:
+        print(app.install_launcher())
+        return 0
     app.main(args)
 
 
@@ -1030,6 +1033,8 @@ def main(argv=None):
     p.set_defaults(fn=cmd_chat)
 
     p = sub.add_parser("app", help="open the native model browser and chat window")
+    p.add_argument("--install-launcher", action="store_true",
+                   help="install the desktop entry in this user's applications menu")
     p.set_defaults(fn=cmd_app)
 
     p = sub.add_parser("probe", help="measure every pair/route, write links.json")

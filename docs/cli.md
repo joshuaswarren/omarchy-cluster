@@ -150,10 +150,12 @@ that fails prints the error and leaves the conversation as it was.
 
 ### `app`
 
-Opens the native GTK 4 model browser and chat window. Refresh lists models cached
-on the selected gateway; enter a Hugging Face repository to download one, select
-it, then chat. Requires GTK 4 and PyGObject on the desktop machine. The desktop
-launcher is installed in `share/applications`.
+Shows models cached on the gateway and only offers models advertised by its
+`/v1/models` endpoint for chat; downloading a model does not switch a running
+engine. Start `serve` with a downloaded model before using it. Requires GTK 4 and
+PyGObject on the desktop; a venv launch re-enters with `/usr/bin/python3` so distro
+PyGObject remains visible. Run `omarchy-cluster app --install-launcher` once to
+install a desktop entry in the user's XDG applications directory.
 
 ## Gateway API
 
