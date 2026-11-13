@@ -121,3 +121,22 @@ def test_no_fit_check_prints_an_override_instead_of_refusing(tmp_path, monkeypat
     cli.cmd_serve(serve_args(make_model(tmp_path), nodes="studio,m2,m2", split="2,3,3", no_fit_check=True))
     assert "OVERRIDE: m2 holds 6 layers" in capsys.readouterr().out
     assert len(cluster) == 3
+
+
+def test_a_whole_model_on_another_machine_is_reached_at_that_machine_not_at_loopback(tmp_path, monkeypatch, cluster):
+    """The one rank's ring is loopback on its own node, but the gateway runs here and must call the engine on that node."""
+    monkeypatch.setattr(cli.platform, "node", lambda: "gateway-box")
+    monkeypatch.setattr(cli, "cmd_place", lambda args: {"mode": "replica", "stages": [{"node": "m2"}]})
+    states = []
+    monkeypatch.setattr(cli, "_start_gateway", lambda state, port, engine, max_concurrent: states.append(engine))
+    cli.cmd_serve(serve_args(make_model(tmp_path)))
+    assert states == ["http://10.0.0.2:18031"]
+
+
+def test_a_whole_model_on_this_machine_is_reached_at_loopback(tmp_path, monkeypatch, cluster):
+    monkeypatch.setattr(cli.platform, "node", lambda: "m2")
+    monkeypatch.setattr(cli, "cmd_place", lambda args: {"mode": "replica", "stages": [{"node": "m2"}]})
+    states = []
+    monkeypatch.setattr(cli, "_start_gateway", lambda state, port, engine, max_concurrent: states.append(engine))
+    cli.cmd_serve(serve_args(make_model(tmp_path)))
+    assert states == ["http://127.0.0.1:18031"]
