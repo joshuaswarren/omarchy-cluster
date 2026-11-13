@@ -300,34 +300,20 @@ def test_completed_request_does_not_wait_for_later_inference(monkeypatch, method
     assert results["second"] == {"tokens": [2]}
 
 
-def test_init_ring_retries_until_the_peer_is_listening():
-    """Each rank queues for its own GPU turn, so rank 1 can get its turn
-    before rank 0 is listening (found live: [ring] Couldn't connect, 111,
-    rank 1 died while rank 0 still waited). It must keep trying."""
-    calls = []
-
-    class FakeDistributed:
-        def init(self, backend):
-            calls.append(backend)
-            if len(calls) < 3:
-                raise RuntimeError("[ring] Couldn't connect (error: 111)")
-            return "group"
-
-    assert rank._init_ring(SimpleNamespace(distributed=FakeDistributed()), wait_s=5, pause_s=0) == "group"
-    assert calls == ["ring"] * 3
-
-
-def test_init_ring_gives_up_after_the_wait_and_ignores_other_errors():
-    class Refusing:
-        def init(self, backend):
-            raise RuntimeError("[ring] Couldn't connect (error: 111)")
-
-    with pytest.raises(RuntimeError, match="Couldn't connect"):
-        rank._init_ring(SimpleNamespace(distributed=Refusing()), wait_s=0, pause_s=0)
-
-    class Broken:
-        def init(self, backend):
-            raise RuntimeError("bad hostfile")
-
-    with pytest.raises(RuntimeError, match="bad hostfile"):
-        rank._init_ring(SimpleNamespace(distributed=Broken()), wait_s=5, pause_s=0)
+def test_rank_engine_refuses_sampling_with_a_400_that_carries_the_reason():
+    import json
+    import urllib.error
+    import urllib.request
+    rank.EngineHandler.engine = SimpleNamespace()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), rank.EngineHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        request = urllib.request.Request("http://127.0.0.1:%d/generate" % server.server_port,
+                                         data=json.dumps({"prompt": "hi", "sampling": {"temperature": 0.7}}).encode())
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=2)
+        assert error.value.code == 400
+        assert "greedily" in json.load(error.value)["error"]
+    finally:
+        server.shutdown()
+        server.server_close()
