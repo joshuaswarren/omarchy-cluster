@@ -355,7 +355,7 @@ def cmd_place(args):
     links = probe_mod.load_links(args.links)
     if not links:
         sys.exit("no links.json; run omarchy-cluster probe first")
-    info = planner.model_info(args.model)
+    info = planner.model_info_or_hub(args.model)
     if not info:
         sys.exit("model not found locally or in HF cache: %s" % args.model)
     plan = planner.plan_placement(nodes, links, info, ctx_tokens=args.ctx,
