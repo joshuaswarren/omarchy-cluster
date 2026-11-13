@@ -1,3 +1,4 @@
+import errno
 import os
 import sys
 import threading
@@ -300,6 +301,55 @@ def test_completed_request_does_not_wait_for_later_inference(monkeypatch, method
     assert results["second"] == {"tokens": [2]}
 
 
+def test_init_ring_retries_until_the_peer_is_listening():
+    """Each rank queues for its own GPU turn, so rank 1 can get its turn
+    before rank 0 is listening (found live: [ring] Couldn't connect, 111,
+    rank 1 died while rank 0 still waited). It must keep trying."""
+    calls = []
+
+    class FakeDistributed:
+        def init(self, backend):
+            calls.append(backend)
+            if len(calls) < 3:
+                raise RuntimeError("[ring] Couldn't connect (error: %d)" % errno.ECONNREFUSED)
+            return "group"
+
+    assert rank._init_ring(SimpleNamespace(distributed=FakeDistributed()), wait_s=5, pause_s=0) == "group"
+    assert calls == ["ring"] * 3
+
+
+def test_init_ring_gives_up_after_the_wait_and_ignores_other_errors(monkeypatch):
+    class Refusing:
+        def init(self, backend):
+            raise RuntimeError("[ring] Couldn't connect (error: %d)" % errno.ECONNREFUSED)
+
+    ticks = iter(range(100))
+    monkeypatch.setattr(rank.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(RuntimeError, match="Couldn't connect"):
+        rank._init_ring(SimpleNamespace(distributed=Refusing()), wait_s=3, pause_s=0)
+
+    class Broken:
+        def init(self, backend):
+            raise RuntimeError("bad hostfile")
+
+    with pytest.raises(RuntimeError, match="bad hostfile"):
+        rank._init_ring(SimpleNamespace(distributed=Broken()), wait_s=5, pause_s=0)
+
+
+def test_init_ring_does_not_retry_other_connect_errors():
+    """Only ECONNREFUSED (111, peer not listening yet) is worth waiting for;
+    113 (no route to host) is a wrong address and must fail at once."""
+    calls = []
+
+    class NoRoute:
+        def init(self, backend):
+            calls.append(backend)
+            raise RuntimeError("[ring] Couldn't connect (error: %d)" % errno.EHOSTUNREACH)
+
+    with pytest.raises(RuntimeError, match=str(errno.EHOSTUNREACH)):
+        rank._init_ring(SimpleNamespace(distributed=NoRoute()), wait_s=5, pause_s=0)
+    assert calls == ["ring"]
+
 def test_rank_engine_refuses_sampling_with_a_400_that_carries_the_reason():
     import json
     import urllib.error
@@ -317,3 +367,18 @@ def test_rank_engine_refuses_sampling_with_a_400_that_carries_the_reason():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_init_ring_retries_on_this_platforms_econnrefused(monkeypatch):
+    """ECONNREFUSED is 111 on Linux and 61 on macOS; the retry must follow the platform's value."""
+    monkeypatch.setattr(rank.errno, "ECONNREFUSED", 61)
+    calls = []
+
+    class Mac:
+        def init(self, backend):
+            calls.append(backend)
+            if len(calls) < 2:
+                raise RuntimeError("[ring] Couldn't connect (error: 61)")
+            return "group"
+
+    assert rank._init_ring(SimpleNamespace(distributed=Mac()), wait_s=5, pause_s=0) == "group"
