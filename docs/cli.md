@@ -148,6 +148,13 @@ gateway's `tokens_per_s` when the engine reports it. Replies are not streamed.
 `/reset` clears the history; `/exit`, `/quit` or end of input leave. A request
 that fails prints the error and leaves the conversation as it was.
 
+### `app`
+
+Opens the native GTK 4 model browser and chat window. Refresh lists models cached
+on the selected gateway; enter a Hugging Face repository to download one, select
+it, then chat. Requires GTK 4 and PyGObject on the desktop machine. The desktop
+launcher is installed in `share/applications`.
+
 ## Gateway API
 
 - `POST /v1/chat/completions` serves OpenAI chat completions; the MLX engine applies the

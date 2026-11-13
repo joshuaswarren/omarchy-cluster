@@ -254,6 +254,11 @@ def cmd_chat(args):
     chat.main(args)
 
 
+def cmd_app(args):
+    from . import app
+    app.main(args)
+
+
 # ---- probe ----
 
 def cmd_probe(args):
@@ -1023,6 +1028,9 @@ def main(argv=None):
     p.add_argument("--max-tokens", type=int, default=256)
     p.add_argument("--system", default=None, help="system prompt")
     p.set_defaults(fn=cmd_chat)
+
+    p = sub.add_parser("app", help="open the native model browser and chat window")
+    p.set_defaults(fn=cmd_app)
 
     p = sub.add_parser("probe", help="measure every pair/route, write links.json")
     p.add_argument("--seconds", type=float, default=3.0,
