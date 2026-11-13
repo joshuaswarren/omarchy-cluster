@@ -125,19 +125,61 @@ def test_unknown_post_route_returns_404(http_server):
         assert isinstance(json.load(response)["error"], str)
 
 
+ENGINE_REPLY = {"text": "x", "prompt_tokens": 1, "completion_tokens": 1, "prefill_ms": 1.0,
+                "decode_ms": 1.0, "tokps": 1.0}
+
+
+def recording_engine(seen):
+    class Engine(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            seen.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            body = json.dumps(ENGINE_REPLY).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    return Engine
+
+
+def post(gateway, path, body):
+    request = urllib.request.Request(base_url(gateway) + path, data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+    return urllib.request.urlopen(request, timeout=2)
+
+
 @pytest.mark.parametrize("path", ["/v1/chat/completions", "/v1/completions"])
-def test_nonzero_temperature_is_rejected_before_the_engine(path, monkeypatch, http_server):
+def test_sampling_settings_reach_the_engine(path, monkeypatch, http_server):
+    seen = []
+    engine = http_server(recording_engine(seen))
     gateway = http_server(Gateway)
-    monkeypatch.setattr(Gateway, "engine", base_url(gateway))
-    request = urllib.request.Request(
-        base_url(gateway) + path,
-        data=json.dumps({"temperature": 0.7}).encode(),
-        headers={"Content-Type": "application/json"})
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    post(gateway, path, {"temperature": 0.7, "top_p": 0.9, "seed": 5}).close()
+    assert seen[0]["greedy"] is False
+    assert seen[0]["sampling"] == {"temperature": 0.7, "top_p": 0.9, "seed": 5}
+
+
+def test_temperature_zero_stays_greedy_without_sampling(monkeypatch, http_server):
+    seen = []
+    engine = http_server(recording_engine(seen))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    post(gateway, "/v1/completions", {"temperature": 0}).close()
+    assert seen[0]["greedy"] is True and "sampling" not in seen[0]
+
+
+@pytest.mark.parametrize("body", [{"temperature": -1}, {"temperature": "hot"}, {"temperature": 0.5, "top_p": 0},
+                                  {"temperature": 0.5, "top_p": 1.5}, {"temperature": 0.5, "seed": "x"}])
+def test_invalid_sampling_is_rejected_before_the_engine(body, monkeypatch, http_server):
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", "http://127.0.0.1:9")
     with pytest.raises(urllib.error.HTTPError) as error:
-        urllib.request.urlopen(request, timeout=2)
+        post(gateway, "/v1/completions", body)
     with error.value as response:
         assert response.code == 400
-        assert "temperature" in json.load(response)["error"]
 
 
 @pytest.fixture

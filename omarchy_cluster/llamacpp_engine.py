@@ -381,21 +381,23 @@ def _post(url, payload, timeout=600):
 
 
 def generate(server_url, req):
-    """Serve one gateway /generate request through llama-server, greedy. Every request
-    evaluates its whole prompt (cache_prompt false), so prompt timings compare."""
+    """Serve one gateway /generate request through llama-server, greedy unless the request
+    carries `sampling` (temperature, top_p, seed). Every request evaluates its whole prompt
+    (cache_prompt false), so prompt timings compare."""
     max_tokens = int(req.get("max_tokens", 64))
+    sampling = {"temperature": 0, **(req.get("sampling") or {})}
     if req.get("messages"):
         # reasoning_format none: a reasoning model's <think> text stays in content (as on
         # the MLX path) instead of a separate field the gateway does not return.
         res = _post(server_url + "/v1/chat/completions",
                     {"messages": req["messages"], "max_tokens": max_tokens,
-                     "temperature": 0, "reasoning_format": "none", "cache_prompt": False})
+                     **sampling, "reasoning_format": "none", "cache_prompt": False})
         text = res["choices"][0]["message"]["content"]
         finish = res["choices"][0].get("finish_reason") or "stop"
     else:
         res = _post(server_url + "/completion",
                     {"prompt": req.get("prompt") or "", "n_predict": max_tokens,
-                     "temperature": 0, "cache_prompt": False})
+                     **sampling, "cache_prompt": False})
         text = res["content"]
         finish = "length" if res.get("stop_type") == "limit" else "stop"
     t = res.get("timings") or {}

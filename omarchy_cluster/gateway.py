@@ -114,12 +114,14 @@ class Gateway(BaseHTTPRequestHandler):
             if not isinstance(req, dict):
                 raise TypeError("request body must be a JSON object")
             payload = {"prompt": req.get("prompt"), "messages": req.get("messages"),
-                       "max_tokens": int(req.get("max_tokens", 64)), "greedy": True,
+                       "max_tokens": int(req.get("max_tokens", 64)),
                        "timing": bool(req.get("timing")), "raw": bool(req.get("raw"))}
+            sampling = _sampling(req)
+            payload["greedy"] = sampling is None
+            if sampling:
+                payload["sampling"] = sampling
         except (ValueError, TypeError, OverflowError) as e:
             return self._json(400, {"error": str(e)})
-        if req.get("temperature", 0) not in (0, None):
-            return self._json(400, {"error": "gateway serves temperature 0 only"})
         data = json.dumps(payload).encode()
         rq = urllib.request.Request(self.engine + "/generate", data=data,
                                     headers={"Content-Type": "application/json"})
@@ -161,6 +163,27 @@ class Gateway(BaseHTTPRequestHandler):
                 "finish_reason": finish}]})
         return self._json(200, {**common, "object": "text_completion", "choices": [{
             "index": 0, "text": res["text"], "finish_reason": finish}]})
+
+
+def _number(req, key, lo, hi, lo_open=False):
+    v = req.get(key)
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not (lo < v if lo_open else lo <= v) or v > hi:
+        raise ValueError("%s must be a number in %s%s, %s]" % (key, "(" if lo_open else "[", lo, hi))
+    return v
+
+
+def _sampling(req):
+    """Sampling settings from an OpenAI-style request, or None for greedy (temperature 0 or absent)."""
+    temperature = _number(req, "temperature", 0, 2)
+    top_p = _number(req, "top_p", 0, 1, lo_open=True)
+    seed = req.get("seed")
+    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
+        raise ValueError("seed must be an integer")
+    if not temperature:
+        return None
+    return {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
 
 
 def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031", max_concurrent=MAX_CONCURRENT):

@@ -161,8 +161,7 @@ install a desktop entry in the user's XDG applications directory.
 
 - `POST /v1/chat/completions` serves OpenAI chat completions; the MLX engine applies the
   model's chat template to `messages`. Add `"timing": true` for per-step ring wait
-  and compute times. Sampling is greedy only: a request with `temperature` other
-  than 0 gets HTTP 400 (`gateway serves temperature 0 only`).
+  and compute times. Sampling: The gateway accepts `temperature` (0-2), `top_p` (0-1] and an integer `seed`; 0 or absent is greedy. Only the llama.cpp engine samples so far: the MLX ranks and Sushi answer a sampled request with an error (#68). Rank 0 is the only rank that samples (it all_gathers its token), so a split run needs no sampling-state agreement; the same seed gives the same text once the MLX ranks land.
 - `POST /v1/completions` with `"raw": true` and a `prompt` string skips the template:
   the engine tokenizes exactly that text, without adding special tokens, and both
   ranks get the same ids. The engine adds no beginning-of-text token, so a raw prompt
