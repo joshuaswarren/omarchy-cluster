@@ -188,7 +188,7 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
         # exact request (e.g. --stages 2): use the requested stage count.
         counts = [min(max_stages, len(ranks))]
     else:
-        counts = list(range(len(ranks), 0, -1))
+        counts = list(range(1, len(ranks) + 1))  # whole on one node first; split only when none fits
     for n_stages in counts:
         chosen = None
         for tail in reversed(ranks):
@@ -242,7 +242,9 @@ def plan_table(plan):
         return "NO PLAN: %s" % plan.get("reason")
     kv_layers = plan.get("kv_layers", plan["layers"])
     held = "" if kv_layers == plan["layers"] else ", %d with KV" % kv_layers
-    lines = ["%s: %s (%d layers%s, KV %.1f KB/token)"
+    lines = ["whole on %s" % plan["stages"][0]["node"] if len(plan["stages"]) == 1
+             else "split across %d nodes" % len(plan["stages"]),
+             "%s: %s (%d layers%s, KV %.1f KB/token)"
              % (plan["mode"].upper(), plan["model"], plan["layers"], held,
                 plan["kv_bytes_per_token"] / 1024)]
     for i, s in enumerate(plan["stages"]):

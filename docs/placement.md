@@ -12,8 +12,10 @@ the llama.cpp engine.
 
 1. Every unified-memory node is a candidate rank; only the final rank must be
    decode-eligible (`--no-decode` excludes a node from the tail).
-2. The planner tries the largest stage count first, then fewer, and stops at the
-   first feasible plan. Feasible means: every stage holds at least one layer in
+2. The planner tries one stage first (the whole model on the one node with the
+   most memory), then more stages, and stops at the first feasible plan; `place`
+   prints "whole on NODE" or "split across N nodes" on its first line. `--stages N`
+   forces N. Feasible means: every stage holds at least one layer in
    90 percent of its free memory (`max_layers`), all stages together hold every
    layer, and every boundary has a measured pinned route from `probe`.
 3. Boundary cost is the bf16 activation (2 bytes x hidden x 2) over the pinned
