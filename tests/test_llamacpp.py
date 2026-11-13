@@ -606,3 +606,16 @@ def test_generate_passes_sampling_settings_to_llama_server():
         srv.shutdown()
     body = FakeLlamaServer.seen[-1][1]
     assert (body["temperature"], body["top_p"], body["seed"]) == (0.7, 0.9, 5)
+
+
+def test_a_bare_temperature_is_plain_temperature_sampling():
+    """llama-server defaults to top_p 0.95, top_k 40 and min_p 0.05 when they are absent; the
+    OpenAI-style request means none of them, so they are sent neutral."""
+    FakeLlamaServer.seen.clear()
+    srv, url = _serve(FakeLlamaServer)
+    try:
+        lce.generate(url, {"prompt": "hi", "max_tokens": 4, "sampling": {"temperature": 0.7}})
+    finally:
+        srv.shutdown()
+    body = FakeLlamaServer.seen[-1][1]
+    assert (body["top_p"], body["top_k"], body["min_p"]) == (1.0, 0, 0.0)

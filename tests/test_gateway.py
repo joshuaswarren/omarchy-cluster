@@ -172,7 +172,8 @@ def test_temperature_zero_stays_greedy_without_sampling(monkeypatch, http_server
 
 
 @pytest.mark.parametrize("body", [{"temperature": -1}, {"temperature": "hot"}, {"temperature": 0.5, "top_p": 0},
-                                  {"temperature": 0.5, "top_p": 1.5}, {"temperature": 0.5, "seed": "x"}])
+                                  {"temperature": 0.5, "top_p": 1.5}, {"temperature": 0.5, "seed": "x"},
+                                  {"temperature": 0.5, "seed": -1}, {"temperature": 0.5, "seed": 2 ** 32}])
 def test_invalid_sampling_is_rejected_before_the_engine(body, monkeypatch, http_server):
     gateway = http_server(Gateway)
     monkeypatch.setattr(Gateway, "engine", "http://127.0.0.1:9")
@@ -364,3 +365,34 @@ def test_serve_rejects_a_slot_count_below_one(value, capsys):
         cli.main(["serve", "--model", "m", "--max-concurrent", value])
     assert e.value.code == 2
     assert "must be at least 1" in capsys.readouterr().err
+
+
+def refusing_engine(code, reply):
+    class Engine(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = json.dumps(reply).encode()
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    return Engine
+
+
+@pytest.mark.parametrize("code,reply", [
+    (400, {"error": "ranks sample greedily"}),
+    (200, {"error": "sushi is greedy by format", "finish_reason": "error", "client_error": True}),
+])
+def test_an_engine_refusal_reaches_the_client_as_a_400_with_its_text(code, reply, monkeypatch, http_server):
+    engine = http_server(refusing_engine(code, reply))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    with pytest.raises(urllib.error.HTTPError) as error:
+        post(gateway, "/v1/completions", {"temperature": 0.7}).close()
+    with error.value as response:
+        assert response.code == 400
+        assert json.load(response)["error"] == reply["error"]

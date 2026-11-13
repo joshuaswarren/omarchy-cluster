@@ -13,6 +13,7 @@ import ipaddress
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -136,10 +137,16 @@ class Gateway(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(rq, timeout=600) as r:
                 res = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 400:  # the engine refused the request itself: the client needs its reason
+                return self._json(400, {"error": _error_text(e)})
+            return self._json(502, {"error": "engine: %s" % e})
         except Exception as e:  # noqa: BLE001
             return self._json(502, {"error": "engine: %s" % e})
         finally:
             self.slots.release()
+        if res.get("client_error"):
+            return self._json(400, {"error": res["error"]})
         if "error" in res:
             return self._json(502, {"error": "engine: %s" % res["error"]})
         now = int(time.time())
@@ -165,6 +172,13 @@ class Gateway(BaseHTTPRequestHandler):
             "index": 0, "text": res["text"], "finish_reason": finish}]})
 
 
+def _error_text(http_error):
+    try:
+        return json.loads(http_error.read())["error"]
+    except (ValueError, KeyError, TypeError):
+        return str(http_error)
+
+
 def _number(req, key, lo, hi, lo_open=False):
     v = req.get(key)
     if v is None:
@@ -179,8 +193,8 @@ def _sampling(req):
     temperature = _number(req, "temperature", 0, 2)
     top_p = _number(req, "top_p", 0, 1, lo_open=True)
     seed = req.get("seed")
-    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
-        raise ValueError("seed must be an integer")
+    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2 ** 32):
+        raise ValueError("seed must be an integer in [0, 2**32)")
     if not temperature:
         return None
     return {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}

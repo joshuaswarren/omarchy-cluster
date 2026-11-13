@@ -386,6 +386,9 @@ def generate(server_url, req):
     (cache_prompt false), so prompt timings compare."""
     max_tokens = int(req.get("max_tokens", 64))
     sampling = {"temperature": 0, **(req.get("sampling") or {})}
+    if req.get("sampling"):
+        # llama-server's own defaults (top_p 0.95, top_k 40, min_p 0.05) are not what an OpenAI-style request means
+        sampling = {"top_p": 1.0, "top_k": 0, "min_p": 0.0, **sampling}
     if req.get("messages"):
         # reasoning_format none: a reasoning model's <think> text stays in content (as on
         # the MLX path) instead of a separate field the gateway does not return.
