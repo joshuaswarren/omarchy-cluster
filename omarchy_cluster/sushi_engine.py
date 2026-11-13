@@ -42,6 +42,9 @@ def generate(server_url, req):
 
 def _generate(server_url, req):
     """Serve one gateway /generate request (raises on upstream failure)."""
+    if req.get("sampling"):
+        return {"error": "the sushi engine is greedy by format; send temperature 0",
+                "finish_reason": "error", "client_error": True}
     max_tokens = int(req.get("max_tokens", 64))
     started = time.monotonic()
     if req.get("messages"):
