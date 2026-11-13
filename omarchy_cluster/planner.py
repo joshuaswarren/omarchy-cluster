@@ -191,7 +191,16 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
         counts = list(range(1, len(ranks) + 1))  # whole on one node first; split only when none fits
     for n_stages in counts:
         chosen = None
-        for tail in reversed(ranks):
+        if n_stages == 1:
+            # whole model: the eligible node with the most free memory that can hold every layer
+            for n in sorted((n for n in ranks if n not in no_decode),
+                            key=lambda n: -nodes[n]["memory_free_bytes"]):
+                if max_layers(nodes[n]["memory_free_bytes"], info, ctx_tokens) >= L:
+                    chosen = [n]
+                    break
+            if chosen is None:
+                continue
+        for tail in (reversed(ranks) if chosen is None else ()):
             if tail in no_decode:
                 continue
             prefix = [n for n in ranks if n != tail]

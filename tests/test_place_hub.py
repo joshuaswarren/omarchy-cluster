@@ -174,7 +174,7 @@ def test_whole_model_goes_on_the_one_node_that_fits_before_any_split():
 def test_split_only_when_no_single_node_fits():
     per_layer_gb = (INFO["weights_bytes"] + planner.kv_bytes_per_token(INFO) * 2048) / 28 / 1e9
     half = per_layer_gb * 20 / 0.9  # 20 of 28 layers per node
-    nodes = {"a": facts(half, 1), "b": facts(half, 2)}
+    nodes = {"a": facts(half, half * 2), "b": facts(half, half * 3)}
     assert planner.plan_placement(nodes, links_with("a", "b"), INFO)["mode"] == "pipeline"
 
 
@@ -185,3 +185,10 @@ def test_plan_table_says_whole_or_split_in_one_line():
     assert whole.splitlines()[0] == "whole on big-desktop"
     split = planner.plan_table(planner.plan_placement(nodes, links, INFO, max_stages=2))
     assert split.splitlines()[0] == "split across 2 nodes"
+
+
+def test_whole_model_goes_on_the_node_with_free_memory_not_the_biggest_total():
+    nodes = {"big": facts(0.5, 128), "small": facts(40, 64)}
+    plan = planner.plan_placement(nodes, links_with("big", "small"), INFO)
+    assert plan["mode"] == "replica"
+    assert [s["node"] for s in plan["stages"]] == ["small"]
