@@ -135,12 +135,16 @@ def install_launcher():
     return destination
 
 
+def load_gtk_modules():
+    gi = importlib.import_module("gi")
+    gi.require_version("Gtk", "4.0")
+    return (importlib.import_module("gi.repository.Gtk"),
+            importlib.import_module("gi.repository.GLib"))
+
+
 def main(_args=None):
     try:
-        gi = importlib.import_module("gi")
-        gi.require_version("Gtk", "4.0")
-        repository = importlib.import_module("gi.repository")
-        Gtk, GLib = repository.Gtk, repository.GLib
+        Gtk, GLib = load_gtk_modules()
     except (ImportError, ValueError) as error:
         command, env = gtk_fallback_command()
         if command:

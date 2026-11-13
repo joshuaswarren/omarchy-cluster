@@ -162,10 +162,11 @@ def test_app_core_rejects_idle_completion_and_failure(gateway):
     assert not core.busy and core.history == [{"role": "user", "content": "kept"}]
 
 
-def test_null_chat_content_fails_and_rolls_back(gateway, monkeypatch):
+@pytest.mark.parametrize("content", [None, [], 42])
+def test_non_string_chat_content_fails_and_rolls_back(gateway, monkeypatch, content):
     url, _seen, _state = gateway
     monkeypatch.setattr(app, "_request", lambda *_args, **_kwargs:
-                        {"choices": [{"message": {"content": None}}]})
+                        {"choices": [{"message": {"content": content}}]})
     core = app.AppCore(url)
     core.set_catalog([], ["served-model"])
     turn = core.begin_turn("served-model", "question")
@@ -200,7 +201,7 @@ def test_gateway_vetted_venv_can_fall_back_to_system_python(tmp_path):
     import subprocess
     import venv
 
-    environment = venv.EnvBuilder(with_pip=False)
+    environment = venv.EnvBuilder(with_pip=False, symlinks=True)
     environment.create(tmp_path / "venv")
     package_root = os.path.dirname(os.path.dirname(app.__file__))
     env = os.environ | {"PYTHONPATH": package_root}
@@ -276,3 +277,15 @@ def test_cli_install_launcher_does_not_open_window(monkeypatch, capsys):
     cli.main(["app", "--install-launcher"])
     assert capsys.readouterr().out.strip() == "/tmp/app.desktop"
     assert calls == []
+
+def test_gtk_loader_imports_namespace_modules(monkeypatch):
+    from types import SimpleNamespace
+
+    gtk, glib = object(), object()
+    required = []
+    modules = {"gi.repository.Gtk": gtk, "gi.repository.GLib": glib}
+    monkeypatch.setattr(app.importlib, "import_module",
+                        lambda name: SimpleNamespace(require_version=lambda *args: required.append(args))
+                        if name == "gi" else modules[name])
+    assert app.load_gtk_modules() == (gtk, glib)
+    assert required == [("Gtk", "4.0")]
