@@ -15,6 +15,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import token as cluster_token
@@ -22,13 +23,21 @@ from . import token as cluster_token
 GATEWAY_PORT = 8020
 MAX_CONCURRENT = 4  # llama-server's default slot count; the MLX ranks queue behind their own worker
 QUEUE_WAIT_S = 600.0
+CONCURRENCY_FLOOR_TOKPS = 154.63  # the k=1 aggregate decode tok/s from the receipts table; k>1 switches off below it
+RATE_WINDOW = 8  # completions per aggregate-rate reading (two rounds of 4 clients)
 
 
 class Gateway(BaseHTTPRequestHandler):
     engine = None  # base url of rank-0 engine
     max_concurrent = MAX_CONCURRENT
+    slot_count = MAX_CONCURRENT  # permits in `slots` right now; the 503 text uses it
     slots = threading.BoundedSemaphore(MAX_CONCURRENT)  # engine calls in flight at once
     queue_wait_s = QUEUE_WAIT_S  # how long a request waits for a slot before the 503
+    floor_tokps = CONCURRENCY_FLOOR_TOKPS
+    rate_window = RATE_WINDOW
+    _measured = deque(maxlen=RATE_WINDOW)  # (finish, completion tokens) of the last completions
+    _running = 0
+    _count_lock = threading.Lock()
 
     def log_message(self, *args):
         pass
@@ -61,6 +70,26 @@ class Gateway(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    @classmethod
+    def _record_rate(cls, tokens):
+        """Aggregate decode tok/s over the last rate_window completions on the gateway's
+        own wall clock (per-request tok/s falls when streams share an engine, so it is the
+        wrong gate signal). Above floor_tokps the configured k runs; at or below it the
+        gate switches off and requests queue one at a time. The flip swaps `slots`; each
+        request releases the very object it acquired."""
+        with cls._count_lock:
+            cls._measured.append((time.perf_counter(), tokens))
+            if len(cls._measured) < 2:
+                return
+            span = cls._measured[-1][0] - cls._measured[0][0]
+            rate = sum(t for _, t in cls._measured) / span if span > 0 else None
+            if rate is None:
+                return
+            k = cls.max_concurrent if rate > cls.floor_tokps else 1
+            if k != cls.slot_count:
+                cls.slots = threading.BoundedSemaphore(k)
+                cls.slot_count = k
+
     def do_GET(self):
         if self.path in ("/health", "/v1/health"):
             try:
@@ -80,9 +109,12 @@ class Gateway(BaseHTTPRequestHandler):
         if self.path in ("/status", "/v1/status"):
             try:
                 with urllib.request.urlopen(self.engine + "/status", timeout=5) as r:
-                    return self._json(200, json.loads(r.read()))
+                    status = json.loads(r.read())
             except Exception as e:  # noqa: BLE001
                 return self._json(502, {"error": "engine: %s" % e})
+            with self._count_lock:
+                status["running"] = Gateway._running
+            return self._json(200, status)
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -126,14 +158,17 @@ class Gateway(BaseHTTPRequestHandler):
         data = json.dumps(payload).encode()
         rq = urllib.request.Request(self.engine + "/generate", data=data,
                                     headers={"Content-Type": "application/json"})
-        if not self.slots.acquire(timeout=self.queue_wait_s):
-            body = json.dumps({"error": "all %d request slots are busy; retry" % self.max_concurrent}).encode()
+        slots = self.slots  # a gate flip swaps the class attribute; release what we acquired
+        if not slots.acquire(timeout=self.queue_wait_s):
+            body = json.dumps({"error": "all %d request slots are busy; retry" % self.slot_count}).encode()
             self.send_response(503)
             self.send_header("Retry-After", "5")
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             return self.wfile.write(body)
+        with self._count_lock:
+            Gateway._running += 1
         try:
             with urllib.request.urlopen(rq, timeout=600) as r:
                 res = json.loads(r.read())
@@ -144,11 +179,14 @@ class Gateway(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             return self._json(502, {"error": "engine: %s" % e})
         finally:
-            self.slots.release()
+            with self._count_lock:
+                Gateway._running -= 1
+            slots.release()
         if res.get("client_error"):
             return self._json(400, {"error": res["error"]})
         if "error" in res:
             return self._json(502, {"error": "engine: %s" % res["error"]})
+        self._record_rate(res["completion_tokens"])
         now = int(time.time())
         common = {
             "id": "chatcmpl-omarchy-%d" % now,
@@ -203,7 +241,9 @@ def _sampling(req):
 def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031", max_concurrent=MAX_CONCURRENT):
     Gateway.engine = engine.rstrip("/")
     Gateway.max_concurrent = max_concurrent
+    Gateway.slot_count = max_concurrent
     Gateway.slots = threading.BoundedSemaphore(max_concurrent)
+    Gateway._measured.clear()
     srv = ThreadingHTTPServer(("0.0.0.0", port), Gateway)
     srv.daemon_threads = True
     print("omarchy-cluster gateway on :%d -> engine %s" % (port, Gateway.engine), flush=True)
