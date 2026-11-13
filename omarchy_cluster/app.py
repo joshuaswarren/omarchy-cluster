@@ -128,7 +128,7 @@ def install_launcher():
     command = shutil.which(sys.argv[0]) or os.path.abspath(sys.argv[0])
     escaped = os.path.realpath(command).replace("\\", "\\\\").replace('"', '\\"')
     text = text.replace("Exec=omarchy-cluster app", f'Exec="{escaped}" app')
-    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
     destination = data_home / "applications" / source.name
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(text)

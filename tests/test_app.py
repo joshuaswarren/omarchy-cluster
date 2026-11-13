@@ -118,6 +118,21 @@ def test_launcher_installs_into_xdg_visible_user_directory(tmp_path, monkeypatch
     assert path == tmp_path / "applications" / "com.omarchy.Cluster.desktop"
     assert f'Exec="{app.sys.argv[0]}" app' in path.read_text()
 
+def test_launcher_treats_empty_xdg_data_home_as_unset(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", "")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(app.sys, "argv", ["/opt/omarchy/venv/bin/omarchy-cluster"])
+    path = app.install_launcher()
+    assert path == tmp_path / ".local/share/applications/com.omarchy.Cluster.desktop"
+
+
+def test_gtk_fallback_does_not_reexec_system_python(monkeypatch):
+    monkeypatch.setattr(app.os.path, "isfile", lambda _path: True)
+    monkeypatch.setattr(app.sys, "prefix", "/usr")
+    monkeypatch.setattr(app.sys, "base_prefix", "/usr")
+    assert app.gtk_fallback_command() == (None, None)
+
 
 def test_app_core_supports_multiple_successful_turns(gateway):
     url, _seen, _state = gateway
