@@ -192,3 +192,14 @@ def test_whole_model_goes_on_the_node_with_free_memory_not_the_biggest_total():
     plan = planner.plan_placement(nodes, links_with("big", "small"), INFO)
     assert plan["mode"] == "replica"
     assert [s["node"] for s in plan["stages"]] == ["small"]
+
+
+def test_no_plan_names_memory_or_route_not_both():
+    """A pool with the memory but no measured route must not read as 'too big' (darkhorse reads the reason)."""
+    per_layer_gb = (INFO["weights_bytes"] + planner.kv_bytes_per_token(INFO) * 2048) / 28 / 1e9
+    small = per_layer_gb * 10 / 0.9
+    short = planner.plan_placement({"a": facts(small, 1), "b": facts(small, 2)}, links_with("a", "b"), INFO, max_stages=2)
+    assert short["mode"] == "none" and "memory" in short["reason"] and "route" not in short["reason"]
+    roomy = {"a": facts(small * 3, 1), "b": facts(small * 3, 2)}
+    lost = planner.plan_placement(roomy, {"pairs": []}, INFO, max_stages=2)
+    assert lost["mode"] == "none" and "route" in lost["reason"] and "memory" not in lost["reason"]
