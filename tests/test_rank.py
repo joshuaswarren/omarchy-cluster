@@ -317,13 +317,15 @@ def test_init_ring_retries_until_the_peer_is_listening():
     assert calls == ["ring"] * 3
 
 
-def test_init_ring_gives_up_after_the_wait_and_ignores_other_errors():
+def test_init_ring_gives_up_after_the_wait_and_ignores_other_errors(monkeypatch):
     class Refusing:
         def init(self, backend):
             raise RuntimeError("[ring] Couldn't connect (error: 111)")
 
+    ticks = iter(range(100))
+    monkeypatch.setattr(rank.time, "monotonic", lambda: next(ticks))
     with pytest.raises(RuntimeError, match="Couldn't connect"):
-        rank._init_ring(SimpleNamespace(distributed=Refusing()), wait_s=0, pause_s=0)
+        rank._init_ring(SimpleNamespace(distributed=Refusing()), wait_s=3, pause_s=0)
 
     class Broken:
         def init(self, backend):
@@ -364,3 +366,18 @@ def test_rank_engine_refuses_sampling_with_a_400_that_carries_the_reason():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_init_ring_retries_on_this_platforms_econnrefused(monkeypatch):
+    """ECONNREFUSED is 111 on Linux and 61 on macOS; the retry must follow the platform's value."""
+    monkeypatch.setattr(rank.errno, "ECONNREFUSED", 61)
+    calls = []
+
+    class Mac:
+        def init(self, backend):
+            calls.append(backend)
+            if len(calls) < 2:
+                raise RuntimeError("[ring] Couldn't connect (error: 61)")
+            return "group"
+
+    assert rank._init_ring(SimpleNamespace(distributed=Mac()), wait_s=5, pause_s=0) == "group"

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -273,7 +274,7 @@ def _init_ring(mx, wait_s=1800, pause_s=2.0):
         try:
             return mx.distributed.init(backend="ring")
         except RuntimeError as exc:
-            if "Couldn't connect (error: 111)" not in str(exc) or time.monotonic() >= end:  # 111 = ECONNREFUSED
+            if "Couldn't connect (error: %d)" % errno.ECONNREFUSED not in str(exc) or time.monotonic() >= end:
                 raise
             time.sleep(pause_s)
 
