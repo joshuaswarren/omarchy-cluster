@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import sys
@@ -152,3 +153,83 @@ def test_list_local_skips_a_directory_that_is_not_a_repo_name(fake_cache):
     snap.mkdir(parents=True)
     (snap / "config.json").write_text("{}")
     assert [r["repo"] for r in models.list_local()] == ["org/good"]
+
+
+def _fake_download_landing(cache, repo="org/new", revision="rev1"):
+    """A downloader that behaves like snapshot_download: lands a snapshot with config.json."""
+    def download(repo_id, **kw):
+        assert repo_id == repo
+        snap = cache / ("models--" + repo.replace("/", "--")) / "snapshots" / revision
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text("{}")
+        (snap / "model.safetensors").write_bytes(b"x" * 1000)
+        return str(snap)
+    return download
+
+
+def test_gateway_list_shows_a_pulled_model(http_server, tmp_path, monkeypatch):
+    from omarchy_cluster.gateway import Gateway
+    cache = tmp_path / "hub"
+    monkeypatch.setattr(models, "cache_dir", lambda: str(cache))
+    monkeypatch.setattr(models, "_downloader", lambda: _fake_download_landing(cache))
+    Gateway.engine = "http://127.0.0.1:1"
+    server = http_server(Gateway)
+    url = "http://127.0.0.1:{}".format(server.server_address[1])
+    assert models.list_local() == []
+    status, out = _post(url, json.dumps({"repo": "org/new"}).encode())
+    assert status == 200 and out["repo"] == "org/new" and out["weights"] == 1
+    with urllib.request.urlopen(url + "/models") as r:
+        body = json.loads(r.read())
+    assert [row["repo"] for row in body["data"]] == ["org/new"]
+
+
+def test_pull_restarts_cleanly_after_a_cut_connection(fake_cache, monkeypatch):
+    calls = []
+
+    def cut_download(repo_id, **kw):
+        calls.append(repo_id)
+        if len(calls) == 1:
+            blobs = fake_cache / "models--org--new" / "blobs"
+            blobs.mkdir(parents=True)
+            (blobs / "sha256-partial.incomplete").write_bytes(b"x" * 500)
+            raise ConnectionError("connection cut mid-download")
+        return _fake_download_landing(fake_cache)(repo_id)
+
+    monkeypatch.setattr(models, "_downloader", lambda: cut_download)
+    with pytest.raises(ConnectionError):
+        models.pull("org/new")
+    # the half-pulled state is neither listed nor loadable; nothing to clean up by hand
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+    path = models.pull("org/new")
+    assert calls == ["org/new", "org/new"]
+    assert path.endswith("rev1")
+    assert [row["repo"] for row in models.list_local()] == ["org/good", "org/new"]
+
+
+def test_gateway_answers_502_when_a_pull_fails(gateway_url, monkeypatch):
+    def cut(repo_id, **kw):
+        raise ConnectionError("connection cut mid-download")
+
+    monkeypatch.setattr(models, "_downloader", lambda: cut)
+    status, out = _post(gateway_url, json.dumps({"repo": "org/good"}).encode())
+    assert status == 502 and "pull:" in out["error"]
+
+
+def test_a_pulled_model_resolves_for_place_and_serve(tmp_path, monkeypatch):
+    from omarchy_cluster import planner
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(models, "_downloader", lambda: _fake_download_landing(
+        tmp_path / ".cache/huggingface/hub"))
+    path = models.pull("org/new", progress=lambda info: None)
+    assert planner.find_model_path("org/new") == path
+    assert planner.model_info("org/new")["weights_bytes"] == 1000
+
+
+def test_place_names_an_unpulled_model_as_missing(tmp_path, monkeypatch):
+    from omarchy_cluster import cli
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **k: {"m1": {"facts": {}}})
+    monkeypatch.setattr(cli.probe_mod, "load_links", lambda path: {"pairs": []})
+    args = argparse.Namespace(model="org/unpulled", nodes=None, links="links.json")
+    with pytest.raises(SystemExit, match=r"model not found locally or in HF cache: org/unpulled"):
+        cli.cmd_place(args)
