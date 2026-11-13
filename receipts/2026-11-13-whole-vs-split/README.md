@@ -26,8 +26,8 @@ two lab laptops. The data below is the raw gateway reply of every request.
 Run on the 16-inch M1 Max, which holds the cluster token and runs the gateway. `NODE_M1` and `NODE_M2` are the
 two nodes' names as `discover` prints them; `ADDR_M1` and `ADDR_M2` are their wired addresses. `MODEL` is
 the same local directory on both machines. The plan lines `serve` printed are in
-[place-whole.txt](data/place-whole.txt) and [place-split.txt](data/place-split.txt) (interface names and
-addresses removed).
+[place-whole.txt](data/place-whole.txt) and [place-split.txt](data/place-split.txt). Host names, paths,
+interface names and addresses are replaced: `node-a` is the 16-inch M1 Max, `node-b` the 14-inch M2 Max.
 
 ```
 probe:   omarchy-cluster probe --out links.json
