@@ -497,6 +497,8 @@ def cmd_serve(args):
         elif len(stages) == 1:
             cand = "127.0.0.1"
         elif explicit and len(stages) > 2:
+            if args.links is not None:
+                sys.exit("--links picks ring addresses for 2 ranks only; give --ring-ip NODE=IP for each of %d ranks" % len(stages))
             cand = _first_ip(node)
         else:
             cand = _pick_route_ip(node, stages, s["node"], args.links)
@@ -956,7 +958,13 @@ def _pick_route_ip(node_facts_dict, stages, node_name, links_path=None):
     from . import planner
     others = [s["node"] for s in stages if s["node"] != node_name]
     if others:
-        links = probe_mod.load_links(links_path) or {}  # no probe run yet: use the node's first address
+        links = probe_mod.load_links(links_path)
+        if links_path is not None:  # a file the user named must choose the address; no silent first-interface fallback
+            if links is None:
+                sys.exit("--links %s: cannot read it as a links file" % links_path)
+            if not any({pair.get("a"), pair.get("b")} == {node_name, others[0]} for pair in links.get("pairs", [])):
+                sys.exit("--links %s has no probe for %s <-> %s" % (links_path, node_name, others[0]))
+        links = links or {}  # no probe run yet: use the node's first address
         if any({pair.get("a"), pair.get("b")} == {node_name, others[0]} for pair in links.get("pairs", [])):
             p = planner.pinned_route(links, node_name, others[0])
             if p is None:
