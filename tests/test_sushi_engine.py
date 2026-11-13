@@ -100,3 +100,8 @@ def test_generate_returns_error_object_when_sushi_is_unreachable():
     from omarchy_cluster import sushi_engine as se
     result = se.generate("http://127.0.0.1:1", {"prompt": "x", "max_tokens": 1})
     assert "error" in result and result["finish_reason"] == "error"
+
+
+def test_sushi_refuses_sampling_instead_of_serving_greedy_silently():
+    res = se.generate("http://127.0.0.1:9", {"prompt": "hi", "sampling": {"temperature": 0.7}})
+    assert "greedy by format" in res["error"]

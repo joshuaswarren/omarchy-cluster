@@ -298,3 +298,22 @@ def test_completed_request_does_not_wait_for_later_inference(monkeypatch, method
         if second.ident is not None:
             second.join(5)
     assert results["second"] == {"tokens": [2]}
+
+
+def test_rank_engine_refuses_sampling_with_a_400_that_carries_the_reason():
+    import json
+    import urllib.error
+    import urllib.request
+    rank.EngineHandler.engine = SimpleNamespace()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), rank.EngineHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        request = urllib.request.Request("http://127.0.0.1:%d/generate" % server.server_port,
+                                         data=json.dumps({"prompt": "hi", "sampling": {"temperature": 0.7}}).encode())
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=2)
+        assert error.value.code == 400
+        assert "greedily" in json.load(error.value)["error"]
+    finally:
+        server.shutdown()
+        server.server_close()

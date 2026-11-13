@@ -630,6 +630,8 @@ class EngineHandler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n) or b"{}")
         except (ValueError, json.JSONDecodeError) as e:
             return self._json(400, {"error": str(e)})
+        if self.path == "/generate" and req.get("sampling"):
+            return self._json(400, {"error": "the MLX ranks sample greedily so far (#68); send temperature 0"})
         messages = req.get("messages") or [{"role": "user",
                                             "content": req.get("prompt", "")}]
         if req.get("raw") and isinstance(req.get("prompt"), str):
