@@ -1,0 +1,35 @@
+"""The omarchy-cluster Arch package: one noarch package built from a local source archive, no downloads."""
+import subprocess
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PKGBUILD = ROOT / "packaging" / "PKGBUILD"
+
+
+def var(name):
+    script = f'source "{PKGBUILD}"; printf "%s\\n" "${{{name}[@]}}"'
+    return subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=True).stdout.split()
+
+
+def test_one_noarch_package_named_omarchy_cluster():
+    assert var("pkgname") == ["omarchy-cluster"]
+    assert var("arch") == ["any"]
+
+
+def test_version_matches_pyproject():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    assert var("pkgver") == [project["version"]]
+
+
+def test_sources_are_local_and_nothing_is_fetched():
+    assert all("://" not in source for source in var("source"))
+    text = PKGBUILD.read_text()
+    for fetcher in ("curl", "wget", "git clone", "pip install"):
+        assert fetcher not in text
+
+
+def test_installs_the_wheel_and_the_licence():
+    text = PKGBUILD.read_text()
+    assert "python -m installer" in text
+    assert "/usr/share/licenses/$pkgname/LICENSE" in text
