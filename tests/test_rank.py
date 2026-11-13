@@ -1,3 +1,4 @@
+import errno
 import os
 import sys
 import threading
@@ -310,7 +311,7 @@ def test_init_ring_retries_until_the_peer_is_listening():
         def init(self, backend):
             calls.append(backend)
             if len(calls) < 3:
-                raise RuntimeError("[ring] Couldn't connect (error: 111)")
+                raise RuntimeError("[ring] Couldn't connect (error: %d)" % errno.ECONNREFUSED)
             return "group"
 
     assert rank._init_ring(SimpleNamespace(distributed=FakeDistributed()), wait_s=5, pause_s=0) == "group"
@@ -320,7 +321,7 @@ def test_init_ring_retries_until_the_peer_is_listening():
 def test_init_ring_gives_up_after_the_wait_and_ignores_other_errors(monkeypatch):
     class Refusing:
         def init(self, backend):
-            raise RuntimeError("[ring] Couldn't connect (error: 111)")
+            raise RuntimeError("[ring] Couldn't connect (error: %d)" % errno.ECONNREFUSED)
 
     ticks = iter(range(100))
     monkeypatch.setattr(rank.time, "monotonic", lambda: next(ticks))
@@ -343,9 +344,9 @@ def test_init_ring_does_not_retry_other_connect_errors():
     class NoRoute:
         def init(self, backend):
             calls.append(backend)
-            raise RuntimeError("[ring] Couldn't connect (error: 113)")
+            raise RuntimeError("[ring] Couldn't connect (error: %d)" % errno.EHOSTUNREACH)
 
-    with pytest.raises(RuntimeError, match="113"):
+    with pytest.raises(RuntimeError, match=str(errno.EHOSTUNREACH)):
         rank._init_ring(SimpleNamespace(distributed=NoRoute()), wait_s=5, pause_s=0)
     assert calls == ["ring"]
 
