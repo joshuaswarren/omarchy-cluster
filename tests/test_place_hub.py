@@ -49,7 +49,7 @@ def test_model_info_uses_cached_main_instead_of_an_old_snapshot(tmp_path, monkey
 
 def test_pipeline_plan_orders_decode_tail_and_caps_stages_by_free_memory():
     nodes = {"big-desktop": facts(100, 128), "laptop": facts(80, 94)}
-    plan = planner.plan_placement(nodes, links_with("big-desktop", "laptop"), INFO)
+    plan = planner.plan_placement(nodes, links_with("big-desktop", "laptop"), INFO, max_stages=2)
     assert plan["mode"] == "pipeline"
     assert plan["decode_tail"] == "big-desktop"  # biggest memory takes the tail
     assert [s["node"] for s in plan["stages"]] == ["laptop", "big-desktop"]
@@ -162,3 +162,33 @@ def test_ring_address_follows_the_two_way_route_for_a_stale_stored_pin(monkeypat
     stages = [{"node": "a"}, {"node": "b"}]
     assert cli._pick_route_ip({"facts": {"interfaces": []}}, stages, "a") == "10.0.0.1"
     assert cli._pick_route_ip({"facts": {"interfaces": []}}, stages, "b") == "10.0.0.2"
+
+
+def test_whole_model_goes_on_the_one_node_that_fits_before_any_split():
+    nodes = {"big-desktop": facts(100, 128), "laptop": facts(80, 94)}
+    plan = planner.plan_placement(nodes, links_with("big-desktop", "laptop"), INFO)
+    assert plan["mode"] == "replica"
+    assert [s["node"] for s in plan["stages"]] == ["big-desktop"]  # most memory holds it whole
+
+
+def test_split_only_when_no_single_node_fits():
+    per_layer_gb = (INFO["weights_bytes"] + planner.kv_bytes_per_token(INFO) * 2048) / 28 / 1e9
+    half = per_layer_gb * 20 / 0.9  # 20 of 28 layers per node
+    nodes = {"a": facts(half, half * 2), "b": facts(half, half * 3)}
+    assert planner.plan_placement(nodes, links_with("a", "b"), INFO)["mode"] == "pipeline"
+
+
+def test_plan_table_says_whole_or_split_in_one_line():
+    nodes = {"big-desktop": facts(100, 128), "laptop": facts(80, 94)}
+    links = links_with("big-desktop", "laptop")
+    whole = planner.plan_table(planner.plan_placement(nodes, links, INFO))
+    assert whole.splitlines()[0] == "whole on big-desktop"
+    split = planner.plan_table(planner.plan_placement(nodes, links, INFO, max_stages=2))
+    assert split.splitlines()[0] == "split across 2 nodes"
+
+
+def test_whole_model_goes_on_the_node_with_free_memory_not_the_biggest_total():
+    nodes = {"big": facts(0.5, 128), "small": facts(40, 64)}
+    plan = planner.plan_placement(nodes, links_with("big", "small"), INFO)
+    assert plan["mode"] == "replica"
+    assert [s["node"] for s in plan["stages"]] == ["small"]
