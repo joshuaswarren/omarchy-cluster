@@ -192,3 +192,12 @@ def test_whole_model_goes_on_the_node_with_free_memory_not_the_biggest_total():
     plan = planner.plan_placement(nodes, links_with("big", "small"), INFO)
     assert plan["mode"] == "replica"
     assert [s["node"] for s in plan["stages"]] == ["small"]
+
+
+def test_serve_ring_address_comes_from_the_links_file_it_was_given(tmp_path):
+    """serve --links must steer the ring addresses; the default links.json (older, other IPs) must not."""
+    path = tmp_path / "mine.json"
+    path.write_text(json.dumps(links_with("a", "b")))
+    stages = [{"node": "a"}, {"node": "b"}]
+    assert cli._pick_route_ip({"facts": {"interfaces": []}}, stages, "a", str(path)) == "10.0.0.1"
+    assert cli._pick_route_ip({"facts": {"interfaces": []}}, stages, "b", str(path)) == "10.0.0.2"

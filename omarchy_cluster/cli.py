@@ -499,7 +499,7 @@ def cmd_serve(args):
         elif explicit and len(stages) > 2:
             cand = _first_ip(node)
         else:
-            cand = _pick_route_ip(node, stages, s["node"])
+            cand = _pick_route_ip(node, stages, s["node"], args.links)
         rank_ips.append(cand)
     seen = {}
     entries = []
@@ -806,7 +806,7 @@ def _serve_llamacpp_nodes(args, info):
                 sys.exit("agent on %s did not start the rpc-server as asked (%s); cmd %s. "
                          "Update it: omarchy-cluster install-agent on that node."
                          % (name, why, " ".join(map(str, res.get("cmd") or []))))
-            ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name)
+            ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name, getattr(args, "links", None))
             ep, host = "%s:%d" % (ip, args.rpc_node_port), node["ip"]
             try:
                 hello = iosnode.wait_rpc(ip, args.rpc_node_port, deadline_s=120.0)
@@ -951,12 +951,12 @@ def cmd_guard(args):
     print("guard: no running serve", flush=True)
 
 
-def _pick_route_ip(node_facts_dict, stages, node_name):
+def _pick_route_ip(node_facts_dict, stages, node_name, links_path=None):
     """IP of `node` on the pinned route to the other stage's node."""
     from . import planner
     others = [s["node"] for s in stages if s["node"] != node_name]
     if others:
-        links = probe_mod.load_links() or {}  # no probe run yet: use the node's first address
+        links = probe_mod.load_links(links_path) or {}  # no probe run yet: use the node's first address
         if any({pair.get("a"), pair.get("b")} == {node_name, others[0]} for pair in links.get("pairs", [])):
             p = planner.pinned_route(links, node_name, others[0])
             if p is None:
