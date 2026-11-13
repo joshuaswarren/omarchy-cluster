@@ -1,0 +1,3 @@
+whole on jwm2-linux
+REPLICA: /home/joshuawarren/scratch/dhp7/model-q25-7b (28 layers, KV 56.0 KB/token)
+  rank 0  jwm2-linux       fits up to 28 layers  (engine; samples, runs the last layers)
