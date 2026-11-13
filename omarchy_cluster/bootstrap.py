@@ -177,6 +177,28 @@ def _is_omarchy(target, ssh):
                                              or "/etc/os-release is missing or has no Omarchy id")
 
 
+def _resolve(candidate, user, find):
+    """The ssh target for a candidate: user@host as given, or a discover name looked up."""
+    if "@" in candidate:
+        return candidate
+    nodes = find()
+    node = nodes.get(candidate)
+    if node is None:
+        raise BootstrapError("no candidate %r; `omarchy-cluster discover` lists: %s"
+                             % (candidate, ", ".join(sorted(nodes)) or "(none)"))
+    where = node.get("ip") or node.get("host")
+    if not where:
+        raise BootstrapError("%s has no ip or host in discover; pass user@host" % candidate)
+    return "%s@%s" % (user or getpass.getuser(), where)
+
+
+def _journal(clock, text):
+    path = os.path.expanduser(JOURNAL)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as f:
+        f.write("%s  %s\n" % (clock().strftime("%Y-%m-%d %H:%M:%S"), text))
+
+
 def join(candidate, user=None, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT,
          check=agent_answers, say=print, clock=datetime.now, mode="approved-key",
          find=discover.discover_nodes):
@@ -185,23 +207,43 @@ def join(candidate, user=None, ssh=ssh_run, src_dir=None, token=None, port=AGENT
 
     candidate is a name from `omarchy-cluster discover`, or an explicit user@host."""
     token = _resolve_token(token)  # before any remote command
-    if "@" in candidate:
-        target = candidate
-    else:
-        nodes = find()
-        node = nodes.get(candidate)
-        if node is None:
-            raise BootstrapError("no candidate %r; `omarchy-cluster discover` lists: %s"
-                                 % (candidate, ", ".join(sorted(nodes)) or "(none)"))
-        target = "%s@%s" % (user or getpass.getuser(), node.get("ip") or node.get("host"))
+    target = _resolve(candidate, user, find)
     authorize_join(target, ssh, mode)
     ok, why = _is_omarchy(target, ssh)
     if not ok:
         raise BootstrapError("%s refused: %s" % (target, why))
     name = bootstrap(target, ssh=ssh, src_dir=src_dir, token=token, port=port, check=check, say=say)
-    path = os.path.expanduser(JOURNAL)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a") as f:
-        f.write("%s  join  %s -> %s (%s)\n" % (clock().strftime("%Y-%m-%d %H:%M:%S"),
-                                               candidate, name, target))
+    _journal(clock, "join  %s -> %s (%s)" % (candidate, name, target))
     return name
+
+
+AGENT_UNIT = "omarchy-cluster-agent.service"
+REMOTE_TOKEN = "~/.config/omarchy-cluster/token"
+
+
+def leave(candidate, user=None, ssh=ssh_run, say=print, clock=datetime.now, find=discover.discover_nodes):
+    """`omarchy-cluster leave <candidate>`: undo a join on the peer. Stops and disables the agent, removes
+    the peer's copy of the cluster token, journals the leave. Running it again changes nothing and says so.
+
+    The token on this machine is the pool's token and stays: other nodes still use it."""
+    target = _resolve(candidate, user, find)
+    ok, why = _is_omarchy(target, ssh)
+    if not ok:
+        raise BootstrapError("%s refused: %s" % (target, why))
+    if ssh(target, "systemctl --user cat %s >/dev/null 2>&1" % AGENT_UNIT)[0] == 0:
+        rc, out, err = ssh(target, "systemctl --user disable --now %s" % AGENT_UNIT)
+        if rc != 0:
+            raise BootstrapError("%s: could not stop the agent (%s); the token was left in place"
+                                 % (target, (err or out).strip()))
+        agent = "agent stopped and disabled"
+    else:
+        agent = "agent already gone"
+    if ssh(target, "test -e %s" % REMOTE_TOKEN)[0] == 0:
+        rc, out, err = ssh(target, "rm -f %s" % REMOTE_TOKEN)
+        if rc != 0:
+            raise BootstrapError("%s: could not remove the token (%s)" % (target, (err or out).strip()))
+        token = "token removed"
+    else:
+        token = "token already gone"
+    say("%s: %s, %s" % (target, agent, token))
+    _journal(clock, "leave  %s (%s): %s, %s" % (candidate, target, agent, token))

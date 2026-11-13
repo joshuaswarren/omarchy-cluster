@@ -1,0 +1,114 @@
+"""#88: `omarchy-cluster leave` undoes a join; #89: a discovered node without ip or host is refused by name."""
+import getpass
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from omarchy_cluster import bootstrap
+
+OMARCHY_RELEASE = 'ID=omarchy\nNAME="Omarchy"\nPRETTY_NAME="Omarchy Linux"\n'
+UNIT = "omarchy-cluster-agent.service"
+FOUND = {"m2-max": {"name": "m2-max", "host": "m2-max.local", "ip": "10.0.0.6", "port": 8025}}
+CLOCK = lambda: __import__("datetime").datetime(2030, 1, 1, 13, 0, 0)
+
+
+class PeerSsh:
+    """A peer that keeps state: the agent unit exists until disabled, the token file until removed."""
+
+    def __init__(self, os_name="Linux", unit=True, token=True, stop_fails=False):
+        self.calls = []
+        self.os_name, self.unit, self.token, self.stop_fails = os_name, unit, token, stop_fails
+
+    def __call__(self, target, command, stdin=None):
+        self.calls.append(command)
+        if command.startswith("uname -s"):
+            return 0, self.os_name + "\n", ""
+        if "/etc/os-release" in command:
+            return 0, OMARCHY_RELEASE, ""
+        if command.startswith("systemctl --user cat"):
+            return (0, "", "") if self.unit else (1, "", "No files found")
+        if command.startswith("systemctl --user disable --now"):
+            if self.stop_fails:
+                return 1, "", "Failed to stop"
+            self.unit = False
+            return 0, "", ""
+        if command.startswith("test -e") and "token" in command:
+            return (0, "", "") if self.token else (1, "", "")
+        if command.startswith("rm -f") and "token" in command:
+            self.token = False
+            return 0, "", ""
+        return 0, "", ""
+
+
+@pytest.fixture
+def journal(tmp_path, monkeypatch):
+    path = tmp_path / "join.log"
+    monkeypatch.setattr(bootstrap, "JOURNAL", str(path))
+    return path
+
+
+def run_leave(ssh, candidate="m2-max", find=FOUND, **kw):
+    out = []
+    bootstrap.leave(candidate, ssh=ssh, say=out.append, clock=CLOCK, find=lambda *a, **k: find, **kw)
+    return out
+
+
+def test_leave_stops_and_disables_the_agent_removes_the_token_and_journals(journal):
+    peer = PeerSsh()
+    run_leave(peer)
+    assert not peer.unit and not peer.token
+    assert any(c.startswith("systemctl --user disable --now " + UNIT) for c in peer.calls)
+    assert journal.read_text() == ("2030-01-01 13:00:00  leave  m2-max (%s@10.0.0.6): agent stopped and disabled, "
+                                   "token removed\n" % getpass.getuser())
+
+
+def test_leave_is_safe_to_run_twice(journal):
+    peer = PeerSsh()
+    run_leave(peer)
+    peer.calls.clear()
+    run_leave(peer)
+    assert not any("disable --now" in c or c.startswith("rm -f") for c in peer.calls)
+    assert journal.read_text().splitlines()[-1].endswith("agent already gone, token already gone")
+
+
+def test_a_failed_agent_stop_keeps_the_token_and_raises(journal):
+    peer = PeerSsh(stop_fails=True)
+    with pytest.raises(bootstrap.BootstrapError, match="Failed to stop"):
+        run_leave(peer)
+    assert peer.token and not journal.exists()
+
+
+def test_leave_refuses_a_peer_that_is_not_omarchy_linux(journal):
+    peer = PeerSsh(os_name="Darwin")
+    with pytest.raises(bootstrap.BootstrapError, match="not Omarchy Linux"):
+        run_leave(peer)
+    assert not any("disable" in c for c in peer.calls)
+
+
+def test_leave_takes_user_at_host_without_discovery(journal):
+    def no_find(*a, **k):
+        raise AssertionError("discovery must not run for a user@host candidate")
+    peer = PeerSsh()
+    bootstrap.leave("jw@10.0.0.9", ssh=peer, say=lambda *_: None, clock=CLOCK, find=no_find)
+    assert not peer.unit
+
+
+@pytest.mark.parametrize("verb", ["join", "leave"])
+@pytest.mark.parametrize("node", [{"name": "ghost"}, {"name": "ghost", "ip": None, "host": None}])
+def test_a_discovered_node_without_ip_or_host_is_refused_by_name_not_as_user_at_none(journal, verb, node):
+    peer = PeerSsh()
+    call = getattr(bootstrap, verb)
+    with pytest.raises(bootstrap.BootstrapError, match="ghost has no ip or host"):
+        call("ghost", ssh=peer, say=lambda *_: None, clock=CLOCK, find=lambda *a, **k: {"ghost": node})
+    assert peer.calls == []
+
+
+def test_the_cli_wires_leave(capsys):
+    from omarchy_cluster.cli import main
+    with pytest.raises(SystemExit) as ei:
+        main(["leave", "--help"])
+    assert ei.value.code == 0
+    assert "CANDIDATE" in capsys.readouterr().out
