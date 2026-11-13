@@ -203,3 +203,32 @@ def test_no_plan_names_memory_or_route_not_both():
     roomy = {"a": facts(small * 3, 1), "b": facts(small * 3, 2)}
     lost = planner.plan_placement(roomy, {"pairs": []}, INFO, max_stages=2)
     assert lost["mode"] == "none" and "route" in lost["reason"] and "memory" not in lost["reason"]
+
+def test_serve_ring_address_comes_from_the_links_file_it_was_given(tmp_path):
+    """serve --links must steer the ring addresses; the default links.json (older, other IPs) must not."""
+    path = tmp_path / "mine.json"
+    path.write_text(json.dumps(links_with("a", "b")))
+    stages = [{"node": "a"}, {"node": "b"}]
+    assert cli._pick_route_ip({"facts": {"interfaces": []}}, stages, "a", str(path)) == "10.0.0.1"
+    assert cli._pick_route_ip({"facts": {"interfaces": []}}, stages, "b", str(path)) == "10.0.0.2"
+
+
+@pytest.mark.parametrize("make", ["missing", "garbage", "no_pair"])
+def test_a_given_links_file_that_cannot_choose_the_ring_address_stops_serve(tmp_path, make):
+    """A typo'd, unreadable or pair-less --links must not fall back to the first
+    interface (a wrong ring IP binds nothing, error 99, after a long model load)."""
+    path = tmp_path / "mine.json"
+    if make == "garbage":
+        path.write_text("{not json")
+    elif make == "no_pair":
+        path.write_text(json.dumps(links_with("a", "c")))
+    stages = [{"node": "a"}, {"node": "b"}]
+    node = {"facts": {"interfaces": [{"ips": [{"ip": "10.9.9.9"}]}]}}
+    with pytest.raises(SystemExit) as e:
+        cli._pick_route_ip(node, stages, "a", str(path))
+    assert str(path) in str(e.value)
+
+
+def test_no_links_given_still_uses_the_first_address():
+    node = {"facts": {"interfaces": [{"ips": [{"ip": "10.9.9.9"}]}]}}
+    assert cli._pick_route_ip(node, [{"node": "a"}, {"node": "b"}], "a", None) == "10.9.9.9"

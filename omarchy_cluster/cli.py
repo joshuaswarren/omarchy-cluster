@@ -497,9 +497,11 @@ def cmd_serve(args):
         elif len(stages) == 1:
             cand = "127.0.0.1"
         elif explicit and len(stages) > 2:
+            if args.links is not None:
+                sys.exit("--links picks ring addresses for 2 ranks only; give --ring-ip NODE=IP for each of %d ranks" % len(stages))
             cand = _first_ip(node)
         else:
-            cand = _pick_route_ip(node, stages, s["node"])
+            cand = _pick_route_ip(node, stages, s["node"], args.links)
         rank_ips.append(cand)
     seen = {}
     entries = []
@@ -806,7 +808,7 @@ def _serve_llamacpp_nodes(args, info):
                 sys.exit("agent on %s did not start the rpc-server as asked (%s); cmd %s. "
                          "Update it: omarchy-cluster install-agent on that node."
                          % (name, why, " ".join(map(str, res.get("cmd") or []))))
-            ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name)
+            ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name, getattr(args, "links", None))
             ep, host = "%s:%d" % (ip, args.rpc_node_port), node["ip"]
             try:
                 hello = iosnode.wait_rpc(ip, args.rpc_node_port, deadline_s=120.0)
@@ -951,12 +953,18 @@ def cmd_guard(args):
     print("guard: no running serve", flush=True)
 
 
-def _pick_route_ip(node_facts_dict, stages, node_name):
+def _pick_route_ip(node_facts_dict, stages, node_name, links_path=None):
     """IP of `node` on the pinned route to the other stage's node."""
     from . import planner
     others = [s["node"] for s in stages if s["node"] != node_name]
     if others:
-        links = probe_mod.load_links() or {}  # no probe run yet: use the node's first address
+        links = probe_mod.load_links(links_path)
+        if links_path is not None:  # a file the user named must choose the address; no silent first-interface fallback
+            if links is None:
+                sys.exit("--links %s: cannot read it as a links file" % links_path)
+            if not any({pair.get("a"), pair.get("b")} == {node_name, others[0]} for pair in links.get("pairs", [])):
+                sys.exit("--links %s has no probe for %s <-> %s" % (links_path, node_name, others[0]))
+        links = links or {}  # no probe run yet: use the node's first address
         if any({pair.get("a"), pair.get("b")} == {node_name, others[0]} for pair in links.get("pairs", [])):
             p = planner.pinned_route(links, node_name, others[0])
             if p is None:
