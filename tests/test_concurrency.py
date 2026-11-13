@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections import deque
@@ -120,12 +121,18 @@ def post_completion(gateway, results, prompt):
         e.close()
 
 
-def run_clients(gateway, prompts):
+def run_clients(gateway, prompts, stagger=0.0):
+    """One client thread per prompt. `stagger` seconds between starts pin the
+    arrival (park) order at the gateway: a request parks ~2 ms after its start,
+    far inside one stagger step."""
     results = []
-    threads = [threading.Thread(target=post_completion, args=(gateway, results, p))
-               for p in prompts]
-    for t in threads:
+    threads = []
+    for i, prompt in enumerate(prompts):
+        if i and stagger:
+            time.sleep(stagger)
+        t = threading.Thread(target=post_completion, args=(gateway, results, prompt))
         t.start()
+        threads.append(t)
     return threads, results
 
 
@@ -144,7 +151,7 @@ def test_three_queued_requests_run_one_at_a_time_in_arrival_order(fresh_gate, mo
 
     threads, results = run_clients(gateway, ["one"])
     assert gate.entered.acquire(timeout=5)
-    queued, queued_results = run_clients(gateway, ["two", "three"])
+    queued, queued_results = run_clients(gateway, ["two", "three"], stagger=0.2)
     assert not gate.entered.acquire(timeout=0.3)  # two and three wait at the gateway
 
     for name in ("one", "two", "three"):
@@ -181,7 +188,7 @@ def test_the_k2_gate_switches_off_when_the_fixture_floor_is_missed(fresh_gate, m
 
     with gate.lock:
         gate.peak = 0
-    late, late_results = run_clients(gateway, ["three", "four", "five"])
+    late, late_results = run_clients(gateway, ["three", "four", "five"], stagger=0.2)
     assert gate.entered.acquire(timeout=5)
     assert not gate.entered.acquire(timeout=0.3)  # the other two queue one at a time
     for name in ("three", "four", "five"):
@@ -190,8 +197,9 @@ def test_the_k2_gate_switches_off_when_the_fixture_floor_is_missed(fresh_gate, m
     for t in late:
         t.join(timeout=10)
     assert late_results == [200, 200, 200]
-    assert gate.order == ["one", "two", "three", "four", "five"]
-    assert gate.finished == gate.order
+    assert sorted(gate.order) == ["five", "four", "one", "three", "two"]  # nothing lost
+    assert gate.order[2:] == ["three", "four", "five"]  # the k=1 queue serves in arrival order
+    assert gate.finished[2:] == gate.order[2:]
     assert gate.peak == 1
 
 
