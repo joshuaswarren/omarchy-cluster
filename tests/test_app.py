@@ -14,7 +14,7 @@ from omarchy_cluster import app
 @pytest.fixture
 def gateway():
     seen = []
-    state = {"status": 200, "active": [{"id": "served-model"}],
+    state = {"status": 200, "error": "operation failed", "active": [{"id": "served-model"}],
              "cached": [{"repo": "org/cached", "path": "/cache/model", "bytes": 1024, "weights": 1}]}
 
     class Handler(BaseHTTPRequestHandler):
@@ -31,15 +31,19 @@ def gateway():
         def do_GET(self):
             seen.append(("GET", self.path, self.headers.get("Authorization")))
             data = state["active"] if self.path == "/v1/models" else state["cached"]
-            self.respond(state["status"], {"data": data})
+            body = {"error": state["error"]} if state["status"] >= 400 else {"data": data}
+            self.respond(state["status"], body)
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
             seen.append(("POST", self.path, body, self.headers.get("Authorization")))
             if self.path == "/models/pull":
-                self.respond(state["status"], {"repo": body["repo"], "path": "/cache/model"})
+                result = {"error": state["error"]} if state["status"] >= 400 else {
+                    "repo": body["repo"], "path": "/cache/model"}
             else:
-                self.respond(state["status"], {"choices": [{"message": {"content": "hello"}}]})
+                result = {"error": state["error"]} if state["status"] >= 400 else {
+                    "choices": [{"message": {"content": "hello"}}]}
+            self.respond(state["status"], result)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -68,9 +72,9 @@ def test_chat_uses_only_a_model_the_gateway_actually_serves(gateway):
     core.complete_turn("hello")
     assert seen[0][1] == "/v1/chat/completions"
     assert seen[0][2]["model"] == "served-model"
+    assert seen[0][3] == "Bearer secret"
     assert core.history == [{"role": "user", "content": "hi"},
                             {"role": "assistant", "content": "hello"}]
-
 
 def test_cached_but_not_served_model_cannot_be_selected(gateway):
     url, _seen, _state = gateway
@@ -78,17 +82,6 @@ def test_cached_but_not_served_model_cannot_be_selected(gateway):
     core.set_catalog([{"repo": "org/cached"}], ["served-model"])
     with pytest.raises(ValueError, match="not served by this gateway"):
         core.begin_turn("org/cached", "hi")
-
-
-def test_failed_turn_is_removed_and_controller_recovers(gateway):
-    url, _seen, _state = gateway
-    core = app.AppCore(url)
-    core.set_catalog([], ["served-model"])
-    core.begin_turn("served-model", "failed")
-    core.fail_turn()
-    assert core.history == [] and not core.busy
-    turn = core.begin_turn("served-model", "retry")
-    assert turn() == "hello"
 
 
 def test_second_send_is_rejected_until_reply_callback_finishes(gateway):
@@ -102,7 +95,7 @@ def test_second_send_is_rejected_until_reply_callback_finishes(gateway):
     core.fail_turn()
 
 
-def test_turn_uses_captured_gateway_and_conversation(gateway):
+def test_turn_uses_captured_gateway(gateway):
     url, seen, _state = gateway
     core = app.AppCore(url)
     core.set_catalog([], ["served-model"])
@@ -110,6 +103,11 @@ def test_turn_uses_captured_gateway_and_conversation(gateway):
     core.gateway = "http://127.0.0.1:1"
     assert turn() == "hello"
     assert seen[0][2]["messages"] == [{"role": "user", "content": "captured"}]
+
+
+def test_operation_failures_always_become_ui_errors():
+    result, error = app.run_operation(lambda: (_ for _ in ()).throw(TypeError("bad response")))
+    assert result is None and error == "bad response"
 
 
 def test_launcher_installs_into_xdg_visible_user_directory(tmp_path, monkeypatch):
@@ -121,18 +119,97 @@ def test_launcher_installs_into_xdg_visible_user_directory(tmp_path, monkeypatch
     assert f'Exec="{app.sys.argv[0]}" app' in path.read_text()
 
 
-def test_operation_failures_always_become_ui_errors():
-    result, error = app.run_operation(lambda: (_ for _ in ()).throw(TypeError("bad response")))
-    assert result is None and error == "bad response"
+def test_app_core_supports_multiple_successful_turns(gateway):
+    url, _seen, _state = gateway
+    core = app.AppCore(url)
+    core.set_catalog([], ["served-model"])
+    for prompt in ("first", "second"):
+        reply = core.begin_turn("served-model", prompt)()
+        core.complete_turn(reply)
+    assert not core.busy
+    assert [message["content"] for message in core.history] == ["first", "hello", "second", "hello"]
 
 
-def test_app_core_imports_without_gtk_and_system_python_fallback_is_available(monkeypatch):
-    monkeypatch.setattr(app.sys, "executable", "/home/user/.venv/bin/python")
-    command, env = app.gtk_fallback_command()
-    assert env is not None
-    assert command == ["/usr/bin/python3", "-m", "omarchy_cluster.app"]
-    assert os.path.realpath(os.path.dirname(os.path.dirname(app.__file__))) in env["PYTHONPATH"].split(os.pathsep)
-    assert app.AppCore is not None
+def test_failed_turn_preserves_prior_conversation(gateway):
+    url, _seen, _state = gateway
+    core = app.AppCore(url)
+    core.set_catalog([], ["served-model"])
+    core.begin_turn("served-model", "first")
+    core.complete_turn("hello")
+    core.begin_turn("served-model", "failed")
+    core.fail_turn()
+    assert core.history == [{"role": "user", "content": "first"},
+                            {"role": "assistant", "content": "hello"}]
+
+
+def test_turn_snapshot_is_independent_of_later_history_mutation(gateway):
+    url, seen, _state = gateway
+    core = app.AppCore(url)
+    core.set_catalog([], ["served-model"])
+    turn = core.begin_turn("served-model", "captured")
+    core.history[0]["content"] = "changed"
+    assert turn() == "hello"
+    assert seen[0][2]["messages"] == [{"role": "user", "content": "captured"}]
+
+
+def test_app_core_rejects_idle_completion_and_failure(gateway):
+    url, _seen, _state = gateway
+    core = app.AppCore(url)
+    core.history.append({"role": "user", "content": "kept"})
+    with pytest.raises(RuntimeError, match="no reply is pending"):
+        core.complete_turn("unexpected")
+    core.fail_turn()
+    assert not core.busy and core.history == [{"role": "user", "content": "kept"}]
+
+
+def test_null_chat_content_fails_and_rolls_back(gateway, monkeypatch):
+    url, _seen, _state = gateway
+    monkeypatch.setattr(app, "_request", lambda *_args, **_kwargs:
+                        {"choices": [{"message": {"content": None}}]})
+    core = app.AppCore(url)
+    core.set_catalog([], ["served-model"])
+    turn = core.begin_turn("served-model", "question")
+    with pytest.raises(TypeError, match="string"):
+        turn()
+    core.fail_turn()
+    assert core.history == [] and not core.busy
+
+
+def test_native_app_reports_model_download_failure(gateway):
+    url, _seen, state = gateway
+    state["status"] = 502
+    state["error"] = "download denied"
+    with pytest.raises(RuntimeError, match="gateway.*502.*download denied"):
+        app.pull_model(url, "org/fails")
+
+
+def test_native_app_reports_chat_failure(gateway):
+    url, _seen, state = gateway
+    state["status"] = 503
+    state["error"] = "chat unavailable"
+    core = app.AppCore(url)
+    core.set_catalog([], ["served-model"])
+    turn = core.begin_turn("served-model", "question")
+    with pytest.raises(RuntimeError, match="gateway.*503.*chat unavailable"):
+        turn()
+    core.fail_turn()
+    assert core.history == [] and not core.busy
+
+
+def test_gateway_vetted_venv_can_fall_back_to_system_python(tmp_path):
+    import subprocess
+    import venv
+
+    environment = venv.EnvBuilder(with_pip=False)
+    environment.create(tmp_path / "venv")
+    package_root = os.path.dirname(os.path.dirname(app.__file__))
+    env = os.environ | {"PYTHONPATH": package_root}
+    result = subprocess.run(
+        [str(tmp_path / "venv/bin/python"), "-c",
+         "from omarchy_cluster.app import gtk_fallback_command; print(gtk_fallback_command()[0])"],
+        check=True, capture_output=True, text=True, env=env)
+    assert result.stdout.strip() == "['/usr/bin/python3', '-m', 'omarchy_cluster.app']"
+
 
 
 def test_gateway_redirect_does_not_forward_cluster_token():

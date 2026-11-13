@@ -60,7 +60,10 @@ def pull_model(gateway, repo, token=None):
 def chat_turn(gateway, model, messages, token=None, max_tokens=256):
     result = _request(gateway, "/v1/chat/completions", token,
                       {"model": model, "messages": messages, "max_tokens": max_tokens})
-    return result["choices"][0]["message"]["content"]
+    content = result["choices"][0]["message"]["content"]
+    if not isinstance(content, str):
+        raise TypeError("gateway chat reply content must be a string")
+    return content
 
 
 def run_operation(operation):
@@ -111,7 +114,7 @@ class AppCore:
 
 def gtk_fallback_command():
     """Re-enter the installed package with distro Python, where PyGObject lives."""
-    if not os.path.isfile(SYSTEM_PYTHON) or os.path.realpath(sys.executable) == os.path.realpath(SYSTEM_PYTHON):
+    if not os.path.isfile(SYSTEM_PYTHON) or sys.prefix == sys.base_prefix:
         return None, None
     package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = os.environ.copy()
@@ -282,6 +285,7 @@ def main(_args=None):
             if not model or not text:
                 self.status.set_text("Select an active gateway model and enter a message")
                 return
+            self.core.gateway = self.gateway.get_text().strip()
             try:
                 turn = self.core.begin_turn(model, text)
             except (RuntimeError, ValueError) as error:
