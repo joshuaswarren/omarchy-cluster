@@ -95,6 +95,21 @@ machine. See [troubleshooting.md](troubleshooting.md#logs-and-stopping).
 
 ## Model commands
 
+### `models list`
+Lists every model in the local Hugging Face cache that `place` and `serve` can load:
+repo id, downloaded size, weight-file count. Exits 1 when the cache is empty.
+
+### `models pull REPO`
+Downloads a Hugging Face repo (for example `mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit`)
+into the cache `place` and `serve` already read, so download then serve is two commands
+with nothing between. An interrupted download (cut connection) resumes on the next pull.
+A snapshot counts as pulled only when `config.json` is there and the weights are: every
+shard that `model.safetensors.index.json` names (each must be a weight file), or, with no
+index, at least one weight file, and all `N` files of any set named `-0000i-of-0000N`. A
+half-pulled repo, or one with a malformed index, is not listed and
+`place` and `serve` do not resolve it. Needs `huggingface_hub` on the machine that
+downloads (`pip install huggingface_hub`).
+
 ### `place MODEL [--ctx 2048] [--links PATH] [--no-decode NAME]... [--nodes N1,N2] [--stages N] [--json]`
 Checks the model fits: every stage must hold at least one layer in 90 percent of its
 free memory, and all stages together must hold every layer. Prints each node's layer
@@ -171,6 +186,11 @@ install a desktop entry in the user's XDG applications directory.
 
 ## Gateway API
 
+- `GET /models` lists the models this gateway can serve (the same cache `models list`
+  reads): repo id, bytes and weight-file count per repo.
+- `POST /models/pull` with `{"repo": "org/name"}` downloads a model into the cache
+  `place` and `serve` read (the `models pull` path). A bad repo id or body answers 400;
+  a failed download answers 502 and the next pull resumes it.
 - `POST /v1/chat/completions` serves OpenAI chat completions; the MLX engine applies the
   model's chat template to `messages`. Add `"timing": true` for per-step ring wait
   and compute times. Sampling: The gateway accepts `temperature` (0-2), `top_p` (0-1] and an integer `seed`; 0 or absent is greedy. The llama.cpp engine and the MLX ranks sample; Sushi answers a sampled request with an error. With a seed, the MLX ranks give the same text for the same placement; a different placement (whole or split) can give different text, because chips differ in the last bits (receipt: `receipts/2026-11-14-seeded-split/`). On the MLX ranks, rank 0 is the only rank that samples (from one seeded key, then it all_gathers its token), so a split run needs no sampling-state agreement.

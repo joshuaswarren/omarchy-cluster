@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 
-from . import probe
+from . import models, probe
 
 BYTES_PER_KV_ELEMENT = 2  # KV stays fp16/bf16 even for 4-bit weights
 DEFAULT_CTX_TOKENS = 2048
@@ -39,7 +39,7 @@ def find_model_path(model_ref):
             return None
     for entry in revisions:
         snap = os.path.join(snaps, entry)
-        if os.path.isfile(os.path.join(snap, "config.json")):
+        if models.snapshot_complete(snap):
             return snap
     return None
 
