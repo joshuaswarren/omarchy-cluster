@@ -165,8 +165,19 @@ def disk_layers(facts, info):
     free = facts.get("model_volume_free_bytes")
     if free is None:
         return info["layers"]
-    have = min((facts.get("cached_models") or {}).get(models.repo_of(info["ref"]), 0), info["weights_bytes"])
+    have = min((facts.get("cached_models") or {}).get(models.cache_key(info["ref"]), 0), info["weights_bytes"])
     return int((free + have) // (info["weights_bytes"] / max(info["layers"], 1)))
+
+
+def credit_local_copy(nodes, local, info):
+    """`nodes` with the model directory this machine holds credited to this machine's own node. An arbitrary
+    directory is a path on the machine that plans; no other node's inventory can say it holds that path, so only
+    `local` is credited (repo ids and cache snapshot paths are in every node's own inventory already)."""
+    ref = info["ref"]
+    if local not in nodes or not info.get("path") or models.cache_key(ref) != ref or not os.path.isdir(ref):
+        return nodes
+    held = {**nodes[local], "cached_models": {**(nodes[local].get("cached_models") or {}), ref: info["weights_bytes"]}}
+    return {**nodes, local: held}
 
 
 def choose_split(layer_ms, caps, n_layers):

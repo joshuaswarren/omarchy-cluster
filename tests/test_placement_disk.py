@@ -101,7 +101,7 @@ def test_facts_list_the_complete_cached_models_by_weight_bytes(tmp_path, monkeyp
     partial = tmp_path / "models--org--partial/snapshots/abc"
     partial.mkdir(parents=True)
     (partial / "config.json").write_text("{}")  # no weights: not a cached model
-    assert facts.collect_facts()["cached_models"] == {"org/good": 1234}
+    assert facts.collect_facts()["cached_models"] == {"org/good": 1234, "org/good@abc": 1234}
 
 
 def _cached_repo(cache, revisions, main):
@@ -122,13 +122,14 @@ def test_the_cache_credit_is_the_revision_serve_loads_not_the_first_by_name(tmp_
     from omarchy_cluster import facts, models
     monkeypatch.setattr(models, "cache_dir", lambda: str(tmp_path))
     _cached_repo(tmp_path, {"a-old": GB, "z-main": int(17.2 * GB)}, main="z-main")
-    assert facts.collect_facts()["cached_models"] == {"org/m": int(17.2 * GB)}
+    cached = facts.collect_facts()["cached_models"]
+    assert cached["org/m"] == int(17.2 * GB)  # the repo id means what serve loads: refs/main
 
 
 def test_a_local_snapshot_path_gets_the_same_credit_as_its_repo_id():
     ref = "/Users/someone/.cache/huggingface/hub/models--org--m/snapshots/z-main"  # need not exist on the node planning
     held = node(90, 94, disk_gb=16)
-    held["cached_models"] = {"org/m": INFO["weights_bytes"]}
+    held["cached_models"] = {"org/m@z-main": INFO["weights_bytes"]}
     plan = planner.plan_placement({"holder": held}, {"pairs": []}, {**INFO, "ref": ref})
     assert plan["mode"] == "replica"
 
@@ -142,3 +143,55 @@ def test_prefill_only_leftovers_after_the_disk_filter_report_disk():
     nodes = {"a": node(90, 94, disk_gb=0), "b": node(60, 62, disk_gb=200)}
     plan = planner.plan_placement(nodes, links("a", "b"), INFO, no_decode=("b",))
     assert plan["mode"] == "none" and "disk" in plan["reason"]
+
+
+def test_every_complete_snapshot_is_reported_by_its_own_revision(tmp_path, monkeypatch):
+    from omarchy_cluster import facts, models
+    monkeypatch.setattr(models, "cache_dir", lambda: str(tmp_path))
+    _cached_repo(tmp_path, {"a-old": int(17.2 * GB), "z-main": GB}, main="z-main")
+    assert facts.collect_facts()["cached_models"] == {"org/m": GB, "org/m@a-old": int(17.2 * GB), "org/m@z-main": GB}
+
+
+def test_a_fully_cached_non_main_snapshot_given_by_path_needs_no_download(tmp_path, monkeypatch):
+    from omarchy_cluster import facts, models
+    monkeypatch.setattr(models, "cache_dir", lambda: str(tmp_path))
+    repo = _cached_repo(tmp_path, {"a-old": int(17.2 * GB), "z-main": GB}, main="z-main")
+    info = planner.model_info(str(repo / "snapshots" / "a-old"))
+    holder = {**node(90, 94, disk_gb=16), "cached_models": facts.collect_facts()["cached_models"]}
+    assert planner.plan_placement({"holder": holder}, {"pairs": []}, info)["mode"] == "replica"
+
+
+def test_a_model_directory_present_on_this_machine_needs_no_download_here_only(tmp_path):
+    held = tmp_path / "my-model"
+    held.mkdir()
+    (held / "config.json").write_text('{"num_hidden_layers": 48, "hidden_size": 2048, "num_key_value_heads": 4, "num_attention_heads": 16}')
+    with open(held / "model.safetensors", "wb") as f:
+        f.truncate(int(17.2 * GB))
+    info = planner.model_info(str(held))
+    nodes = {"here": node(90, 94, disk_gb=16), "there": node(60, 62, disk_gb=16)}
+    credited = planner.credit_local_copy(nodes, "here", info)
+    assert planner.plan_placement(credited, {"pairs": []}, info)["stages"][0]["node"] == "here"
+    assert "cached_models" not in nodes["here"]  # the facts the caller holds are not edited
+    assert planner.plan_placement({"there": credited["there"]}, {"pairs": []}, info)["mode"] == "none"  # that path is not on another node
+
+
+def test_a_repo_id_or_hub_model_gets_no_local_directory_credit():
+    nodes = {"here": node(90, 94, disk_gb=16)}
+    assert planner.credit_local_copy(nodes, "here", {**INFO, "ref": "org/m", "path": None}) == nodes
+
+
+def test_place_credits_a_model_directory_to_the_machine_that_holds_it(tmp_path, monkeypatch, capsys):
+    import argparse
+    from omarchy_cluster import cli
+    held = tmp_path / "my-model"
+    held.mkdir()
+    (held / "config.json").write_text('{"num_hidden_layers": 48, "hidden_size": 2048, "num_key_value_heads": 4, "num_attention_heads": 16}')
+    with open(held / "model.safetensors", "wb") as f:
+        f.truncate(int(17.2 * GB))
+    monkeypatch.setattr(cli.platform, "node", lambda: "here.local")
+    monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **k: {
+        "here": {"facts": node(90, 94, disk_gb=16)}, "there": {"facts": node(60, 62, disk_gb=16)}})
+    monkeypatch.setattr(cli.probe_mod, "load_links", lambda path: {"pairs": []})
+    args = argparse.Namespace(model=str(held), nodes=None, links="l", ctx=4096, no_decode=(), stages=None, json=False)
+    plan = cli.cmd_place(args)
+    assert (plan["mode"], plan["stages"][0]["node"]) == ("replica", "here")

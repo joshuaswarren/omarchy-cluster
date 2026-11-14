@@ -381,6 +381,7 @@ def cmd_place(args):
     info = planner.model_info_or_hub(args.model)
     if not info:
         sys.exit("model not found locally or in HF cache: %s" % args.model)
+    nodes = planner.credit_local_copy(nodes, platform.node().split(".")[0], info)
     plan = planner.plan_placement(nodes, links, info, ctx_tokens=args.ctx,
                                   no_decode=args.no_decode, max_stages=args.stages)
     print(planner.plan_table(plan))
