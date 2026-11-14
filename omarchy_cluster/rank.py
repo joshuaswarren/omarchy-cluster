@@ -212,31 +212,76 @@ def _fastest_layer_ms(key, ms, path="~/.local/state/omarchy-cluster/layer-ms.jso
     return best
 
 
+JSON_PATTERNS = ["*.json", "*.py", "tokenizer.model", "*.tiktoken", "tiktoken.model", "*.txt", "*.jsonl", "*.jinja"]
+
+
+def _download_json(model_ref):
+    """The model's config and index without any weight file: what sharded_load itself fetches first."""
+    from mlx_lm.utils import _download
+    return str(_download(model_ref, allow_patterns=JSON_PATTERNS))
+
+
+def _config_only_dir(path):
+    """A temporary directory with only the model's json files: layers timed from it are random-weight layers on
+    every rank, so held and un-held ranks time the same thing (real weights time differently on a MoE: routing)."""
+    import shutil
+    import tempfile
+    out = tempfile.mkdtemp(prefix="omarchy-cfg-")
+    for name in os.listdir(path):
+        if name.endswith(".json"):
+            shutil.copyfile(os.path.join(path, name), os.path.join(out, name))
+    return out
+
+
+def _split_info(model_ref, download=_download_json):
+    """The model's numbers for the split. A model this node holds whole is read from its cache; otherwise from the
+    json-only download, since a rank holds only its own shard files (issue 96) and must not fetch the rest."""
+    from . import planner
+    return planner.model_info(model_ref) or planner.model_info_from_index(download(model_ref), model_ref)
+
+
 def _measured_split(model_ref, group):
     """Every rank measures its ms per layer and its layer cap (free memory),
     all_gathers both, and runs planner.choose_split on the same numbers.
     The measurement runs in a child process: in-process, rank 0's later Metal
     decode ran ~12x slower in 9 of 13 sessions (ClusterRun5)."""
-    import subprocess
     import sys
     import mlx.core as mx
     from . import facts, planner
-    info = planner.model_info(model_ref)
-    if not info:
-        raise RuntimeError("model not in the local HF cache: %s" % model_ref)
+    info = _split_info(model_ref)
     cap = planner.max_layers(facts.memory_free_bytes(), info)
-    out = subprocess.run(
-        [sys.executable, "-c", "import sys; from omarchy_cluster.adapters import register_adapters; register_adapters(); "
-         "from mlx_lm.utils import load; "
-         "from omarchy_cluster.rank import _layer_ms; print(_layer_ms(load(sys.argv[1], lazy=True)[0]))",
-         model_ref], capture_output=True, text=True, check=True).stdout
+    # time the layers from the config alone (shapes and quantisation, no weight files): a rank holds only its own shards
+    cfg_dir = _config_only_dir(info["path"])
+    try:
+        out = _time_layers(cfg_dir)
+    finally:
+        import shutil
+        shutil.rmtree(cfg_dir, ignore_errors=True)
     now = float(out.split()[-1])
-    ms = _fastest_layer_ms("%s %s" % (sys.executable, model_ref), now)
+    ms = _fastest_layer_ms("cfg %s %s" % (sys.executable, model_ref), now)
     rows = mx.distributed.all_gather(mx.array([[ms, cap]], mx.float32), group=group,
                                      stream=mx.cpu).tolist()
+    return _choose(rows, info, group, now, ms)
+
+
+def _time_layers(cfg_dir):
+    """ms per layer measured in a child process (see _measured_split), from the config-only directory."""
+    import subprocess
+    import sys
+    return subprocess.run(
+        [sys.executable, "-c", "import sys; from pathlib import Path; "
+         "from omarchy_cluster.adapters import register_adapters; register_adapters(); "
+         "from mlx_lm.utils import load_model; "
+         "from omarchy_cluster.rank import _layer_ms; "
+         "print(_layer_ms(load_model(Path(sys.argv[1]), lazy=True, strict=False)[0]))",
+         cfg_dir], capture_output=True, text=True, check=True).stdout
+
+
+def _choose(rows, info, group, now, ms):
+    from . import planner
     split = planner.choose_split([r[0] for r in rows], [int(r[1]) for r in rows], info["layers"])
     print("rank %d measured %.2f ms/layer (fastest seen %.2f), cap %d layers; all ranks %s -> split %s"
-          % (group.rank(), now, ms, cap, rows, split), flush=True)
+          % (group.rank(), now, ms, int(rows[group.rank()][1]), rows, split), flush=True)
     if split is None:
         raise RuntimeError("ranks cannot hold %d layers: %s" % (info["layers"], rows))
     return split, [r[0] for r in rows]

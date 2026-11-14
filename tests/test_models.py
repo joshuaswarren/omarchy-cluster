@@ -386,3 +386,62 @@ def test_the_planner_finds_a_model_in_the_moved_cache_too(tmp_path, monkeypatch)
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
     snap = _snapshot(tmp_path, "org/good", "aaa", 100)
     assert planner.find_model_path("org/good") == str(snap)
+
+
+def _json_only_snapshot(tmp_path, total=17_200_000_000):
+    snap = tmp_path / "json-only"
+    snap.mkdir()
+    (snap / "config.json").write_text(json.dumps({"num_hidden_layers": 48, "hidden_size": 2048,
+                                                  "num_key_value_heads": 4, "num_attention_heads": 32}))
+    (snap / "model.safetensors.index.json").write_text(json.dumps({
+        "metadata": {"total_size": total}, "weight_map": {"a": "model-00001-of-00002.safetensors",
+                                                         "b": "model-00002-of-00002.safetensors"}}))
+    return snap
+
+
+def test_a_model_is_sized_from_its_index_when_this_rank_holds_no_weight_files(tmp_path):
+    """Issue 96: a rank that holds only its own shards (or none yet) sized the model from the files present."""
+    from omarchy_cluster import planner
+    snap = _json_only_snapshot(tmp_path)
+    info = planner.model_info_from_index(str(snap), "org/big")
+    assert (info["layers"], info["weights_bytes"], info["ref"]) == (48, 17_200_000_000, "org/big")
+
+
+def test_an_index_without_a_total_falls_back_to_the_files_present(tmp_path):
+    from omarchy_cluster import planner
+    snap = _json_only_snapshot(tmp_path)
+    (snap / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {}}))
+    (snap / "model.safetensors").write_bytes(b"x" * 10)
+    assert planner.model_info_from_index(str(snap), "org/big")["weights_bytes"] == 10
+
+
+def test_the_split_sizes_an_uncached_model_from_the_json_only_download(tmp_path):
+    from omarchy_cluster import rank
+    snap = _json_only_snapshot(tmp_path)
+    asked = []
+    info = rank._split_info("org/not-here", lambda ref: asked.append(ref) or str(snap))
+    assert asked == ["org/not-here"] and info["weights_bytes"] == 17_200_000_000
+
+
+def test_the_split_does_not_download_anything_for_a_model_held_whole(tmp_path):
+    from omarchy_cluster import rank
+    snap = _json_only_snapshot(tmp_path)
+    (snap / "model-00001-of-00002.safetensors").write_bytes(b"x")
+    (snap / "model-00002-of-00002.safetensors").write_bytes(b"x")
+    info = rank._split_info(str(snap), lambda ref: pytest.fail("downloaded"))
+    assert info["path"] == str(snap)
+
+
+def test_layers_are_always_timed_from_a_config_only_copy_so_every_rank_times_the_same_thing(tmp_path):
+    """Random-weight layers time differently from real ones (MoE routing), so a rank that holds the weights must not
+    time those while its peer times random ones: the copy holds the json files and no weight file."""
+    from omarchy_cluster import rank
+    snap = _json_only_snapshot(tmp_path)
+    (snap / "model-00001-of-00002.safetensors").write_bytes(b"x")
+    (snap / "notes.txt").write_text("not json")
+    copy = rank._config_only_dir(str(snap))
+    try:
+        assert sorted(os.listdir(copy)) == ["config.json", "model.safetensors.index.json"]
+    finally:
+        import shutil
+        shutil.rmtree(copy)

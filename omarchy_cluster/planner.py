@@ -90,6 +90,22 @@ def model_info(model_ref):
     return _info(model_ref, path, cfg, weights)
 
 
+def model_info_from_index(path, ref):
+    """The model's numbers from a directory that may hold only its json files (a rank that has not downloaded its
+    shards yet, or holds only its own): weights_bytes is the index's total_size, else the weight files present."""
+    with open(os.path.join(path, "config.json")) as f:
+        cfg = json.load(f)
+    total = None
+    try:
+        with open(os.path.join(path, "model.safetensors.index.json")) as f:
+            total = json.load(f).get("metadata", {}).get("total_size")
+    except (OSError, ValueError, AttributeError):
+        pass
+    if not isinstance(total, int) or total <= 0:
+        total = sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path) if f.endswith(".safetensors"))
+    return _info(ref, path, cfg, total)
+
+
 HUB = "https://huggingface.co"
 
 
