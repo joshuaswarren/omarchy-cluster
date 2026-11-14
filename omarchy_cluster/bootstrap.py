@@ -3,21 +3,28 @@
 Steps, in order: detect the OS, check Python, install Avahi on Linux, copy this package,
 copy the cluster token, run `install-agent` there, wait for the agent to answer, and print
 the name the node shows up under in `omarchy-cluster discover`.
+
+`omarchy-cluster join <candidate>` (DH-P7-01) is the one-command front door on the same
+machinery: resolve the candidate from discover, authenticate (approved ssh key by default),
+refuse any peer that is not Omarchy Linux, bootstrap it, and journal the join.
 """
 from __future__ import annotations
 
 import io
+import getpass
 import os
 import subprocess
 import tarfile
 import time
 import urllib.request
+from datetime import datetime
 
 from . import client, discover
 from . import token as cluster_token
 
 AGENT_PORT = 8025
 REMOTE_SRC = "~/.local/share/omarchy-cluster/src"
+JOURNAL = "~/.local/state/omarchy-cluster/join.log"
 # (probe command name, install command) in the order tried; each install runs under sudo -n.
 AVAHI_INSTALL = [
     ("pacman", "pacman -S --noconfirm --needed avahi nss-mdns"),
@@ -61,14 +68,25 @@ def _package_tarball(src_dir):
     return buf.getvalue()
 
 
+def _resolve_token(token):
+    """The token to send: the one given, or this machine's own when none was given. An explicit empty
+    token is an error: falling back would send another cluster's secret to a peer the caller meant to
+    give a different one."""
+    if token is None:
+        token = cluster_token.read()
+        if not token:
+            raise BootstrapError("no cluster token on this machine: run `omarchy-cluster install-agent` "
+                                 "here first, or pass --token-file")
+    elif not token.strip():
+        raise BootstrapError("the token to send is empty; give a --token-file with a token in it")
+    return token
+
+
 def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, check=None,
               say=print):
     """Install and start the agent on target (user@host). Returns the node's discover name."""
-    token = token or cluster_token.read()
+    token = _resolve_token(token)
     check = check or (lambda host, port: agent_answers(host, port, token=token))  # the new agent wants the token we copy
-    if not token:
-        raise BootstrapError("no cluster token on this machine: run `omarchy-cluster install-agent` "
-                             "here first, or pass --token-file")
     src_dir = src_dir or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     host = target.rpartition("@")[2]
 
@@ -132,3 +150,73 @@ def _ensure_avahi(target, ssh, say):
                                  "sudo %s && sudo %s, then run bootstrap again"
                                  % (target, (err or out).strip(), target, install, enable))
     say("%s: installed avahi" % target)
+
+
+def authorize_join(target, ssh=ssh_run, mode="approved-key"):
+    """The one function behind both peer-approval paths (DH-P7-01 step 3).
+
+    approved-key (default): this machine's ssh key was approved once on the peer, so
+    BatchMode ssh already works. one-time-code: the peer types a code; not built yet,
+    that is omarchy-cluster issue 64."""
+    if mode != "approved-key":
+        raise BootstrapError("join --auth %s is not implemented yet; the secure plug-and-play "
+                             "join is omarchy-cluster issue 64" % mode)
+    rc, out, err = ssh(target, "true")
+    if rc != 0:
+        raise BootstrapError("ssh to %s failed (%s). Approve this machine's key once on the peer: "
+                             "ssh-copy-id %s, then run join again"
+                             % (target, (err or out).strip(), target))
+
+
+def _is_omarchy(target, ssh):
+    """(ok, reason): reason names why the peer is not Omarchy Linux (DH-P7-01 step 2)."""
+    rc, out, err = ssh(target, "uname -s")
+    if rc != 0:
+        return False, "ssh failed: %s" % (err or out).strip()
+    os_name = out.strip()
+    if os_name != "Linux":
+        return False, "runs %s, not Omarchy Linux" % (os_name or "an unknown OS")
+    rc, out, _ = ssh(target, "cat /etc/os-release 2>/dev/null || true")
+    fields = {}
+    for line in out.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            fields[key.strip()] = value.strip().strip('"')
+    if fields.get("ID", "").lower() == "omarchy" or "omarchy" in fields.get("NAME", "").lower():
+        return True, fields.get("PRETTY_NAME", "Omarchy Linux")
+    # An installed Omarchy keeps its Arch os-release (the lab M1 reports ID=archarm); its own script says what it is.
+    rc, out, _ = ssh(target, "omarchy-version")
+    if rc == 0 and out.strip():
+        return True, "Omarchy %s" % out.strip()
+    return False, "not Omarchy Linux: %s" % (fields.get("PRETTY_NAME")
+                                             or "/etc/os-release is missing or has no Omarchy id")
+
+
+def join(candidate, user=None, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT,
+         check=None, say=print, clock=datetime.now, mode="approved-key",
+         find=discover.discover_nodes):
+    """`omarchy-cluster join <candidate>`: install the agent on the peer with no hand-written
+    config and journal the join. Returns the node's discover name.
+
+    candidate is a name from `omarchy-cluster discover`, or an explicit user@host."""
+    token = _resolve_token(token)  # before any remote command
+    if "@" in candidate:
+        target = candidate
+    else:
+        nodes = find()
+        node = nodes.get(candidate)
+        if node is None:
+            raise BootstrapError("no candidate %r; `omarchy-cluster discover` lists: %s"
+                                 % (candidate, ", ".join(sorted(nodes)) or "(none)"))
+        target = "%s@%s" % (user or getpass.getuser(), node.get("ip") or node.get("host"))
+    authorize_join(target, ssh, mode)
+    ok, why = _is_omarchy(target, ssh)
+    if not ok:
+        raise BootstrapError("%s refused: %s" % (target, why))
+    name = bootstrap(target, ssh=ssh, src_dir=src_dir, token=token, port=port, check=check, say=say)
+    path = os.path.expanduser(JOURNAL)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as f:
+        f.write("%s  join  %s -> %s (%s)\n" % (clock().strftime("%Y-%m-%d %H:%M:%S"),
+                                               candidate, name, target))
+    return name
