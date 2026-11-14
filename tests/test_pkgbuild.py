@@ -1,6 +1,6 @@
 """The omarchy-cluster Arch package: one noarch package built from a local source archive, no downloads."""
+import re
 import subprocess
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,8 +18,8 @@ def test_one_noarch_package_named_omarchy_cluster():
 
 
 def test_version_matches_pyproject():
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-    assert var("pkgver") == [project["version"]]
+    version = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(), re.M).group(1)
+    assert var("pkgver") == [version]
 
 
 def test_sources_are_local_and_nothing_is_fetched():
