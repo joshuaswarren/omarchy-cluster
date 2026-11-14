@@ -13,6 +13,7 @@ Files the tools read and write:
 | `~/.local/state/omarchy-cluster/links.json` | probe's measured routes (override with `--links` / `--out`) |
 | `~/.local/state/omarchy-cluster/layer-ms.json` | fastest decode ms/layer seen per node |
 | `~/.local/state/omarchy-cluster/live-env` | default `OMARCHY_LIVE_ENV` file |
+| `~/.local/state/omarchy-cluster/joined` | one line per node `bootstrap` installed: its name and the `address:port` endpoints this machine trusts for it |
 
 ## Node commands
 
@@ -39,7 +40,18 @@ Python the agent runs in.
 
 ### `discover [--mdns-timeout 4.0]`
 Lists nodes found over mDNS (`_omarchy-cluster._tcp`, Avahi on Linux, dns-sd on
-macOS) plus any plain-text hosts-file override.
+macOS) plus any plain-text hosts-file override (`name=host` or `name=host:port`). The cluster
+token goes only to trusted endpoints: this machine (loopback, port 8025; its own mDNS
+advertisement is ignored), hosts-file entries (their port, 8025 if none), and nodes
+`bootstrap` installed (recorded in `joined` with the address and port used then, plus the
+addresses the node reported). The port in an mDNS advertisement is never used. Any other
+advertiser is listed with the error `not joined` and gets no request at all, because anyone
+on the network can advertise the service under any name. The client does not follow HTTP
+redirects on token-bearing requests. A node whose address changed shows `not joined` until
+`bootstrap` runs on it again. Pools set up before this rule need that one run per node, or a
+hosts-file line. Limit: a recorded address stays trusted until removed; an address that
+another machine later takes over (DHCP reuse) receives the token, and the token crosses
+plain HTTP (issue 98).
 
 ### `probe [--seconds 3.0] [--out PATH]`
 Measures RTT and bandwidth for every node pair and every interface route, writes
