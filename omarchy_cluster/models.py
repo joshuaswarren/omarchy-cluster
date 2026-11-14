@@ -53,17 +53,23 @@ WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".npz", ".bin")
 
 
 def snapshot_complete(snap):
-    """True when serve could load this snapshot: config.json, and every shard the safetensors index names.
-    An interrupted pull can leave config, the index and some shards."""
+    """True when serve could load this snapshot: config.json plus weights. With a safetensors index, every
+    shard it names must be there; without one, at least one weight file. An interrupted pull can leave the
+    config, the index, or some shards. Malformed index data counts as not complete."""
     if not os.path.isfile(os.path.join(snap, "config.json")):
         return False
     index = os.path.join(snap, "model.safetensors.index.json")
     if not os.path.isfile(index):
-        return True
+        return any(f.endswith(WEIGHT_SUFFIXES) and os.path.isfile(os.path.join(snap, f)) for f in os.listdir(snap))
     try:
         with open(index) as f:
-            shards = set(json.load(f)["weight_map"].values())
-    except (OSError, ValueError, KeyError, AttributeError):
+            weight_map = json.load(f)["weight_map"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    if not isinstance(weight_map, dict) or not weight_map:
+        return False
+    shards = list(weight_map.values())
+    if not all(isinstance(shard, str) and shard and os.path.basename(shard) == shard for shard in shards):
         return False
     return all(os.path.isfile(os.path.join(snap, shard)) for shard in shards)
 

@@ -279,3 +279,39 @@ def test_the_planner_does_not_resolve_or_size_a_half_pulled_model(fake_cache, mo
     (snap / "model-00002-of-00002.safetensors").write_bytes(b"x" * 100)
     assert planner.find_model_path("org/partial") == str(target / "hub" / "models--org--partial" / "snapshots" / "rev1")
 
+
+
+def _snap_with_config(cache, repo="org--cfg", index=None, weights=()):
+    snap = cache / ("models--" + repo) / "snapshots" / "rev1"
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text("{}")
+    if index is not None:
+        (snap / "model.safetensors.index.json").write_text(json.dumps(index))
+    for name in weights:
+        (snap / name).write_bytes(b"x" * 10)
+    return snap
+
+
+def test_a_config_only_snapshot_is_not_listed_or_resolved(fake_cache):
+    snap = _snap_with_config(fake_cache)
+    assert not models.snapshot_complete(str(snap))
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+
+
+def test_an_unindexed_single_file_model_is_listed(fake_cache):
+    _snap_with_config(fake_cache, weights=["model.safetensors"])
+    assert [row["repo"] for row in models.list_local()] == ["org/cfg", "org/good"]
+
+
+@pytest.mark.parametrize("index", [
+    {"weight_map": {"a": []}},
+    {"weight_map": {"a": 1}},
+    {"weight_map": {}},
+    {"weight_map": []},
+    {"weight_map": {"a": "../outside.safetensors"}},
+    {"no": "weight_map"},
+    [],
+])
+def test_a_malformed_or_empty_index_excludes_the_snapshot_without_raising(fake_cache, index):
+    _snap_with_config(fake_cache, index=index, weights=["model.safetensors"])
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
