@@ -109,7 +109,7 @@ def test_rank_env_and_the_adapter_path_reach_a_macos_rank_too(monkeypatch):
             return b"{}"
 
     monkeypatch.setattr(cli, "_read_local_token", lambda: "t")
-    monkeypatch.setattr(cli.urllib.request, "urlopen", lambda req, timeout: sent.append(json.loads(req.data)) or Reply())
+    monkeypatch.setattr(cli.client, "urlopen", lambda req, timeout: sent.append(json.loads(req.data)) or Reply())
     args = serve_args("m", rank_pythonpath="~/adapters", rank_env=["MLX_DISABLE_COMPILE=1"], engine_url="http://10.0.0.1:18031")
     cli._launch_rank_via_agent({"ip": "10.0.0.1"}, 1, "m", "4,4", "[]", args, "macOS 26")
     assert sent[0]["env"] == {"MLX_DISABLE_COMPILE": "1"}

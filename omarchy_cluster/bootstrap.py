@@ -43,7 +43,7 @@ def agent_answers(host, port, wait_s=30.0, token=None):
     while True:
         try:
             req = urllib.request.Request("http://%s:%d/v1/health" % (host, port), headers=client._headers(token=token))
-            with urllib.request.urlopen(req, timeout=3) as r:
+            with client.urlopen(req, 3) as r:
                 if r.status == 200:
                     return True
         except OSError:
@@ -98,7 +98,7 @@ def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, ch
     if not check(host, port):
         raise BootstrapError("the agent on %s:%d did not answer /v1/health within 30 s" % (host, port))
     name = step("hostname", "hostname -s").strip()
-    discover.remember_joined(name, _addresses(host, port, token))
+    discover.remember_joined(name, _addresses(host, port, token), port)
     say("%s: agent running. It shows up in `omarchy-cluster discover` as %s" % (target, name))
     return name
 
