@@ -136,6 +136,45 @@ def list_local():
     return out
 
 
+def cache_key(ref):
+    """What a node's cache inventory calls this model reference: the repo id as is, `repo@revision` for a path into
+    a cache snapshot (.../models--org--name/snapshots/<rev>; read from the text, so a path that exists only on another
+    machine still resolves), and any other string, such as a plain model directory, as is."""
+    parts = str(ref).split("/")
+    for i, part in enumerate(parts):
+        repo = _repo_from_dir(part)
+        if repo and len(parts) > i + 2 and parts[i + 1] == "snapshots" and parts[i + 2]:
+            return "%s@%s" % (repo, parts[i + 2])
+    return ref
+
+
+def _weight_bytes(snap):
+    return sum(os.path.getsize(os.path.join(snap, f)) for f in os.listdir(snap) if f.endswith(".safetensors"))
+
+
+def cached_weight_bytes():
+    """{key: bytes of .safetensors files} of what this node holds complete, so the planner need not charge it as a
+    download: `repo` for the snapshot serve loads (pick_snapshot) and `repo@revision` for every complete snapshot."""
+    out = {}
+    base = cache_dir()
+    try:
+        entries = sorted(os.listdir(base))
+    except (FileNotFoundError, NotADirectoryError):
+        return out
+    for name in entries:
+        repo = _repo_from_dir(name)
+        if repo is None:
+            continue
+        served = pick_snapshot(os.path.join(base, name))
+        if served:
+            out[repo] = _weight_bytes(served)
+        snaps = os.path.join(base, name, "snapshots")
+        for rev in sorted(os.listdir(snaps)) if os.path.isdir(snaps) else ():
+            if snapshot_complete(os.path.join(snaps, rev)):
+                out["%s@%s" % (repo, rev)] = _weight_bytes(os.path.join(snaps, rev))
+    return out
+
+
 def _downloader():
     import huggingface_hub
     return huggingface_hub.snapshot_download
