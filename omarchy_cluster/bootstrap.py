@@ -240,6 +240,7 @@ def join(candidate, user=None, ssh=ssh_run, src_dir=None, token=None, port=AGENT
 
 AGENT_UNIT = "omarchy-cluster-agent.service"
 REMOTE_TOKEN = "~/.config/omarchy-cluster/token"
+NOT_ENABLED = ("disabled", "static", "indirect", "generated", "transient", "masked", "masked-runtime")  # UnitFileState values with no enablement link
 
 
 def _stop_agent(target, ssh):
@@ -251,7 +252,8 @@ def _stop_agent(target, ssh):
     state = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
     if state.get("LoadState") == "not-found":
         return "agent not installed"
-    if state.get("ActiveState") in ("inactive", "failed") and state.get("UnitFileState") != "enabled":
+    # Any other UnitFileState (enabled, enabled-runtime, linked, linked-runtime, alias, or one we do not know) gets `disable`.
+    if state.get("ActiveState") in ("inactive", "failed") and state.get("UnitFileState") in NOT_ENABLED:
         return "agent already stopped and disabled"
     rc, out, err = ssh(target, "systemctl --user disable --now %s" % AGENT_UNIT)
     if rc != 0:

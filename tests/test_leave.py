@@ -39,7 +39,8 @@ class PeerSsh:
             if not self.installed:
                 return 0, "LoadState=not-found\nActiveState=inactive\nUnitFileState=\n", ""
             return 0, "LoadState=loaded\nActiveState=%s\nUnitFileState=%s\n" % (
-                "active" if self.active else "inactive", "enabled" if self.enabled else "disabled"), ""
+                self.active if isinstance(self.active, str) else "active" if self.active else "inactive",
+                self.enabled if isinstance(self.enabled, str) else "enabled" if self.enabled else "disabled"), ""
         if command.startswith("systemctl --user disable --now"):
             if self.stop_fails:
                 return 1, "", "Failed to stop"
@@ -92,6 +93,16 @@ def test_leave_is_safe_to_run_twice(journal):
     run_leave(peer)
     assert not any("disable --now" in c or c.startswith("rm -f") for c in peer.calls)
     assert journal.read_text().splitlines()[-1].endswith("agent already stopped and disabled, token already gone")
+
+
+@pytest.mark.parametrize("active", ["inactive", "failed"])
+@pytest.mark.parametrize("enabled", ["enabled-runtime", "linked", "linked-runtime"])
+def test_a_stopped_unit_that_is_still_enabled_in_any_way_is_disabled_before_the_token_goes(journal, active, enabled):
+    peer = PeerSsh(active=active, enabled=enabled)
+    out = run_leave(peer)
+    assert any(c.startswith("systemctl --user disable --now " + UNIT) for c in peer.calls)
+    assert peer.enabled is False and not peer.token
+    assert out == ["%s@10.0.0.6: agent stopped and disabled, token removed" % getpass.getuser()]
 
 
 def test_a_peer_with_no_agent_unit_is_reported_as_not_installed(journal):
