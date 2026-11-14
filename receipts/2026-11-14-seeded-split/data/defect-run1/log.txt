@@ -1,0 +1,19 @@
+2026-11-13T23:57:28Z whole: waiting for both GPU queues idle
+2026-11-13T23:57:38Z whole: serve 
+2026-11-13T23:57:51Z whole: serve rc=0
+2026-11-13T23:57:56Z whole: ready=1
+2026-11-13T23:57:56Z whole greedy: 571 bytes
+2026-11-13T23:58:01Z whole s7a: 550 bytes
+2026-11-13T23:58:06Z whole s7b: 550 bytes
+2026-11-13T23:58:10Z whole s8: 552 bytes
+2026-11-13T23:58:11Z whole: stopped
+2026-11-13T23:58:11Z split: waiting for both GPU queues idle
+2026-11-13T23:58:21Z split: serve --stages 2 --ring-ip node-a=ring-ip-a --ring-ip node-b=ring-ip-b
+2026-11-13T23:58:29Z split: serve rc=0
+2026-11-13T23:58:34Z split: ready=1
+2026-11-13T23:58:35Z split greedy: 586 bytes
+2026-11-13T23:58:40Z split s7a: 586 bytes
+2026-11-13T23:58:45Z split s7b: 587 bytes
+2026-11-13T23:58:50Z split s8: 588 bytes
+2026-11-13T23:58:51Z split: stopped
+46a68b6e080c1774ffb785660cb0996b741dd24493048ffb72cc8a019162d900  ~/scratch/w7G-p711/src/omarchy_cluster/rank.py
