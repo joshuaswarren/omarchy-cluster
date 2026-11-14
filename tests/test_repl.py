@@ -130,7 +130,9 @@ def test_a_malformed_200_body_is_an_error_and_never_enters_the_history(gateway, 
     assert seen[1]["body"]["messages"] == [{"role": "user", "content": "second"}]
 
 
-@pytest.mark.parametrize("timings", [12, {"tokens_per_s": "unknown"}, {"tokens_per_s": True}, ["x"]])
+@pytest.mark.parametrize("timings", [12, {"tokens_per_s": "unknown"}, {"tokens_per_s": True}, ["x"],
+                                     {"tokens_per_s": 10 ** 400}, {"tokens_per_s": float("inf")},
+                                     {"tokens_per_s": float("nan")}, {"tokens_per_s": -3}])
 def test_a_malformed_timing_is_dropped_and_the_reply_still_prints(gateway, home, timings):
     url, seen, replies = gateway
     replies.append((200, {"choices": [{"message": {"content": "ok"}}], "timings": timings}))

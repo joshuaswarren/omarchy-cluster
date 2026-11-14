@@ -1,6 +1,7 @@
 """`omarchy-cluster chat`: a small terminal chat over the gateway's /v1/chat/completions."""
 from __future__ import annotations
 
+import math
 import os
 from datetime import datetime
 
@@ -11,10 +12,21 @@ DEFAULT_GATEWAY = "http://127.0.0.1:8020"
 JOURNAL = "~/.local/state/omarchy-cluster/chat.log"
 
 
+def _rate(value):
+    """A tokens-per-second value as a float, or None when it is not a finite non-negative number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        rate = float(value)  # a JSON integer beyond float range raises OverflowError
+    except OverflowError:
+        return None
+    return rate if math.isfinite(rate) and rate >= 0 else None
+
+
 def _reply(res):
     """(reply text, tokens per second or None) from one gateway body; any other 200 shape is an error.
 
-    The text must be a string. A timing that is not a number is dropped: the reply is still good."""
+    The text must be a string. A timing that is not a finite number is dropped: the reply is still good."""
     try:
         text = res["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
@@ -24,9 +36,7 @@ def _reply(res):
                            "(no choices[0].message.content string)")
     timings = res.get("timings")
     tokps = timings.get("tokens_per_s") if isinstance(timings, dict) else None
-    if isinstance(tokps, bool) or not isinstance(tokps, (int, float)):
-        tokps = None
-    return text, tokps
+    return text, _rate(tokps)
 
 
 def repl(url=DEFAULT_GATEWAY, model="omarchy-cluster", max_tokens=256, system=None, token=None,
