@@ -118,13 +118,12 @@ class Gateway(BaseHTTPRequestHandler):
 
     @classmethod
     def _aggregate_rate(cls, samples):
-        """Tokens per wall second over a window of (arrival, finish, tokens) samples:
-        the span runs from the earliest arrival to the last finish, so a batch of
-        completions that finish together is counted once over the wall time it
-        actually spanned instead of overcounting against earlier rounds. The
-        earliest arrival, not the first finish's arrival: _measured is ordered
-        by completion, and with concurrent requests a later-arriving request can
-        finish first."""
+        """Tokens per wall second over a window of (admitted, finish, tokens)
+        samples: the span runs from the earliest engine admission to the last
+        finish, so it covers the served work for these tokens (not queue time
+        that predates an evicted completion). The earliest admission, not the
+        first finish's admission: _measured is completion-ordered, and with
+        concurrent requests a later-admitted request can finish first."""
         if len(samples) < 2:
             return None
         span = samples[-1][1] - min(a for a, _, _ in samples)
@@ -217,7 +216,6 @@ class Gateway(BaseHTTPRequestHandler):
         data = json.dumps(payload).encode()
         rq = urllib.request.Request(self.engine + "/generate", data=data,
                                     headers={"Content-Type": "application/json"})
-        arrived = time.perf_counter()  # the rate window counts from arrival, queue wait included
         slots = self.slots  # the gate resizes in place; release the object you acquired
         if not slots.acquire(timeout=self.queue_wait_s):
             body = json.dumps({"error": "all %d request slots are busy; retry"
@@ -228,6 +226,7 @@ class Gateway(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             return self.wfile.write(body)
+        admitted = time.perf_counter()  # exclude queued time; the engine starts work now
         with self._count_lock:
             Gateway._running += 1
         try:
@@ -247,7 +246,7 @@ class Gateway(BaseHTTPRequestHandler):
             return self._json(400, {"error": res["error"]})
         if "error" in res:
             return self._json(502, {"error": "engine: %s" % res["error"]})
-        self._record_rate(arrived, res["completion_tokens"])
+        self._record_rate(admitted, res["completion_tokens"])
         now = int(time.time())
         common = {
             "id": "chatcmpl-omarchy-%d" % now,
