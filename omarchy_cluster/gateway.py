@@ -27,11 +27,45 @@ CONCURRENCY_FLOOR_TOKPS = 154.63  # the k=1 aggregate decode tok/s from the rece
 RATE_WINDOW = 8  # completions per aggregate-rate reading (two rounds of 4 clients)
 
 
+class Slots:
+    """One shared admission gate whose limit can change while requests run or
+    wait: a permit pool (held under a condition) plus the current limit every
+    waiter re-checks. A downshift therefore also stops waiters already parked
+    on it; replacing the semaphore would leave the old queue running at the
+    old limit in its own permit pool. acquire/release match the semaphore
+    calls the request path already makes."""
+
+    def __init__(self, limit):
+        self._cond = threading.Condition()
+        self.limit = limit
+        self.held = 0
+
+    def acquire(self, timeout):
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            while self.held >= self.limit:
+                left = deadline - time.monotonic()
+                if left <= 0 or not self._cond.wait(left):
+                    return False
+            self.held += 1
+            return True
+
+    def release(self):
+        with self._cond:
+            self.held -= 1
+            self._cond.notify()
+
+    def resize(self, limit):
+        with self._cond:
+            self.limit = limit
+            self._cond.notify_all()  # a raise must re-evaluate every waiter; a lower just blocks future entries
+
+
 class Gateway(BaseHTTPRequestHandler):
     engine = None  # base url of rank-0 engine
     max_concurrent = MAX_CONCURRENT
     slot_count = MAX_CONCURRENT  # permits in `slots` right now; the 503 text uses it
-    slots = threading.BoundedSemaphore(MAX_CONCURRENT)  # engine calls in flight at once
+    slots = Slots(MAX_CONCURRENT)  # engine calls in flight at once
     queue_wait_s = QUEUE_WAIT_S  # how long a request waits for a slot before the 503
     floor_tokps = CONCURRENCY_FLOOR_TOKPS
     rate_window = RATE_WINDOW
@@ -74,20 +108,22 @@ class Gateway(BaseHTTPRequestHandler):
     def _record_rate(cls, tokens):
         """Aggregate decode tok/s over the last rate_window completions on the gateway's
         own wall clock (per-request tok/s falls when streams share an engine, so it is the
-        wrong gate signal). Above floor_tokps the configured k runs; at or below it the
-        gate switches off and requests queue one at a time. The flip swaps `slots`; each
-        request releases the very object it acquired."""
+        wrong gate signal). The first completion's tokens predate the window's start, so
+        they stay out of the numerator. Above floor_tokps the configured k runs; at or
+        below it the gate switches off and requests queue one at a time. resize() keeps
+        one shared permit pool: waiters already parked re-check the new limit."""
         with cls._count_lock:
             cls._measured.append((time.perf_counter(), tokens))
             if len(cls._measured) < 2:
                 return
             span = cls._measured[-1][0] - cls._measured[0][0]
-            rate = sum(t for _, t in cls._measured) / span if span > 0 else None
+            tokens_in_window = sum(t for _, t in list(cls._measured)[1:])
+            rate = tokens_in_window / span if span > 0 else None
             if rate is None:
                 return
             k = cls.max_concurrent if rate > cls.floor_tokps else 1
             if k != cls.slot_count:
-                cls.slots = threading.BoundedSemaphore(k)
+                cls.slots.resize(k)
                 cls.slot_count = k
 
     def do_GET(self):
@@ -242,7 +278,7 @@ def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031", max_concurrent=MAX_
     Gateway.engine = engine.rstrip("/")
     Gateway.max_concurrent = max_concurrent
     Gateway.slot_count = max_concurrent
-    Gateway.slots = threading.BoundedSemaphore(max_concurrent)
+    Gateway.slots = Slots(max_concurrent)
     Gateway._measured.clear()
     srv = ThreadingHTTPServer(("0.0.0.0", port), Gateway)
     srv.daemon_threads = True

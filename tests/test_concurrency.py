@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from omarchy_cluster.gateway import Gateway
+from omarchy_cluster.gateway import Gateway, Slots
 
 
 @pytest.fixture
@@ -139,7 +139,22 @@ def run_clients(gateway, prompts, stagger=0.0):
 def serve_slots(monkeypatch, k):
     monkeypatch.setattr(Gateway, "max_concurrent", k, raising=False)
     monkeypatch.setattr(Gateway, "slot_count", k, raising=False)
-    monkeypatch.setattr(Gateway, "slots", threading.BoundedSemaphore(k))
+    monkeypatch.setattr(Gateway, "slots", Slots(k))
+
+
+def test_the_slot_gate_resizes_while_requests_hold_it():
+    slots = Slots(2)
+    assert slots.acquire(timeout=1)
+    assert slots.acquire(timeout=1)
+    slots.resize(1)  # the downshift while two hold
+    assert not slots.acquire(timeout=0.05)  # held 2 >= 1: blocked
+    slots.release()
+    assert not slots.acquire(timeout=0.05)  # held 1 >= 1: still blocked — the downshift binds future entries
+    slots.release()
+    assert slots.acquire(timeout=0.05)  # held 0 < 1: serving one at a time
+    slots.release()
+    slots.resize(2)
+    assert slots.acquire(timeout=0.05) and slots.acquire(timeout=0.05)  # the raise admits again
 
 
 def test_three_queued_requests_run_one_at_a_time_in_arrival_order(fresh_gate, monkeypatch, http_server):
