@@ -188,6 +188,7 @@ def test_the_slot_gate_wakes_the_next_ticket_after_an_upshift():
     order = []
     lock = threading.Lock()
     all_admitted = threading.Event()
+    release_waiters = threading.Event()
 
     def waiter(i):
         if slots.acquire(timeout=5):
@@ -195,6 +196,7 @@ def test_the_slot_gate_wakes_the_next_ticket_after_an_upshift():
                 order.append(i)
                 if len(order) == 4:
                     all_admitted.set()
+            release_waiters.wait(5)  # hold permits so releases cannot wake later tickets
             slots.release()
 
     waiters = []
@@ -207,9 +209,10 @@ def test_the_slot_gate_wakes_the_next_ticket_after_an_upshift():
         while len(slots._tickets) < 4:
             time.sleep(0.02)
         slots.resize(5)
-        assert all_admitted.wait(2)  # the first admission must wake the next ticket
+        assert all_admitted.wait(2)  # each admission must wake the next ticket
         assert order == [0, 1, 2, 3]
     finally:
+        release_waiters.set()
         slots.release()
         for t in waiters:
             t.join(timeout=5)
