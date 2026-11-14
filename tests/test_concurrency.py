@@ -188,6 +188,8 @@ def test_the_aggregate_rate_counts_clustered_completions_over_their_own_span():
     # 200 tokens over the 1.25 s the window really spans; a first-finish anchor
     # would have read 800 and kept the gate on below the floor.
     assert Gateway._aggregate_rate([(0.0, 1.0, 96), (1.0, 2.0, 96)]) == 96.0  # k=1 steady
+    assert Gateway._aggregate_rate([(1.0, 1.5, 100), (0.0, 2.0, 100)]) == 100.0
+    # a later arrival finishing first: the min arrival anchors the span, not the first finish
     assert Gateway._aggregate_rate([(0.0, 1.0, 96)]) is None  # one sample: no window yet
 
 

@@ -121,10 +121,13 @@ class Gateway(BaseHTTPRequestHandler):
         """Tokens per wall second over a window of (arrival, finish, tokens) samples:
         the span runs from the earliest arrival to the last finish, so a batch of
         completions that finish together is counted once over the wall time it
-        actually spanned instead of overcounting against earlier rounds."""
+        actually spanned instead of overcounting against earlier rounds. The
+        earliest arrival, not the first finish's arrival: _measured is ordered
+        by completion, and with concurrent requests a later-arriving request can
+        finish first."""
         if len(samples) < 2:
             return None
-        span = samples[-1][1] - samples[0][0]
+        span = samples[-1][1] - min(a for a, _, _ in samples)
         return sum(t for _, _, t in samples) / span if span > 0 else None
 
     @classmethod
