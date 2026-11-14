@@ -193,7 +193,7 @@ def _is_omarchy(target, ssh):
 
 
 def join(candidate, user=None, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT,
-         check=agent_answers, say=print, clock=datetime.now, mode="approved-key",
+         check=None, say=print, clock=datetime.now, mode="approved-key",
          find=discover.discover_nodes):
     """`omarchy-cluster join <candidate>`: install the agent on the peer with no hand-written
     config and journal the join. Returns the node's discover name.

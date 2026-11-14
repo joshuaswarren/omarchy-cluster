@@ -210,3 +210,14 @@ def test_the_cli_refuses_an_empty_token_file_before_any_ssh(tmp_path, monkeypatc
     with pytest.raises(SystemExit) as ei:
         main(["join", "jw@10.0.0.9", "--token-file", str(empty)])
     assert "empty" in str(ei.value.code)  # sys.exit(message): the message is the code
+
+
+def test_join_checks_the_new_agent_with_the_token_it_copied_not_this_machines_own(src, journal, monkeypatch):
+    seen = []
+    monkeypatch.setattr(bootstrap, "agent_answers",
+                        lambda host, port, wait_s=30.0, token=None: seen.append(token) or True)
+    monkeypatch.setattr(bootstrap.cluster_token, "read", lambda: "this-machines-own-token")
+    out = []
+    bootstrap.join("m2-max", ssh=FakeSsh(), src_dir=str(src), say=out.append, token="the-peers-token",
+                   clock=CLOCK, find=lambda *a, **k: FOUND)
+    assert seen == ["the-peers-token"]
