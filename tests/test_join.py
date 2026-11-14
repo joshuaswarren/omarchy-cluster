@@ -17,10 +17,11 @@ class FakeSsh:
     """Records every remote command; answers the probes the way an Omarchy node would."""
 
     def __init__(self, os_name="Linux", release=OMARCHY_RELEASE, avahi=True, manager="pacman",
-                 hostname="omarchy-m2", fail_on=None):
+                 hostname="omarchy-m2", fail_on=None, omarchy_version=None):
         self.calls = []
         self.os_name, self.release, self.avahi = os_name, release, avahi
         self.manager, self.hostname, self.fail_on = manager, hostname, fail_on
+        self.omarchy_version = omarchy_version
 
     def __call__(self, target, command, stdin=None):
         self.calls.append((target, command, stdin))
@@ -28,6 +29,10 @@ class FakeSsh:
             return 1, "", "boom"
         if command.startswith("uname -s"):
             return 0, self.os_name + "\n", ""
+        if command.startswith("omarchy-version"):
+            if self.omarchy_version:
+                return 0, self.omarchy_version + "\n", ""
+            return 127, "", "omarchy-version: command not found"
         if "/etc/os-release" in command:
             return 0, self.release, ""
         if command.startswith("command -v avahi-daemon"):
@@ -167,3 +172,41 @@ def test_the_cli_wires_join_with_the_approved_key_default(capsys):
     assert ei.value.code == 0  # an unregistered verb would exit 2
     out = capsys.readouterr().out
     assert "--auth" in out and "approved-key" in out
+
+
+ARCH_ARM_RELEASE = 'NAME="Arch Linux ARM"\nPRETTY_NAME="Arch Linux ARM"\nID=archarm\nID_LIKE=arch\n'
+
+
+def test_a_real_omarchy_machine_with_an_arch_os_release_is_accepted(src, journal):
+    # The 13-inch M1 lab machine reports ID=archarm; `omarchy-version` is what says it is Omarchy.
+    ssh = FakeSsh(release=ARCH_ARM_RELEASE, omarchy_version="4.0.0.alpha.quattro")
+    name, _ = run_join(ssh, src)
+    assert name == "omarchy-m2"
+    assert any("install-agent" in c for c in ssh.commands())
+
+
+def test_plain_arch_without_omarchy_version_is_still_refused(src, journal):
+    ssh = FakeSsh(release=ARCH_ARM_RELEASE)
+    with pytest.raises(bootstrap.BootstrapError) as e:
+        run_join(ssh, src)
+    assert "Arch Linux ARM" in str(e.value)
+    assert not any("install-agent" in c for c in ssh.commands())
+
+
+def test_an_empty_token_is_an_error_not_a_fallback_to_this_machines_secret(src, journal, monkeypatch):
+    monkeypatch.setattr(bootstrap.cluster_token, "read", lambda: "local-secret")
+    ssh = FakeSsh()
+    with pytest.raises(bootstrap.BootstrapError, match="empty"):
+        run_join(ssh, src, token="")
+    assert ssh.calls == []  # refused before any remote command
+    assert not any(c[2] == b"local-secret" for c in ssh.calls)
+
+
+def test_the_cli_refuses_an_empty_token_file_before_any_ssh(tmp_path, monkeypatch):
+    from omarchy_cluster.cli import main
+    empty = tmp_path / "token"
+    empty.write_text("  \n")
+    monkeypatch.setattr(bootstrap, "ssh_run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ssh ran")))
+    with pytest.raises(SystemExit) as ei:
+        main(["join", "jw@10.0.0.9", "--token-file", str(empty)])
+    assert "empty" in str(ei.value.code)  # sys.exit(message): the message is the code

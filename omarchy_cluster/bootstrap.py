@@ -67,13 +67,24 @@ def _package_tarball(src_dir):
     return buf.getvalue()
 
 
+def _resolve_token(token):
+    """The token to send: the one given, or this machine's own when none was given. An explicit empty
+    token is an error: falling back would send another cluster's secret to a peer the caller meant to
+    give a different one."""
+    if token is None:
+        token = cluster_token.read()
+        if not token:
+            raise BootstrapError("no cluster token on this machine: run `omarchy-cluster install-agent` "
+                                 "here first, or pass --token-file")
+    elif not token.strip():
+        raise BootstrapError("the token to send is empty; give a --token-file with a token in it")
+    return token
+
+
 def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, check=agent_answers,
               say=print):
     """Install and start the agent on target (user@host). Returns the node's discover name."""
-    token = token or cluster_token.read()
-    if not token:
-        raise BootstrapError("no cluster token on this machine: run `omarchy-cluster install-agent` "
-                             "here first, or pass --token-file")
+    token = _resolve_token(token)
     src_dir = src_dir or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     host = target.rpartition("@")[2]
 
@@ -158,6 +169,10 @@ def _is_omarchy(target, ssh):
             fields[key.strip()] = value.strip().strip('"')
     if fields.get("ID", "").lower() == "omarchy" or "omarchy" in fields.get("NAME", "").lower():
         return True, fields.get("PRETTY_NAME", "Omarchy Linux")
+    # An installed Omarchy keeps its Arch os-release (the lab M1 reports ID=archarm); its own script says what it is.
+    rc, out, _ = ssh(target, "omarchy-version")
+    if rc == 0 and out.strip():
+        return True, "Omarchy %s" % out.strip()
     return False, "not Omarchy Linux: %s" % (fields.get("PRETTY_NAME")
                                              or "/etc/os-release is missing or has no Omarchy id")
 
@@ -169,6 +184,7 @@ def join(candidate, user=None, ssh=ssh_run, src_dir=None, token=None, port=AGENT
     config and journal the join. Returns the node's discover name.
 
     candidate is a name from `omarchy-cluster discover`, or an explicit user@host."""
+    token = _resolve_token(token)  # before any remote command
     if "@" in candidate:
         target = candidate
     else:

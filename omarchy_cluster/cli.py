@@ -249,6 +249,8 @@ def cmd_join(args):
                 token = f.read().strip()
         except OSError as e:
             sys.exit("join: cannot read --token-file: %s" % e)
+        if not token:
+            sys.exit("join: --token-file %s is empty; put the cluster token in it" % args.token_file)
     try:
         bootstrap.join(args.candidate, user=args.user, token=token, port=args.port, mode=args.auth)
     except bootstrap.BootstrapError as e:
