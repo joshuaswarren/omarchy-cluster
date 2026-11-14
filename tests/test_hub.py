@@ -140,6 +140,16 @@ def test_root_serves_a_page_that_polls_the_topology_endpoint():
     assert b"/v1/topology" in body
 
 
+def test_page_labels_a_zero_gbps_direction_instead_of_dropping_it():
+    handler = request(b"", path="/")
+    handler._send = Mock()
+    handler.do_GET()
+    code, ctype, body = handler._send.call_args.args
+    # A 0 Gb/s direction is measured; only the unmeasured ones (null, missing) are dropped.
+    assert b"filter((v) => v != null)" in body
+    assert b"filter((v) => v)" not in body
+
+
 def test_non_finite_and_negative_numeric_facts_never_reach_the_topology_json():
     body = ('{"name": "n", "facts": {"load1": NaN, "memory_total_bytes": Infinity, "cpus": 1e999,'
             ' "memory_free_bytes": -1, "chip": "M1"}}').encode()

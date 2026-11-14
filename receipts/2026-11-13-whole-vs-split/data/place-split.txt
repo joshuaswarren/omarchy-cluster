@@ -1,0 +1,6 @@
+split across 2 nodes
+PIPELINE: model-q25-7b (28 layers, KV 56.0 KB/token)
+  rank 0  node-a       fits up to 27 layers  (engine; samples, runs the last layers)
+  rank 1  node-b       fits up to 27 layers
+  split: chosen at rank start from measured ms/layer (serve --split overrides)
+  boundary node-a -> node-b  1.8 Gb/s rtt 0.24 ms  ~0.304 ms/token

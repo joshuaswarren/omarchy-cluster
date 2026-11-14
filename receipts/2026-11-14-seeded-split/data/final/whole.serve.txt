@@ -1,0 +1,7 @@
+whole on node-b
+REPLICA: ~/scratch/w7G-p711/model-q25-1p5b (28 layers, KV 28.0 KB/token)
+  rank 0  node-b       fits up to 28 layers  (engine; samples, runs the last layers)
+ring hostfile: ['127.0.0.1']
+rank 0 on ring-ip-b pid 2036942 (agent-reported, log: ~/.local/share/omarchy-cluster/rank0.log)
+gateway engine: http://ring-ip-b:8031
+gateway pid: 14303 (log: ~/.local/share/omarchy-cluster/gateway.log)

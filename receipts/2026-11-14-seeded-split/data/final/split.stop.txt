@@ -1,0 +1,3 @@
+stopped local process group 15679
+stopped rank pid 15676 on ring-ip-a: {'stopped': 15676, 'escalated': False, 'ports_swept': [52100, 8031]}
+stopped rank pid 2038057 on ring-ip-b: {'stopped': 2038057, 'escalated': False, 'ports_swept': [52100, 8031]}

@@ -1,0 +1,8 @@
+2026-11-13T22:08:27Z waiting for both GPU locks idle
+2026-11-13T22:08:37Z split: serve
+2026-11-13T22:08:45Z split: serve rc=0
+2026-11-13T22:10:30Z split: ready=1
+2026-11-13T22:10:32Z split rep 1: 859 bytes
+2026-11-13T22:10:34Z split rep 2: 859 bytes
+2026-11-13T22:10:36Z split rep 3: 859 bytes
+2026-11-13T22:10:37Z split: stopped
