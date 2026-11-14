@@ -54,6 +54,7 @@ class Slots:
                 if self._tickets[0] is ticket and self.held < self.limit:
                     self._tickets.popleft()
                     self.held += 1
+                    self._cond.notify_all()  # the next ticket may use another free permit
                     return True
                 left = deadline - time.monotonic()
                 if left <= 0:
@@ -81,7 +82,7 @@ class Gateway(BaseHTTPRequestHandler):
     slots = Slots(MAX_CONCURRENT)  # engine calls in flight at once
     queue_wait_s = QUEUE_WAIT_S  # how long a request waits for a slot before the 503
     floor_tokps = CONCURRENCY_FLOOR_TOKPS
-    _measured = deque(maxlen=RATE_WINDOW)  # (arrival, finish, completion tokens) of the last completions
+    _measured = deque(maxlen=RATE_WINDOW)  # (admitted, finish, completion tokens) of the last completions
     _running = 0
     _count_lock = threading.Lock()
 
@@ -130,7 +131,7 @@ class Gateway(BaseHTTPRequestHandler):
         return sum(t for _, _, t in samples) / span if span > 0 else None
 
     @classmethod
-    def _record_rate(cls, arrival, tokens):
+    def _record_rate(cls, admitted, tokens):
         """Aggregate completion throughput over the last RATE_WINDOW completions on the
         gateway's own wall clock (per-request tok/s falls when streams share an engine,
         so it is the wrong gate signal). Above floor_tokps the configured k runs; at or
@@ -139,7 +140,7 @@ class Gateway(BaseHTTPRequestHandler):
         at k=1 measures at about the floor (the floor is the k=1 median), so the gate
         stays off until a k>1 stretch clears it; idle gaps count against the window."""
         with cls._count_lock:
-            cls._measured.append((arrival, time.perf_counter(), tokens))
+            cls._measured.append((admitted, time.perf_counter(), tokens))
             rate = cls._aggregate_rate(list(cls._measured))
             if rate is None:
                 return

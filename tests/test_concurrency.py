@@ -182,6 +182,38 @@ def test_the_slot_gate_serves_parked_waiters_in_arrival_order_through_a_downshif
         t.join(timeout=10)
     assert order == [0, 1, 2, 3]  # a downshift must not scramble the queue
 
+def test_the_slot_gate_wakes_the_next_ticket_after_an_upshift():
+    slots = Slots(1)
+    assert slots.acquire(timeout=1)  # one holder, four waiters parked behind it
+    order = []
+    lock = threading.Lock()
+    all_admitted = threading.Event()
+
+    def waiter(i):
+        if slots.acquire(timeout=5):
+            with lock:
+                order.append(i)
+                if len(order) == 4:
+                    all_admitted.set()
+            slots.release()
+
+    waiters = []
+    try:
+        for i in range(4):
+            t = threading.Thread(target=waiter, args=(i,))
+            t.start()
+            waiters.append(t)
+            time.sleep(0.05)
+        while len(slots._tickets) < 4:
+            time.sleep(0.02)
+        slots.resize(5)
+        assert all_admitted.wait(2)  # the first admission must wake the next ticket
+        assert order == [0, 1, 2, 3]
+    finally:
+        slots.release()
+        for t in waiters:
+            t.join(timeout=5)
+
 
 def test_the_aggregate_rate_counts_clustered_completions_over_their_own_span():
     assert Gateway._aggregate_rate([(0.0, 0.25, 100), (1.0, 1.25, 100)]) == 160.0
@@ -189,7 +221,7 @@ def test_the_aggregate_rate_counts_clustered_completions_over_their_own_span():
     # would have read 800 and kept the gate on below the floor.
     assert Gateway._aggregate_rate([(0.0, 1.0, 96), (1.0, 2.0, 96)]) == 96.0  # k=1 steady
     assert Gateway._aggregate_rate([(1.0, 1.5, 100), (0.0, 2.0, 100)]) == 100.0
-    # a later arrival finishing first: the min arrival anchors the span, not the first finish
+    # a later admission finishing first: the min admission anchors the span, not the first finish
     assert Gateway._aggregate_rate([(0.0, 1.0, 96)]) is None  # one sample: no window yet
 
 
