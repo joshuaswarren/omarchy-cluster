@@ -92,8 +92,9 @@ Downloads a Hugging Face repo (for example `mlx-community/DeepSeek-Coder-V2-Lite
 into the cache `place` and `serve` already read, so download then serve is two commands
 with nothing between. An interrupted download (cut connection) resumes on the next pull.
 A snapshot counts as pulled only when `config.json` is there and the weights are: every
-shard that `model.safetensors.index.json` names, or, with no index, at least one weight
-file. A half-pulled repo, or one with a malformed index, is not listed and
+shard that `model.safetensors.index.json` names (each must be a weight file), or, with no
+index, at least one weight file, and all `N` files of any set named `-0000i-of-0000N`. A
+half-pulled repo, or one with a malformed index, is not listed and
 `place` and `serve` do not resolve it. Needs `huggingface_hub` on the machine that
 downloads (`pip install huggingface_hub`).
 

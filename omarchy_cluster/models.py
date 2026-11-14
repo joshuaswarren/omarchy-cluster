@@ -52,15 +52,31 @@ def _snapshot_info(snap):
 WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".npz", ".bin")
 
 
+_SHARD = re.compile(r"^(?P<stem>.+)-(?P<i>\d{5})-of-(?P<n>\d{5})(?P<ext>\.[A-Za-z0-9]+)$")
+
+
+def _unindexed_weights_complete(snap):
+    """No index file: at least one weight file, and every file that names itself `-0000i-of-0000n` has all n
+    of its set (the name already says how many shards the checkpoint has)."""
+    present = {f for f in os.listdir(snap) if f.endswith(WEIGHT_SUFFIXES) and os.path.isfile(os.path.join(snap, f))}
+    for f in present:
+        m = _SHARD.match(f)
+        if m and any("%s-%05d-of-%s%s" % (m["stem"], i, m["n"], m["ext"]) not in present
+                     for i in range(1, int(m["n"]) + 1)):
+            return False
+    return bool(present)
+
+
 def snapshot_complete(snap):
     """True when serve could load this snapshot: config.json plus weights. With a safetensors index, every
-    shard it names must be there; without one, at least one weight file. An interrupted pull can leave the
-    config, the index, or some shards. Malformed index data counts as not complete."""
+    shard it names must be a weight file and be there; without one, see _unindexed_weights_complete. An
+    interrupted pull can leave the config, the index, or some shards. Malformed index data counts as not
+    complete."""
     if not os.path.isfile(os.path.join(snap, "config.json")):
         return False
     index = os.path.join(snap, "model.safetensors.index.json")
     if not os.path.isfile(index):
-        return any(f.endswith(WEIGHT_SUFFIXES) and os.path.isfile(os.path.join(snap, f)) for f in os.listdir(snap))
+        return _unindexed_weights_complete(snap)
     try:
         with open(index) as f:
             weight_map = json.load(f)["weight_map"]
@@ -69,7 +85,8 @@ def snapshot_complete(snap):
     if not isinstance(weight_map, dict) or not weight_map:
         return False
     shards = list(weight_map.values())
-    if not all(isinstance(shard, str) and shard and os.path.basename(shard) == shard for shard in shards):
+    if not all(isinstance(shard, str) and shard.endswith(WEIGHT_SUFFIXES) and os.path.basename(shard) == shard
+               for shard in shards):
         return False
     return all(os.path.isfile(os.path.join(snap, shard)) for shard in shards)
 

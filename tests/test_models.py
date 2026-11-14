@@ -309,9 +309,27 @@ def test_an_unindexed_single_file_model_is_listed(fake_cache):
     {"weight_map": {}},
     {"weight_map": []},
     {"weight_map": {"a": "../outside.safetensors"}},
+    {"weight_map": {"a": "config.json"}},
+    {"weight_map": {"a": "tokenizer.json", "b": "model.safetensors"}},
     {"no": "weight_map"},
     [],
 ])
 def test_a_malformed_or_empty_index_excludes_the_snapshot_without_raising(fake_cache, index):
     _snap_with_config(fake_cache, index=index, weights=["model.safetensors"])
     assert [row["repo"] for row in models.list_local()] == ["org/good"]
+
+
+def test_one_shard_of_a_two_shard_checkpoint_with_no_index_is_not_listed(fake_cache):
+    snap = _snap_with_config(fake_cache, weights=["model-00001-of-00002.safetensors"])
+    assert not models.snapshot_complete(str(snap))
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+
+
+def test_every_shard_of_an_unindexed_sharded_checkpoint_makes_it_listed(fake_cache):
+    _snap_with_config(fake_cache, weights=["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"])
+    assert [row["repo"] for row in models.list_local()] == ["org/cfg", "org/good"]
+
+
+def test_an_unindexed_gguf_set_is_judged_by_its_own_shard_count(fake_cache):
+    snap = _snap_with_config(fake_cache, weights=["m-00001-of-00003.gguf", "m-00003-of-00003.gguf"])
+    assert not models.snapshot_complete(str(snap))
