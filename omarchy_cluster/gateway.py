@@ -101,7 +101,7 @@ class Gateway(BaseHTTPRequestHandler):
             from . import models
             try:
                 path = models.pull(repo)
-            except SystemExit as e:
+            except models.ModelsError as e:
                 return self._json(500, {"error": str(e)})
             except Exception as e:  # noqa: BLE001 - a failed download is a client-visible error
                 return self._json(502, {"error": "pull: %s" % e})

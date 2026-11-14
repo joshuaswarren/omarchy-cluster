@@ -22,8 +22,33 @@ def valid_repo(repo):
             and "--" not in repo and ".." not in repo and not repo.endswith(".git"))
 
 
+class ModelsError(RuntimeError):
+    """A models operation failed for a reason the caller can say in words (library code never exits the process)."""
+
+
 def cache_dir() -> str:
-    return os.path.expanduser("~/.cache/huggingface/hub")
+    """The Hugging Face hub cache, where huggingface_hub itself puts it: HF_HUB_CACHE, else $HF_HOME/hub, else the default."""
+    explicit = os.environ.get("HF_HUB_CACHE")
+    home = os.environ.get("HF_HOME") or "~/.cache/huggingface"
+    return os.path.expanduser(explicit or os.path.join(home, "hub"))
+
+
+def pick_snapshot(repo_dir):
+    """The snapshot serve should load for one cached repo directory: what refs/main names (and nothing else when
+    that ref exists, so an updated repo never falls back to old weights), else the newest complete snapshot by
+    modification time. None when there is none."""
+    snaps = os.path.join(repo_dir, "snapshots")
+    main_ref = os.path.join(repo_dir, "refs", "main")
+    if os.path.isfile(main_ref):
+        with open(main_ref) as f:
+            snap = os.path.join(snaps, f.read().strip())
+        return snap if snapshot_complete(snap) else None
+    try:
+        names = os.listdir(snaps)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    complete = [os.path.join(snaps, n) for n in names if snapshot_complete(os.path.join(snaps, n))]
+    return max(complete, key=lambda p: (os.path.getmtime(p), p)) if complete else None
 
 
 def _repo_from_dir(name):
@@ -103,18 +128,11 @@ def list_local():
         repo = _repo_from_dir(name)
         if repo is None:
             continue
-        snaps = os.path.join(base, name, "snapshots")
-        try:
-            revisions = sorted(os.listdir(snaps))
-        except (FileNotFoundError, NotADirectoryError):
+        snap = pick_snapshot(os.path.join(base, name))
+        if snap is None:
             continue
-        for entry in revisions:
-            snap = os.path.join(snaps, entry)
-            if not snapshot_complete(snap):
-                continue
-            total, weights = _snapshot_info(snap)
-            out.append({"repo": repo, "path": snap, "bytes": total, "weights": weights})
-            break
+        total, weights = _snapshot_info(snap)
+        out.append({"repo": repo, "path": snap, "bytes": total, "weights": weights})
     return out
 
 
@@ -140,7 +158,7 @@ def pull(repo, progress=None):
     try:
         download = _downloader()
     except ImportError as e:
-        raise SystemExit("models pull needs huggingface_hub (pip install huggingface_hub): {}".format(e))
+        raise ModelsError("models pull needs huggingface_hub (pip install huggingface_hub): {}".format(e))
     path = download(repo_id=repo)
     if progress is not None:
         total, weights = _snapshot_info(path)

@@ -22,26 +22,8 @@ def find_model_path(model_ref):
     """Local dir, or cached HF main; inspect snapshots only when main has no ref."""
     if os.path.isdir(model_ref):
         return model_ref
-    cache = os.path.expanduser("~/.cache/huggingface/hub")
-    safe = "models--" + model_ref.replace("/", "--")
-    base = os.path.join(cache, safe)
-    if not os.path.isdir(base):
-        return None
-    snaps = os.path.join(base, "snapshots")
-    main_ref = os.path.join(base, "refs", "main")
-    if os.path.isfile(main_ref):
-        with open(main_ref) as f:
-            revisions = [f.read().strip()]
-    else:
-        try:
-            revisions = sorted(os.listdir(snaps))
-        except (FileNotFoundError, NotADirectoryError):
-            return None
-    for entry in revisions:
-        snap = os.path.join(snaps, entry)
-        if models.snapshot_complete(snap):
-            return snap
-    return None
+    base = os.path.join(models.cache_dir(), "models--" + model_ref.replace("/", "--"))
+    return models.pick_snapshot(base) if os.path.isdir(base) else None
 
 
 def attention_pattern(tc):
