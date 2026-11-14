@@ -221,6 +221,36 @@ AGENT_UNIT = "omarchy-cluster-agent.service"
 REMOTE_TOKEN = "~/.config/omarchy-cluster/token"
 
 
+def _stop_agent(target, ssh):
+    """Stop and disable the peer's agent unit. A failed inspection is an error: the agent may be running."""
+    rc, out, err = ssh(target, "systemctl --user show %s -p LoadState -p ActiveState -p UnitFileState" % AGENT_UNIT)
+    if rc != 0:
+        raise BootstrapError("%s: could not inspect the agent service (%s); the token was left in place"
+                             % (target, (err or out).strip() or "exit %d" % rc))
+    state = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    if state.get("LoadState") == "not-found":
+        return "agent not installed"
+    if state.get("ActiveState") in ("inactive", "failed") and state.get("UnitFileState") != "enabled":
+        return "agent already stopped and disabled"
+    rc, out, err = ssh(target, "systemctl --user disable --now %s" % AGENT_UNIT)
+    if rc != 0:
+        raise BootstrapError("%s: could not stop the agent (%s); the token was left in place"
+                             % (target, (err or out).strip()))
+    return "agent stopped and disabled"
+
+
+def _remove_token(target, ssh):
+    rc, out, err = ssh(target, "test -e %s && echo present || echo absent" % REMOTE_TOKEN)
+    if rc != 0 or out.strip() not in ("present", "absent"):
+        raise BootstrapError("%s: could not check the token (%s)" % (target, (err or out).strip() or "exit %d" % rc))
+    if out.strip() == "absent":
+        return "token already gone"
+    rc, out, err = ssh(target, "rm -f %s" % REMOTE_TOKEN)
+    if rc != 0:
+        raise BootstrapError("%s: could not remove the token (%s)" % (target, (err or out).strip()))
+    return "token removed"
+
+
 def leave(candidate, user=None, ssh=ssh_run, say=print, clock=datetime.now, find=discover.discover_nodes):
     """`omarchy-cluster leave <candidate>`: undo a join on the peer. Stops and disables the agent, removes
     the peer's copy of the cluster token, journals the leave. Running it again changes nothing and says so.
@@ -230,20 +260,7 @@ def leave(candidate, user=None, ssh=ssh_run, say=print, clock=datetime.now, find
     ok, why = _is_omarchy(target, ssh)
     if not ok:
         raise BootstrapError("%s refused: %s" % (target, why))
-    if ssh(target, "systemctl --user cat %s >/dev/null 2>&1" % AGENT_UNIT)[0] == 0:
-        rc, out, err = ssh(target, "systemctl --user disable --now %s" % AGENT_UNIT)
-        if rc != 0:
-            raise BootstrapError("%s: could not stop the agent (%s); the token was left in place"
-                                 % (target, (err or out).strip()))
-        agent = "agent stopped and disabled"
-    else:
-        agent = "agent already gone"
-    if ssh(target, "test -e %s" % REMOTE_TOKEN)[0] == 0:
-        rc, out, err = ssh(target, "rm -f %s" % REMOTE_TOKEN)
-        if rc != 0:
-            raise BootstrapError("%s: could not remove the token (%s)" % (target, (err or out).strip()))
-        token = "token removed"
-    else:
-        token = "token already gone"
+    agent = _stop_agent(target, ssh)
+    token = _remove_token(target, ssh)
     say("%s: %s, %s" % (target, agent, token))
     _journal(clock, "leave  %s (%s): %s, %s" % (candidate, target, agent, token))

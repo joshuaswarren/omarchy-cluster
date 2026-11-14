@@ -46,8 +46,10 @@ pinned-route line. It writes no configuration file by hand. An empty `--token-fi
 Undoes a join on the peer (`CANDIDATE` as for `join`). It refuses a peer that is not Omarchy
 Linux, stops and disables the peer's agent unit, removes the peer's copy of the cluster token,
 and appends one line to `~/.local/state/omarchy-cluster/join.log`. If the agent is stopped but
-cannot be disabled, it exits 1 and leaves the token. Run twice, the second run changes nothing
-and the journal line says `already gone`. The token on this machine is the pool's token and
+cannot be disabled, or its state or the token cannot be read (ssh or user-bus failure), it
+exits 1 and leaves the token. Run twice, the second run changes nothing and the journal line
+says `agent already stopped and disabled, token already gone`; a peer with no agent unit says
+`agent not installed`. The token on this machine is the pool's token and
 stays. A discovered node with no ip or host is refused by name; pass `user@host` instead.
 
 ### `agent [--port 8025] [--name NAME] [--hub URL]`
