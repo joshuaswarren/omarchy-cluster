@@ -165,7 +165,7 @@ def disk_layers(facts, info):
     free = facts.get("model_volume_free_bytes")
     if free is None:
         return info["layers"]
-    have = min((facts.get("cached_models") or {}).get(info["ref"], 0), info["weights_bytes"])
+    have = min((facts.get("cached_models") or {}).get(models.repo_of(info["ref"]), 0), info["weights_bytes"])
     return int((free + have) // (info["weights_bytes"] / max(info["layers"], 1)))
 
 
@@ -210,17 +210,22 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
     # Keep every unified-memory node available for prefill; only the final rank
     # must be eligible for decode.
     ranks = [n for n, f in nodes.items() if f.get("unified_memory", True)]
-    if _disk:  # a node with no room on disk for even one layer cannot be a stage; it must not hide a plan on the others
-        ranks = [n for n in ranks if disk_layers(nodes[n], info) >= 1]
-    ranks.sort(key=lambda n: nodes[n]["memory_total_bytes"])
     no_decode = set(no_decode)
     if not any(n not in no_decode for n in ranks):
         return {"mode": "none", "reason": "no decode-eligible nodes"}
+    disk_ok = ranks
+    if _disk:  # a node with no room on disk for even one layer cannot be a stage; it must not hide a plan on the others
+        disk_ok = [n for n in ranks if disk_layers(nodes[n], info) >= 1]
+    decode_possible = any(n not in no_decode for n in disk_ok)  # else only the disk can be why there is no plan
+    ranks = disk_ok
+    ranks.sort(key=lambda n: nodes[n]["memory_total_bytes"])
 
     L = info["layers"]
     plan = None
     route_missing = False  # a candidate had the memory but a boundary had no pinned route
-    if max_stages:
+    if not decode_possible:
+        counts = []
+    elif max_stages:
         # exact request (e.g. --stages 2): use the requested stage count.
         counts = [min(max_stages, len(ranks))]
     else:

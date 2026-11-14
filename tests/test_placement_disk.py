@@ -102,3 +102,43 @@ def test_facts_list_the_complete_cached_models_by_weight_bytes(tmp_path, monkeyp
     partial.mkdir(parents=True)
     (partial / "config.json").write_text("{}")  # no weights: not a cached model
     assert facts.collect_facts()["cached_models"] == {"org/good": 1234}
+
+
+def _cached_repo(cache, revisions, main):
+    """org/m in a HF-shaped cache: {revision: weight bytes} (sparse files), refs/main -> main."""
+    repo = cache / "models--org--m"
+    for rev, size in revisions.items():
+        snap = repo / "snapshots" / rev
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text("{}")
+        with open(snap / "model.safetensors", "wb") as f:
+            f.truncate(size)
+    (repo / "refs").mkdir()
+    (repo / "refs" / "main").write_text(main)
+    return repo
+
+
+def test_the_cache_credit_is_the_revision_serve_loads_not_the_first_by_name(tmp_path, monkeypatch):
+    from omarchy_cluster import facts, models
+    monkeypatch.setattr(models, "cache_dir", lambda: str(tmp_path))
+    _cached_repo(tmp_path, {"a-old": GB, "z-main": int(17.2 * GB)}, main="z-main")
+    assert facts.collect_facts()["cached_models"] == {"org/m": int(17.2 * GB)}
+
+
+def test_a_local_snapshot_path_gets_the_same_credit_as_its_repo_id():
+    ref = "/Users/someone/.cache/huggingface/hub/models--org--m/snapshots/z-main"  # need not exist on the node planning
+    held = node(90, 94, disk_gb=16)
+    held["cached_models"] = {"org/m": INFO["weights_bytes"]}
+    plan = planner.plan_placement({"holder": held}, {"pairs": []}, {**INFO, "ref": ref})
+    assert plan["mode"] == "replica"
+
+
+def test_a_node_with_no_disk_at_all_still_reports_disk_not_missing_decode_nodes():
+    plan = planner.plan_placement({"only": node(90, 94, disk_gb=0)}, {"pairs": []}, INFO)
+    assert plan["mode"] == "none" and "disk" in plan["reason"]
+
+
+def test_prefill_only_leftovers_after_the_disk_filter_report_disk():
+    nodes = {"a": node(90, 94, disk_gb=0), "b": node(60, 62, disk_gb=200)}
+    plan = planner.plan_placement(nodes, links("a", "b"), INFO, no_decode=("b",))
+    assert plan["mode"] == "none" and "disk" in plan["reason"]

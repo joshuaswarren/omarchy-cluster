@@ -136,12 +136,28 @@ def list_local():
     return out
 
 
+def repo_of(ref):
+    """The Hugging Face repo id a model reference means: the id itself, or the repo a cache snapshot path belongs to
+    (.../models--org--name/snapshots/<rev>). Read from the text, so a path that exists only on another machine still
+    resolves."""
+    for part in str(ref).split("/"):
+        repo = _repo_from_dir(part)
+        if repo:
+            return repo
+    return ref
+
+
 def cached_weight_bytes():
-    """{repo: bytes of its .safetensors files} for every cached repo with a complete snapshot: what a rank already
-    has on disk and need not download again (the planner's disk check counts it as free)."""
-    return {m["repo"]: sum(os.path.getsize(os.path.join(m["path"], f)) for f in os.listdir(m["path"])
-                           if f.endswith(".safetensors"))
-            for m in list_local()}
+    """{repo: bytes of its .safetensors files} for every cached repo with a complete snapshot, counted in the
+    snapshot serve loads for that repo (planner.find_model_path): what a rank already has and need not download."""
+    from . import planner  # planner imports this module
+    out = {}
+    for m in list_local():
+        path = planner.find_model_path(m["repo"])
+        if path:
+            out[m["repo"]] = sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path)
+                                 if f.endswith(".safetensors"))
+    return out
 
 
 def _downloader():
