@@ -176,6 +176,15 @@ def max_layers(free_bytes, info, ctx_tokens=DEFAULT_CTX_TOKENS):
     return int(free_bytes * 0.9 // per_layer)
 
 
+def disk_layers(facts, info):
+    """Layers this node can download into its model volume (about weights_bytes / layers each); every layer when the
+    node does not report the volume, so an older agent is not limited."""
+    free = facts.get("model_volume_free_bytes")
+    if free is None:
+        return info["layers"]
+    return int(free // (info["weights_bytes"] / max(info["layers"], 1)))
+
+
 def choose_split(layer_ms, caps, n_layers):
     """Per-rank layer counts (rank order) that minimise the decode step, the
     sum over ranks of layers x measured ms per layer: every rank keeps one
@@ -205,8 +214,13 @@ def pinned_route(links, a, b):
     return None
 
 
-def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=(), max_stages=None):
-    """nodes: {name: facts}; links: links dict. Returns the plan dict."""
+def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=(), max_stages=None, _disk=True):
+    """nodes: {name: facts}; links: links dict. Returns the plan dict. A node's layers are capped by its free memory and
+    by the free space of its model volume (issue 81)."""
+    def cap(n):
+        memory = max_layers(nodes[n]["memory_free_bytes"], info, ctx_tokens)
+        return min(memory, disk_layers(nodes[n], info)) if _disk else memory
+
     kv_tok = kv_bytes_per_token(info)
 
     # Keep every unified-memory node available for prefill; only the final rank
@@ -231,7 +245,7 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
             # whole model: the eligible node with the most free memory that can hold every layer
             for n in sorted((n for n in ranks if n not in no_decode),
                             key=lambda n: -nodes[n]["memory_free_bytes"]):
-                if max_layers(nodes[n]["memory_free_bytes"], info, ctx_tokens) >= L:
+                if cap(n) >= L:
                     chosen = [n]
                     break
             if chosen is None:
@@ -245,7 +259,7 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
                 break
         if chosen is None:
             continue
-        caps = {n: max_layers(nodes[n]["memory_free_bytes"], info, ctx_tokens) for n in chosen}
+        caps = {n: cap(n) for n in chosen}
         if min(caps.values()) < 1 or sum(caps.values()) < L:
             continue
         stages = [{"node": n, "max_layers": min(caps[n], L - n_stages + 1)} for n in chosen]
@@ -276,6 +290,8 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
                 "decode_tail": stages[-1]["node"],
                 "stages": stages, "boundaries": boundaries}
         break
+    if plan is None and _disk and plan_placement(nodes, links, info, ctx_tokens, no_decode, max_stages, _disk=False)["mode"] != "none":
+        return {"mode": "none", "reason": "no feasible plan: not enough free disk for the model files on the candidate nodes"}
     if plan is None:
         plan = {"mode": "none",
                 "reason": "no feasible plan: a boundary lacks a measured pinned route" if route_missing

@@ -372,6 +372,19 @@ def macos_memory():
             "data_volume_free_bytes": data_free, "data_volume_free_source": data_source}
 
 
+def model_volume_free():
+    """Free bytes of the volume the Hugging Face cache lives on (the nearest existing parent of the cache directory),
+    where a rank puts the shard files it downloads. None when it cannot be read."""
+    path = os.path.expanduser(os.environ.get("HF_HUB_CACHE") or os.path.join(os.environ.get("HF_HOME") or "~/.cache/huggingface", "hub"))
+    while path and not os.path.exists(path) and path != os.path.dirname(path):
+        path = os.path.dirname(path)
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return None
+    return st.f_bavail * st.f_frsize
+
+
 def collect_facts():
     facts = {
         "agent_version": AGENT_VERSION,
@@ -383,6 +396,7 @@ def collect_facts():
         "unified_memory": platform.system() == "Darwin" or _is_apple_silicon_linux(),
         "memory_total_bytes": memory_total_bytes(),
         "memory_free_bytes": memory_free_bytes(),
+        "model_volume_free_bytes": model_volume_free(),
         "interfaces": interfaces(),
         "boot_id": boot_id(),
         "tools": {"iperf3": bool(shutil.which("iperf3"))},
