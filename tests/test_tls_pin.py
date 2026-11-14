@@ -141,6 +141,7 @@ def test_ssh_run_checks_the_host_key_whatever_the_operators_ssh_config_says(monk
     monkeypatch.setattr(bootstrap.subprocess, "run", _fake_run(captured))
     bootstrap.ssh_run("me@node", "true")
     cmd = captured[0]
+    assert "ControlPath=none" in cmd and "ControlMaster=no" in cmd  # a reused master connection skips the host key check
     assert "StrictHostKeyChecking=yes" in cmd and cmd[cmd.index("StrictHostKeyChecking=yes") - 1] == "-o"
     assert cmd.index("StrictHostKeyChecking=yes") < cmd.index("--")  # an option, not part of the remote command
 

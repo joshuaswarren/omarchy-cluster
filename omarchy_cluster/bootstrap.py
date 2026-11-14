@@ -43,7 +43,8 @@ def ssh_run(target, command, stdin=None):
     operator's ssh config says: the TLS key pinned for the node is read over this connection, so an impostor at the
     address must not get past it."""
     feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+                        "-o", "ConnectTimeout=10",
                         "--", target, command],
                        capture_output=True, timeout=600, **feed)
     err = r.stderr.decode(errors="replace")
