@@ -54,3 +54,22 @@ def test_a_model_with_no_quantization_config_stays_float32_and_false_overrides_s
     rank._quantize_random_like_checkpoint(model, mixed)
     assert type(model.model.layers[0].self_attn.q_proj).__name__ == "QuantizedLinear"
     assert type(model.model.layers[0].mlp.down_proj).__name__ == "Linear"
+
+
+def test_the_checkpoint_global_mode_reaches_the_timing_copy_and_null_stays_float(tmp_path):
+    """The loader forwards quantization.get('mode', 'affine'); the timing copy must too, or an mxfp4/mxfp8/nvfp4
+    checkpoint is timed as affine (issue 96 requalification). A null section is an absent one: float32."""
+    from mlx_lm.utils import load_model
+    (tmp_path / "mx").mkdir()
+    mxfp4 = _cfg_dir(tmp_path / "mx", {"group_size": 32, "bits": 4, "mode": "mxfp4"})
+    model, _ = load_model(mxfp4, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, mxfp4)
+    q = model.model.layers[0].self_attn.q_proj
+    assert type(q).__name__ == "QuantizedLinear" and q.mode == "mxfp4"
+
+    (tmp_path / "null").mkdir()
+    null = _cfg_dir(tmp_path / "null", None)
+    (null / "config.json").write_text((null / "config.json").read_text()[:-1] + ', "quantization": null}')
+    model, _ = load_model(null, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, null)
+    assert type(model.model.layers[0].self_attn.q_proj).__name__ == "Linear"

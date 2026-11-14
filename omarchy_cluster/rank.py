@@ -284,6 +284,7 @@ def _quantize_random_like_checkpoint(model, path):
     if not q:
         return model  # no quantization config: the real checkpoint is float32 and so is this copy
     group_size, bits = q.get("group_size", 64), q.get("bits", 4)
+    mode = q.get("mode", "affine")  # the loader forwards the checkpoint's global mode; so must the timing copy
 
     def predicate(p, module):
         if not hasattr(module, "to_quantized"):
@@ -293,7 +294,7 @@ def _quantize_random_like_checkpoint(model, path):
             return dict(entry) if isinstance(entry, dict) else bool(entry)
         return module.weight.shape[-1] % group_size == 0
 
-    nn.quantize(model, group_size=group_size, bits=bits, class_predicate=predicate)
+    nn.quantize(model, group_size=group_size, bits=bits, mode=mode, class_predicate=predicate)
 
 
 def _time_layers(cfg_dir):
