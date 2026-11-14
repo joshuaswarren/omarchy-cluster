@@ -130,7 +130,8 @@ def test_leave_takes_user_at_host_without_discovery(journal):
 
 @pytest.mark.parametrize("verb", ["join", "leave"])
 @pytest.mark.parametrize("node", [{"name": "ghost"}, {"name": "ghost", "ip": None, "host": None}])
-def test_a_discovered_node_without_ip_or_host_is_refused_by_name_not_as_user_at_none(journal, verb, node):
+def test_a_discovered_node_without_ip_or_host_is_refused_by_name_not_as_user_at_none(journal, verb, node, monkeypatch):
+    monkeypatch.setattr(bootstrap.cluster_token, "read", lambda: "tok")  # join resolves the token before anything else
     peer = PeerSsh()
     call = getattr(bootstrap, verb)
     with pytest.raises(bootstrap.BootstrapError, match="ghost has no ip or host"):
