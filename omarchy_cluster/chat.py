@@ -12,12 +12,21 @@ JOURNAL = "~/.local/state/omarchy-cluster/chat.log"
 
 
 def _reply(res):
-    """(reply text, tokens per second) from one gateway body; any other 200 shape is an error."""
+    """(reply text, tokens per second or None) from one gateway body; any other 200 shape is an error.
+
+    The text must be a string. A timing that is not a number is dropped: the reply is still good."""
     try:
-        return res["choices"][0]["message"]["content"], (res.get("timings") or {}).get("tokens_per_s")
+        text = res["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
+        text = None
+    if not isinstance(text, str):
         raise RuntimeError("gateway answered 200 with an unexpected reply shape "
-                           "(no choices[0].message.content)") from None
+                           "(no choices[0].message.content string)")
+    timings = res.get("timings")
+    tokps = timings.get("tokens_per_s") if isinstance(timings, dict) else None
+    if isinstance(tokps, bool) or not isinstance(tokps, (int, float)):
+        tokps = None
+    return text, tokps
 
 
 def repl(url=DEFAULT_GATEWAY, model="omarchy-cluster", max_tokens=256, system=None, token=None,

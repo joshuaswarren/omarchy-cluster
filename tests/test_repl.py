@@ -115,6 +115,30 @@ def test_a_200_reply_with_an_unexpected_shape_prints_an_error_and_keeps_going(ga
     assert seen[1]["body"]["messages"] == [{"role": "user", "content": "second"}]
 
 
+@pytest.mark.parametrize("body", [
+    {"choices": [{"message": {"content": None}}]},
+    {"choices": [{"message": {"content": 5}}]},
+    {"choices": [{"message": "ok"}]},
+    {"choices": ["ok"]},
+    ["not", "an", "object"],
+])
+def test_a_malformed_200_body_is_an_error_and_never_enters_the_history(gateway, body):
+    url, seen, replies = gateway
+    replies += [(200, body), answer("back")]
+    out = run(url, ["first", "second"])
+    assert any("unexpected reply shape" in line for line in out)
+    assert seen[1]["body"]["messages"] == [{"role": "user", "content": "second"}]
+
+
+@pytest.mark.parametrize("timings", [12, {"tokens_per_s": "unknown"}, {"tokens_per_s": True}, ["x"]])
+def test_a_malformed_timing_is_dropped_and_the_reply_still_prints(gateway, home, timings):
+    url, seen, replies = gateway
+    replies.append((200, {"choices": [{"message": {"content": "ok"}}], "timings": timings}))
+    out = run(url, ["hi", "/exit"])
+    assert "ok" in out and not any("tok/s" in line for line in out)
+    assert (home / ".local" / "state" / "omarchy-cluster" / "chat.log").read_text().count("turns=1") == 1
+
+
 def test_one_journal_line_per_session_and_no_other_state_files(gateway, home):
     url, seen, replies = gateway
     replies += [answer("hello"), answer("fine")]
