@@ -1,0 +1,75 @@
+"""Issue 96 review: the config-only timing copy must time the checkpoint's quantized operators, not float32 ones."""
+import json
+import os
+import sys
+
+import pytest
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from omarchy_cluster import rank
+mx = pytest.importorskip("mlx.core")
+pytest.importorskip("mlx_lm")
+
+
+def _cfg_dir(tmp_path, quantization):
+    d = tmp_path / "cfg"
+    d.mkdir()
+    cfg = {"model_type": "qwen2", "hidden_size": 64, "intermediate_size": 128,
+           "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 2,
+           "vocab_size": 96, "rms_norm_eps": 1e-06}
+    if quantization is not None:
+        cfg["quantization"] = quantization
+    (d / "config.json").write_text(json.dumps(cfg))
+    return d
+
+
+def test_the_config_only_copy_times_quantized_operators_not_float32(tmp_path):
+    """mlx-lm's loader predicate refuses the config's default quantization for a module with no `.scales` in the
+    (empty) weights, so without help a config-only load stays float32 and times the wrong operators and memory."""
+    from mlx_lm.utils import load_model
+    d = _cfg_dir(tmp_path, {"group_size": 64, "bits": 4,
+                            "model.layers.0.mlp.gate_proj": {"bits": 8, "group_size": 64}})
+    model, _ = load_model(d, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, d)
+    q_proj = model.model.layers[0].self_attn.q_proj
+    gate = model.model.layers[0].mlp.gate_proj
+    assert type(q_proj).__name__ == "QuantizedLinear" and q_proj.bits == 4
+    assert type(gate).__name__ == "QuantizedLinear" and gate.bits == 8
+
+
+def test_a_model_with_no_quantization_config_stays_float32_and_false_overrides_stay_linear(tmp_path):
+    """An absent quantization config means the real checkpoint is float32: the random copy must not gain a default
+    4-bit quantization it does not have (issue 96 requalification). A per-path `false` entry names a module the
+    conversion left unquantized; it must stay Linear too."""
+    from mlx_lm.utils import load_model
+    (tmp_path / "plain").mkdir()
+    plain = _cfg_dir(tmp_path / "plain", None)
+    model, _ = load_model(plain, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, plain)
+    assert type(model.model.layers[0].self_attn.q_proj).__name__ == "Linear"
+
+    cfg = {"group_size": 64, "bits": 4, "model.layers.0.mlp.down_proj": False}
+    (tmp_path / "mixed").mkdir()
+    mixed = _cfg_dir(tmp_path / "mixed", cfg)
+    model, _ = load_model(mixed, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, mixed)
+    assert type(model.model.layers[0].self_attn.q_proj).__name__ == "QuantizedLinear"
+    assert type(model.model.layers[0].mlp.down_proj).__name__ == "Linear"
+
+
+def test_the_checkpoint_global_mode_reaches_the_timing_copy_and_null_stays_float(tmp_path):
+    """The loader forwards quantization.get('mode', 'affine'); the timing copy must too, or an mxfp4/mxfp8/nvfp4
+    checkpoint is timed as affine (issue 96 requalification). A null section is an absent one: float32."""
+    from mlx_lm.utils import load_model
+    (tmp_path / "mx").mkdir()
+    mxfp4 = _cfg_dir(tmp_path / "mx", {"group_size": 32, "bits": 4, "mode": "mxfp4"})
+    model, _ = load_model(mxfp4, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, mxfp4)
+    q = model.model.layers[0].self_attn.q_proj
+    assert type(q).__name__ == "QuantizedLinear" and q.mode == "mxfp4"
+
+    (tmp_path / "null").mkdir()
+    null = _cfg_dir(tmp_path / "null", None)
+    (null / "config.json").write_text((null / "config.json").read_text()[:-1] + ', "quantization": null}')
+    model, _ = load_model(null, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, null)
+    assert type(model.model.layers[0].self_attn.q_proj).__name__ == "Linear"
