@@ -90,7 +90,7 @@ def test_pull_without_huggingface_hub_exits_cleanly(monkeypatch):
         return real_import(name, *a, **k)
 
     monkeypatch.setattr(builtins, "__import__", no_hub)
-    with pytest.raises(SystemExit, match="huggingface_hub"):
+    with pytest.raises(models.ModelsError, match="huggingface_hub"):  # library code raises a normal exception, not SystemExit
         models.pull("org/good")
 
 
@@ -277,7 +277,7 @@ def test_the_planner_does_not_resolve_or_size_a_half_pulled_model(fake_cache, mo
     assert planner.find_model_path("org/partial") is None
     assert planner.model_info("org/partial") is None
     (snap / "model-00002-of-00002.safetensors").write_bytes(b"x" * 100)
-    assert planner.find_model_path("org/partial") == str(target / "hub" / "models--org--partial" / "snapshots" / "rev1")
+    assert planner.find_model_path("org/partial") == str(fake_cache / "models--org--partial" / "snapshots" / "rev1")  # the planner reads the same cache_dir as models
 
 
 
@@ -333,3 +333,56 @@ def test_every_shard_of_an_unindexed_sharded_checkpoint_makes_it_listed(fake_cac
 def test_an_unindexed_gguf_set_is_judged_by_its_own_shard_count(fake_cache):
     snap = _snap_with_config(fake_cache, weights=["m-00001-of-00003.gguf", "m-00003-of-00003.gguf"])
     assert not models.snapshot_complete(str(snap))
+
+
+def _snapshot(cache, repo, revision, mtime, weights=b"w"):
+    snap = cache / ("models--" + repo.replace("/", "--")) / "snapshots" / revision
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text("{}")
+    (snap / "model.safetensors").write_bytes(weights)
+    os.utime(snap, (mtime, mtime))
+    return snap
+
+
+def test_the_cache_dir_follows_the_huggingface_env_vars(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for name in ("HF_HUB_CACHE", "HF_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    assert models.cache_dir() == str(tmp_path / ".cache/huggingface/hub")
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hfhome"))
+    assert models.cache_dir() == str(tmp_path / "hfhome/hub")
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "moved"))
+    assert models.cache_dir() == str(tmp_path / "moved")
+
+
+def test_list_local_finds_a_model_in_a_moved_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "moved"))
+    _snapshot(tmp_path / "moved", "org/good", "aaa", 100)
+    assert [m["repo"] for m in models.list_local()] == ["org/good"]
+
+
+def test_two_snapshots_of_one_repo_follow_refs_main(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+    old = _snapshot(tmp_path, "org/good", "aaa-old", 100)
+    new = _snapshot(tmp_path, "org/good", "zzz-new", 200)
+    (tmp_path / "models--org--good/refs").mkdir()
+    (tmp_path / "models--org--good/refs/main").write_text("aaa-old\n")  # main still points at the older one
+    assert [m["path"] for m in models.list_local()] == [str(old)]
+    (tmp_path / "models--org--good/refs/main").write_text("zzz-new\n")
+    assert [m["path"] for m in models.list_local()] == [str(new)]
+
+
+def test_without_refs_main_the_newest_complete_snapshot_wins_not_the_first_by_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+    _snapshot(tmp_path, "org/good", "aaa-old", 100)
+    new = _snapshot(tmp_path, "org/good", "zzz-new", 200)
+    _snapshot(tmp_path, "org/good", "mmm-newest-but-partial", 300)
+    (tmp_path / "models--org--good/snapshots/mmm-newest-but-partial/model.safetensors").unlink()
+    assert [m["path"] for m in models.list_local()] == [str(new)]
+
+
+def test_the_planner_finds_a_model_in_the_moved_cache_too(tmp_path, monkeypatch):
+    from omarchy_cluster import planner
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+    snap = _snapshot(tmp_path, "org/good", "aaa", 100)
+    assert planner.find_model_path("org/good") == str(snap)
