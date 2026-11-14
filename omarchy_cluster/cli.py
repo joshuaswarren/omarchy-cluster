@@ -41,7 +41,10 @@ def cmd_models_pull(args):
     def step(info):
         print("downloaded %s: %.1f GB, %d weight files" % (info["repo"], info["bytes"] / 1e9, info["weights"]))
 
-    path = models.pull(args.repo, progress=step)
+    try:
+        path = models.pull(args.repo, progress=step)
+    except models.ModelsError as e:
+        sys.exit(str(e))
     print(path)
     return 0
 
