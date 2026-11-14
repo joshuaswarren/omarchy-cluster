@@ -33,9 +33,11 @@ def remember(addresses, port, pin, path=None):
     for a in addresses:
         pins["%s:%d" % (a, port)] = pin
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w") as f:
         for endpoint in sorted(pins):
             f.write("%s %s\n" % (endpoint, pins[endpoint]))
+    os.replace(tmp, path)  # a reader sees the old file or the new one, never half of either
 
 
 def lookup(ip, port, path=None):

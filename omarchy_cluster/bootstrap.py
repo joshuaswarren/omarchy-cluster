@@ -39,11 +39,19 @@ class BootstrapError(Exception):
 
 
 def ssh_run(target, command, stdin=None):
-    """Run one command on target. Returns (exit code, stdout, stderr)."""
+    """Run one command on target. Returns (exit code, stdout, stderr). The host key is always checked, whatever the
+    operator's ssh config says: the TLS key pinned for the node is read over this connection, so an impostor at the
+    address must not get past it."""
     feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", target, command],
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+                        "--", target, command],
                        capture_output=True, timeout=600, **feed)
-    return r.returncode, r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
+    err = r.stderr.decode(errors="replace")
+    if r.returncode == 255 and "Host key verification failed" in err:
+        raise BootstrapError("ssh cannot verify the host key of %s: run `ssh %s` once yourself and verify the key it "
+                             "shows (known_hosts must hold it); the cluster pins the TLS key it reads over that "
+                             "connection, so it will not use an unverified host" % (target, target))
+    return r.returncode, r.stdout.decode(errors="replace"), err
 
 
 def agent_answers(host, port, wait_s=30.0, token=None):

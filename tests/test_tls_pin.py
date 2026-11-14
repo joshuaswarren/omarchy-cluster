@@ -1,5 +1,6 @@
 """Issue 98: the token travels inside TLS to a node whose key was pinned at join, and to nobody else."""
 import json
+import os
 import ssl
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -124,3 +125,51 @@ def test_bootstrap_by_hostname_pins_and_checks_the_address_it_resolved(tmp_path,
         name = bootstrap.bootstrap("me@peer.test", ssh=ssh, src_dir=str(tmp_path / "src"), token=TOKEN,
                                    port=node.port, say=lambda *_: None)
     assert name == "peer" and node.seen and f"127.0.0.1:{node.port}" in discover.read_joined()["peer"]
+
+
+def _fake_run(captured, returncode=0, stderr=b""):
+    def run(cmd, **kw):
+        captured.append(cmd)
+        return type("R", (), {"returncode": returncode, "stdout": b"", "stderr": stderr})()
+    return run
+
+
+def test_ssh_run_checks_the_host_key_whatever_the_operators_ssh_config_says(monkeypatch):
+    """The pin is whatever the node at that address presents over ssh: an impostor must fail the host key check."""
+    from omarchy_cluster import bootstrap
+    captured = []
+    monkeypatch.setattr(bootstrap.subprocess, "run", _fake_run(captured))
+    bootstrap.ssh_run("me@node", "true")
+    cmd = captured[0]
+    assert "StrictHostKeyChecking=yes" in cmd and cmd[cmd.index("StrictHostKeyChecking=yes") - 1] == "-o"
+    assert cmd.index("StrictHostKeyChecking=yes") < cmd.index("--")  # an option, not part of the remote command
+
+
+def test_a_failed_host_key_check_says_to_verify_the_key_once_with_plain_ssh(monkeypatch):
+    from omarchy_cluster import bootstrap
+    monkeypatch.setattr(bootstrap.subprocess, "run", _fake_run([], 255, b"Host key verification failed.\n"))
+    with pytest.raises(bootstrap.BootstrapError, match=r"host key.*run `ssh me@node` once.*verify"):
+        bootstrap.ssh_run("me@node", "true")
+
+
+def test_an_ordinary_ssh_failure_is_returned_not_raised(monkeypatch):
+    from omarchy_cluster import bootstrap
+    monkeypatch.setattr(bootstrap.subprocess, "run", _fake_run([], 255, b"Connection refused\n"))
+    assert bootstrap.ssh_run("me@node", "true") == (255, "", "Connection refused\n")
+
+
+def test_the_pin_file_is_replaced_atomically_and_never_left_half_written(tmp_path, monkeypatch):
+    from omarchy_cluster import pins
+    path = str(tmp_path / "pins")
+    pins.remember(["10.0.0.1"], 8025, "aa" * 32, path)
+    real_replace = pins.os.replace
+    seen = []
+
+    def spying_replace(src, dst):
+        seen.append((open(src).read(), dst))  # the complete new content is on disk before the swap
+        real_replace(src, dst)
+
+    monkeypatch.setattr(pins.os, "replace", spying_replace)
+    pins.remember(["10.0.0.2"], 8025, "bb" * 32, path)
+    assert seen and seen[0][1] == path and "10.0.0.1:8025" in seen[0][0] and "10.0.0.2:8025" in seen[0][0]
+    assert sorted(os.listdir(tmp_path)) == ["pins"]  # no temporary file left behind
