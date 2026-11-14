@@ -14,6 +14,7 @@ SERVICE = "_omarchy-cluster._tcp"
 DEFAULT_PORT = 8025
 HOSTFILE = os.path.expanduser("~/.config/omarchy-cluster/hosts")
 JOINED = os.path.expanduser("~/.local/state/omarchy-cluster/joined")
+LEFT = os.path.expanduser("~/.local/state/omarchy-cluster/left")  # name -> ssh target; never read as trust
 
 
 def _run(cmd, timeout):
@@ -254,3 +255,39 @@ def discover_nodes(mdns_timeout=4.0, hostfile=HOSTFILE):
                 except Exception:  # noqa: BLE001 - keep the first answerer
                     pass
     return nodes
+
+
+def read_left(path=None):
+    """{name: ssh target}: peers this machine left. It only lets `leave NAME` run again once the stopped
+    agent no longer advertises; discovery never trusts it."""
+    left = {}
+    try:
+        with open(path or LEFT) as f:
+            for line in f:
+                name, _, target = line.strip().partition(" ")
+                if name and target:
+                    left[name] = target
+    except FileNotFoundError:
+        pass
+    return left
+
+
+def _write_left(left, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        for name in sorted(left):
+            f.write("%s %s\n" % (name, left[name]))
+
+
+def remember_left(name, target, path=None):
+    path = path or LEFT
+    left = read_left(path)
+    left[name] = target
+    _write_left(left, path)
+
+
+def forget_left(name, path=None):
+    path = path or LEFT
+    left = read_left(path)
+    if left.pop(name, None) is not None:
+        _write_left(left, path)

@@ -43,6 +43,20 @@ issue 64. Every completed join appends one line to `~/.local/state/omarchy-clust
 with the clock time; the peer then shows up in `discover` and `status` with its memory and
 pinned-route line. It writes no configuration file by hand. An empty `--token-file` is an error; the join never falls back to this machine's token when you gave a file.
 
+### `leave CANDIDATE [--user NAME]`
+Undoes a join on the peer (`CANDIDATE` as for `join`). It refuses a peer that is not Omarchy
+Linux, stops and disables the peer's agent unit, removes the peer's copy of the cluster token,
+drops this machine's trust record for the peer (its `joined` line, named by the peer's `hostname -s`, so `discover` stops sending it the
+token), and appends one line to `~/.local/state/omarchy-cluster/join.log`. If the agent is stopped but
+cannot be disabled, or its state, token or hostname cannot be read (ssh or user-bus failure), it
+exits 1 and leaves the token and the trust record. Run twice, the second run changes nothing and the journal line
+says `agent already stopped and disabled, token already gone`; a peer with no agent unit says
+`agent not installed`. A stopped agent no longer advertises, so a successful `leave NAME` also writes the peer's
+`user@host` to `~/.local/state/omarchy-cluster/left`; a repeat `leave NAME` finds its target there. The left record
+is never trust: `discover` does not read it, it only names a peer that was left on purpose, and a name that was
+never joined is still refused. A later `join` of the peer clears its left line. The token on this machine is the
+pool's token and stays. A discovered node with no ip or host is refused by name; pass `user@host` instead.
+
 ### `agent [--port 8025] [--name NAME] [--hub URL]`
 Run the agent in the foreground. Serves facts, rank start/stop and probe helpers on
 its port; every request needs the cluster token. With `--hub`, POSTs a 1 s heartbeat

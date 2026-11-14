@@ -117,6 +117,7 @@ def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, ch
         raise BootstrapError("the agent on %s:%d did not answer /v1/health within 30 s" % (host, port))
     name = step("hostname", "hostname -s").strip()
     discover.remember_joined(name, _addresses(host, port, token), port)
+    discover.forget_left(name)
     say("%s: agent running. It shows up in `omarchy-cluster discover` as %s" % (target, name))
     return name
 
@@ -192,6 +193,33 @@ def _is_omarchy(target, ssh):
                                              or "/etc/os-release is missing or has no Omarchy id")
 
 
+def _resolve(candidate, user, find, left=None):
+    """The ssh target for a candidate: user@host as given, or a discover name looked up. `left` (leave
+    only) is the record of peers already left: a stopped agent no longer advertises, so a repeat
+    `leave NAME` finds its target there. A name that was never joined is still refused."""
+    if "@" in candidate:
+        return candidate
+    nodes = find()
+    node = nodes.get(candidate)
+    if node is None and candidate in (left or {}):
+        host = left[candidate].rpartition("@")[2]
+        return "%s@%s" % (user or left[candidate].rpartition("@")[0] or getpass.getuser(), host)
+    if node is None:
+        raise BootstrapError("no candidate %r; `omarchy-cluster discover` lists: %s"
+                             % (candidate, ", ".join(sorted(nodes)) or "(none)"))
+    where = node.get("ip") or node.get("host")
+    if not where:
+        raise BootstrapError("%s has no ip or host in discover; pass user@host" % candidate)
+    return "%s@%s" % (user or getpass.getuser(), where)
+
+
+def _journal(clock, text):
+    path = os.path.expanduser(JOURNAL)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as f:
+        f.write("%s  %s\n" % (clock().strftime("%Y-%m-%d %H:%M:%S"), text))
+
+
 def join(candidate, user=None, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT,
          check=None, say=print, clock=datetime.now, mode="approved-key",
          find=discover.discover_nodes):
@@ -200,23 +228,73 @@ def join(candidate, user=None, ssh=ssh_run, src_dir=None, token=None, port=AGENT
 
     candidate is a name from `omarchy-cluster discover`, or an explicit user@host."""
     token = _resolve_token(token)  # before any remote command
-    if "@" in candidate:
-        target = candidate
-    else:
-        nodes = find()
-        node = nodes.get(candidate)
-        if node is None:
-            raise BootstrapError("no candidate %r; `omarchy-cluster discover` lists: %s"
-                                 % (candidate, ", ".join(sorted(nodes)) or "(none)"))
-        target = "%s@%s" % (user or getpass.getuser(), node.get("ip") or node.get("host"))
+    target = _resolve(candidate, user, find)
     authorize_join(target, ssh, mode)
     ok, why = _is_omarchy(target, ssh)
     if not ok:
         raise BootstrapError("%s refused: %s" % (target, why))
     name = bootstrap(target, ssh=ssh, src_dir=src_dir, token=token, port=port, check=check, say=say)
-    path = os.path.expanduser(JOURNAL)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a") as f:
-        f.write("%s  join  %s -> %s (%s)\n" % (clock().strftime("%Y-%m-%d %H:%M:%S"),
-                                               candidate, name, target))
+    _journal(clock, "join  %s -> %s (%s)" % (candidate, name, target))
     return name
+
+
+AGENT_UNIT = "omarchy-cluster-agent.service"
+REMOTE_TOKEN = "~/.config/omarchy-cluster/token"
+NOT_ENABLED = ("disabled", "static", "indirect", "generated", "transient", "masked", "masked-runtime")  # UnitFileState values with no enablement link
+
+
+def _stop_agent(target, ssh):
+    """Stop and disable the peer's agent unit. A failed inspection is an error: the agent may be running."""
+    rc, out, err = ssh(target, "systemctl --user show %s -p LoadState -p ActiveState -p UnitFileState" % AGENT_UNIT)
+    if rc != 0:
+        raise BootstrapError("%s: could not inspect the agent service (%s); the token was left in place"
+                             % (target, (err or out).strip() or "exit %d" % rc))
+    state = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    if state.get("LoadState") == "not-found":
+        return "agent not installed"
+    # Any other UnitFileState (enabled, enabled-runtime, linked, linked-runtime, alias, or one we do not know) gets `disable`.
+    if state.get("ActiveState") in ("inactive", "failed") and state.get("UnitFileState") in NOT_ENABLED:
+        return "agent already stopped and disabled"
+    rc, out, err = ssh(target, "systemctl --user disable --now %s" % AGENT_UNIT)
+    if rc != 0:
+        raise BootstrapError("%s: could not stop the agent (%s); the token was left in place"
+                             % (target, (err or out).strip()))
+    return "agent stopped and disabled"
+
+
+def _remove_token(target, ssh):
+    rc, out, err = ssh(target, "test -e %s && echo present || echo absent" % REMOTE_TOKEN)
+    if rc != 0 or out.strip() not in ("present", "absent"):
+        raise BootstrapError("%s: could not check the token (%s)" % (target, (err or out).strip() or "exit %d" % rc))
+    if out.strip() == "absent":
+        return "token already gone"
+    rc, out, err = ssh(target, "rm -f %s" % REMOTE_TOKEN)
+    if rc != 0:
+        raise BootstrapError("%s: could not remove the token (%s)" % (target, (err or out).strip()))
+    return "token removed"
+
+
+def _peer_name(target, ssh):
+    """The name this machine recorded the peer under when it joined it: `hostname -s` there."""
+    rc, out, err = ssh(target, "hostname -s")
+    if rc != 0 or not out.strip():
+        raise BootstrapError("%s: could not read the peer's hostname (%s)" % (target, (err or out).strip() or "exit %d" % rc))
+    return out.strip()
+
+
+def leave(candidate, user=None, ssh=ssh_run, say=print, clock=datetime.now, find=discover.discover_nodes):
+    """`omarchy-cluster leave <candidate>`: undo a join on the peer. Stops and disables the agent, removes
+    the peer's copy of the cluster token, drops this machine's trust record for it, journals the leave. Running it again changes nothing and says so.
+
+    The token on this machine is the pool's token and stays: other nodes still use it."""
+    target = _resolve(candidate, user, find, discover.read_left())
+    ok, why = _is_omarchy(target, ssh)
+    if not ok:
+        raise BootstrapError("%s refused: %s" % (target, why))
+    name = _peer_name(target, ssh)
+    agent = _stop_agent(target, ssh)
+    token = _remove_token(target, ssh)
+    discover.forget_joined(name)  # last: discovery must not trust a peer that still holds a live token
+    discover.remember_left(name, target)  # so the same `leave` can run again after the agent stops advertising
+    say("%s: %s, %s" % (target, agent, token))
+    _journal(clock, "leave  %s (%s): %s, %s" % (candidate, target, agent, token))
