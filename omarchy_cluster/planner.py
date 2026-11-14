@@ -126,12 +126,17 @@ def model_info_or_hub(model_ref, fetch=_hub_fetch):
     try:
         cfg = json.loads(fetch("%s/%s/resolve/main/config.json" % (HUB, model_ref)))
         listing = json.loads(fetch("%s/api/models/%s?blobs=true" % (HUB, model_ref)))
-        weights = sum(int(f["size"]) for f in listing.get("siblings", []) if f["rfilename"].endswith(".safetensors"))
-    except (OSError, ValueError, KeyError, TypeError):
+        if not isinstance(cfg, dict) or not isinstance(listing, dict) or not isinstance(listing.get("siblings"), list):
+            return None
+        # root files only, as the local scan: a nested checkpoint is not part of the model that loads
+        weights = sum(int(f["size"]) for f in listing["siblings"]
+                      if f["rfilename"].endswith(".safetensors") and "/" not in f["rfilename"])
+        info = _info(model_ref, None, cfg, weights)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
-    if not weights or not isinstance(cfg, dict):
+    if not weights or min(info["layers"], info["hidden"], info["kv_heads"], info["head_dim"]) <= 0:
         return None
-    return _info(model_ref, None, cfg, weights)
+    return info
 
 
 def kv_bytes_per_token(info):

@@ -62,3 +62,34 @@ def test_a_hub_answer_that_is_not_a_model_is_a_miss(tmp_path, monkeypatch):
     no_weights = hub({"https://huggingface.co/example/coder/resolve/main/config.json": json.dumps(CONFIG).encode(),
                       "https://huggingface.co/api/models/example/coder?blobs=true": json.dumps({"siblings": []}).encode()})
     assert planner.model_info_or_hub(REF, no_weights) is None
+
+
+def hub_of(config, listing):
+    return hub({
+        "https://huggingface.co/example/coder/resolve/main/config.json": json.dumps(config).encode(),
+        "https://huggingface.co/api/models/example/coder?blobs=true": json.dumps(listing).encode(),
+    })
+
+
+def test_only_root_weights_count_like_the_local_scan(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    listing = {"siblings": [{"rfilename": "model.safetensors", "size": 100},
+                            {"rfilename": "old-checkpoint/model.safetensors", "size": 1000}]}
+    assert planner.model_info_or_hub(REF, hub_of(CONFIG, listing))["weights_bytes"] == 100
+
+
+import pytest
+
+
+@pytest.mark.parametrize("config, listing", [
+    (CONFIG, []),  # a list where the listing object should be
+    (CONFIG, {"siblings": [1, 2]}),
+    (CONFIG, {"siblings": {"a": 1}}),
+    ({**CONFIG, "num_hidden_layers": "many"}, LISTING),
+    ({}, LISTING),  # no dimensions: a zero-layer model is not a model
+    ({**CONFIG, "hidden_size": 0}, LISTING),
+    ([1], LISTING),
+])
+def test_malformed_hub_metadata_is_a_clean_miss(tmp_path, monkeypatch, config, listing):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert planner.model_info_or_hub(REF, hub_of(config, listing)) is None
