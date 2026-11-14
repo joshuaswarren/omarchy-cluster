@@ -10,3 +10,4 @@ def _isolated_trust_record(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(discover, "JOINED", str(trust / "joined"))
     monkeypatch.setattr(pins, "PINS", str(trust / "pins"))  # nor its pins, nor read this machine's own agent key
     monkeypatch.setattr(pins, "LOCAL_CERT_DIR", str(trust / "no-local-agent"))
+    monkeypatch.setattr(discover, "LEFT", str(trust / "left"))

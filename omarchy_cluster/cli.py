@@ -274,6 +274,15 @@ def cmd_join(args):
         sys.exit(1)
 
 
+def cmd_leave(args):
+    from . import bootstrap
+    try:
+        bootstrap.leave(args.candidate, user=args.user)
+    except bootstrap.BootstrapError as e:
+        print("leave: %s" % e, file=sys.stderr)
+        sys.exit(1)
+
+
 # ---- discover ----
 
 def cmd_discover(args):
@@ -394,6 +403,7 @@ def cmd_place(args):
     info = planner.model_info_or_hub(args.model)
     if not info:
         sys.exit("model not found locally or in HF cache: %s" % args.model)
+    nodes = planner.credit_local_copy(nodes, platform.node().split(".")[0], info)
     plan = planner.plan_placement(nodes, links, info, ctx_tokens=args.ctx,
                                   no_decode=args.no_decode, max_stages=args.stages)
     print(planner.plan_table(plan))
@@ -1087,6 +1097,13 @@ def main(argv=None):
     p.add_argument("--auth", choices=("approved-key", "one-time-code"), default="approved-key",
                    help="how the peer approves the join; one-time-code is issue 64")
     p.set_defaults(fn=cmd_join)
+
+    p = sub.add_parser("leave", help="undo a join on the peer: stop and disable its agent, remove its "
+                                     "token, journal the leave; safe to run twice")
+    p.add_argument("candidate", metavar="CANDIDATE",
+                   help="a name from `omarchy-cluster discover`, or user@host")
+    p.add_argument("--user", default=None, help="ssh user for bare candidate names (default: this user)")
+    p.set_defaults(fn=cmd_leave)
 
     p = sub.add_parser("discover", help="list discovered nodes")
     p.add_argument("--mdns-timeout", type=float, default=4.0)
