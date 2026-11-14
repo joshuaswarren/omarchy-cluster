@@ -25,6 +25,44 @@ def test_the_same_seed_gives_the_same_tokens_and_another_seed_does_not():
     assert a != _tokens({"temperature": 1.0, "seed": 6})
 
 
+def _frequencies(sampling, probs, draws=3000):
+    pick = rank._sampler(sampling)
+    logprobs = mx.log(mx.array([probs]))
+    counts = [0] * len(probs)
+    for _ in range(draws):
+        counts[int(pick(logprobs).item())] += 1
+    return [c / draws for c in counts]
+
+
+def test_sampled_frequencies_follow_the_temperature_scaled_distribution():
+    freq = _frequencies({"temperature": 0.5, "seed": 3}, [0.5, 0.3, 0.2])
+    want = [p * p for p in (0.5, 0.3, 0.2)]  # temperature 0.5 squares the probabilities
+    want = [w / sum(want) for w in want]
+    assert all(abs(f - w) < 0.05 for f, w in zip(freq, want))
+
+
+def test_top_p_drops_the_tail_and_renormalises_the_nucleus():
+    freq = _frequencies({"temperature": 1.0, "top_p": 0.85, "seed": 3}, [0.6, 0.3, 0.07, 0.03])
+    assert freq[2] == freq[3] == 0.0  # 0.6 + 0.3 already covers 0.85 only with the second token: nucleus is two tokens
+    assert abs(freq[0] - 2 / 3) < 0.05
+
+
+def test_a_top_p_pick_from_a_real_sized_vocabulary_is_not_ten_times_a_greedy_step():
+    """Issue 97: mx.random.categorical plus a full-vocabulary top_p cost 26 + 26 ms per token on the lab GPUs, 13 times a
+    greedy step. Bound set far above the fix (about 3 ms) and far below the old cost, so only a regression trips it."""
+    import time
+    vocab = 151_936
+    logprobs = mx.random.normal((1, vocab)) * 3
+    logprobs = logprobs - mx.logsumexp(logprobs, axis=-1, keepdims=True)
+    pick = rank._sampler({"temperature": 0.8, "top_p": 0.95, "seed": 7})
+    for _ in range(5):
+        pick(logprobs).item()
+    start = time.perf_counter()
+    for _ in range(20):
+        pick(logprobs).item()
+    assert (time.perf_counter() - start) / 20 < 0.012
+
+
 def test_no_sampling_settings_pick_the_argmax():
     logprobs = mx.log(mx.array([[0.1, 0.6, 0.3]]))
     assert rank._sampler(None) is None
