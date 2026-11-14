@@ -115,7 +115,8 @@ def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, ch
     step("install-agent", "PYTHONPATH=%s python3 -m omarchy_cluster.cli install-agent --port %d"
          % (REMOTE_SRC, port))
     pin = _remote_pin(step)  # read over ssh, which has already authenticated the node
-    pins.remember({discover._resolve(host)}, port, pin)
+    host = discover._resolve(host)  # pins are per address: check and record the one the key was pinned under
+    pins.remember({host}, port, pin)
     if not check(host, port):
         raise BootstrapError("the agent on %s:%d did not answer /v1/health within 30 s" % (host, port))
     name = step("hostname", "hostname -s").strip()

@@ -83,3 +83,44 @@ def test_ensure_cert_keeps_the_same_key_on_every_call(tmp_path):
     again = tls.ensure_cert(str(tmp_path / "n"))
     assert first == again and tls.fingerprint(first[0]) == tls.fingerprint(again[0])
     assert (tmp_path / "n" / "agent.key").stat().st_mode & 0o077 == 0
+
+
+def test_a_plain_http_request_is_refused_even_when_the_endpoint_has_a_pin(tmp_path, monkeypatch):
+    """The https handler does not switch off urllib's http one: an http:// URL must never carry the token."""
+    import urllib.request
+    from omarchy_cluster import pins
+    monkeypatch.setattr(pins, "PINS", str(tmp_path / "pins"))
+    with Listener() as plain:
+        pins.remember(["127.0.0.1"], plain.port, "ab" * 32)
+        req = urllib.request.Request("http://127.0.0.1:%d/v1/facts" % plain.port, headers={"X-Cluster-Token": TOKEN})
+        with pytest.raises(client.PinMismatch):
+            client.urlopen(req, 2)
+    assert plain.seen == []
+
+
+def test_bootstrap_by_hostname_pins_and_checks_the_address_it_resolved(tmp_path, monkeypatch):
+    """`bootstrap user@node.local`: the key read over ssh is pinned under the resolved address, so the health check
+    and the address list must use that address too, not the spelling the operator typed."""
+    from omarchy_cluster import bootstrap, discover, pins
+    monkeypatch.setattr(pins, "PINS", str(tmp_path / "pins"))
+    monkeypatch.setattr(pins, "LOCAL_CERT_DIR", str(tmp_path / "nolocal"))
+    monkeypatch.setattr(discover, "JOINED", str(tmp_path / "joined"))
+    monkeypatch.setattr(discover, "_resolve", lambda a: "127.0.0.1" if a == "peer.test" else a)
+    crt, key = tls.ensure_cert(str(tmp_path / "node"))
+    src = tmp_path / "src" / "omarchy_cluster"
+    src.mkdir(parents=True)
+    (src / "__init__.py").write_text("")
+
+    def ssh(target, command, stdin=None):
+        if "agent.crt" in command:
+            return 0, open(crt).read(), ""
+        if command.startswith("uname -s"):
+            return 0, "Linux\n", ""
+        if command.startswith("hostname -s"):
+            return 0, "peer\n", ""
+        return 0, "ok\n" if "sys.version_info" in command else "", ""
+
+    with Listener(crt, key) as node:
+        name = bootstrap.bootstrap("me@peer.test", ssh=ssh, src_dir=str(tmp_path / "src"), token=TOKEN,
+                                   port=node.port, say=lambda *_: None)
+    assert name == "peer" and node.seen and f"127.0.0.1:{node.port}" in discover.read_joined()["peer"]

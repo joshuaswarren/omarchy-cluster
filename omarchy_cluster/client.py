@@ -41,6 +41,8 @@ class _PinnedConnection(http.client.HTTPSConnection):
 def urlopen(req, timeout, pin=None):
     """urlopen for requests that carry the cluster token: https only, to the pinned key only; a redirect is an error.
     With no pin nothing is sent, not even a connection."""
+    if not req.full_url.startswith("https://"):
+        raise PinMismatch("%s is not an https URL: the cluster token never travels in plain http" % req.full_url)
     if pin is None:
         pin = pins.lookup(req.host.rpartition(":")[0] or req.host, int(req.host.rpartition(":")[2] or 443))
     if not pin:

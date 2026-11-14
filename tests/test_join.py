@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from omarchy_cluster import bootstrap, cli, discover
+from omarchy_cluster import bootstrap, cli, discover, tls
 
 OMARCHY_RELEASE = 'ID=omarchy\nNAME="Omarchy"\nPRETTY_NAME="Omarchy Linux"\n'
 DEBIAN_RELEASE = 'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\nID=debian\n'
@@ -19,6 +19,7 @@ class FakeSsh:
     def __init__(self, os_name="Linux", release=OMARCHY_RELEASE, avahi=True, manager="pacman",
                  hostname="omarchy-m2", fail_on=None, omarchy_version=None):
         self.calls = []
+        self.cert_dir = __import__("tempfile").mkdtemp(prefix="join-cert-")
         self.os_name, self.release, self.avahi = os_name, release, avahi
         self.manager, self.hostname, self.fail_on = manager, hostname, fail_on
         self.omarchy_version = omarchy_version
@@ -43,6 +44,8 @@ class FakeSsh:
             return 0, "ok\n", ""
         if command.startswith("hostname -s"):
             return 0, self.hostname + "\n", ""
+        if "agent.crt" in command:
+            return 0, open(tls.ensure_cert(self.cert_dir)[0]).read(), ""
         return 0, "", ""
 
     def commands(self):
