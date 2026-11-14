@@ -174,9 +174,10 @@ def credit_local_copy(nodes, local, info):
     directory is a path on the machine that plans; no other node's inventory can say it holds that path, so only
     `local` is credited (repo ids and cache snapshot paths are in every node's own inventory already)."""
     ref = info["ref"]
-    if local not in nodes or not info.get("path") or models.cache_key(ref) != ref or not os.path.isdir(ref):
+    if local not in nodes or not info.get("path") or not os.path.isdir(ref):
         return nodes
-    held = {**nodes[local], "cached_models": {**(nodes[local].get("cached_models") or {}), ref: info["weights_bytes"]}}
+    held = {**nodes[local], "cached_models": {**(nodes[local].get("cached_models") or {}),
+                                         models.cache_key(ref): info["weights_bytes"]}}
     return {**nodes, local: held}
 
 

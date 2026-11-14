@@ -195,3 +195,14 @@ def test_place_credits_a_model_directory_to_the_machine_that_holds_it(tmp_path, 
     args = argparse.Namespace(model=str(held), nodes=None, links="l", ctx=4096, no_decode=(), stages=None, json=False)
     plan = cli.cmd_place(args)
     assert (plan["mode"], plan["stages"][0]["node"]) == ("replica", "here")
+
+
+def test_a_complete_model_under_a_cache_style_path_outside_this_nodes_cache_is_credited_here(tmp_path):
+    held = tmp_path / "backup" / "models--org--m" / "snapshots" / "rev1"  # looks like a cache path; is not this node's cache
+    held.mkdir(parents=True)
+    (held / "config.json").write_text('{"num_hidden_layers": 48, "hidden_size": 2048, "num_key_value_heads": 4, "num_attention_heads": 16}')
+    with open(held / "model.safetensors", "wb") as f:
+        f.truncate(int(17.2 * GB))
+    info = planner.model_info(str(held))
+    credited = planner.credit_local_copy({"here": node(90, 94, disk_gb=16)}, "here", info)
+    assert planner.plan_placement(credited, {"pairs": []}, info)["mode"] == "replica"
