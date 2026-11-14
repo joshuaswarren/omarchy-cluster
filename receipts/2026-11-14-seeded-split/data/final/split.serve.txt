@@ -1,0 +1,11 @@
+split across 2 nodes
+PIPELINE: ~/scratch/w7G-p711/model-q25-1p5b (28 layers, KV 28.0 KB/token)
+  rank 0  node-a       fits up to 27 layers  (engine; samples, runs the last layers)
+  rank 1  node-b       fits up to 27 layers
+  split: chosen at rank start from measured ms/layer (serve --split overrides)
+  boundary node-a -> node-b via ifc-a:ring-ip-a -> ifc-b:ring-ip-b  1.8 Gb/s rtt 0.24 ms  ~0.268 ms/token
+ring hostfile: ['ring-ip-a', 'ring-ip-b']
+rank 0 on ring-ip-a pid 15676 (agent-reported, log: ~/.local/share/omarchy-cluster/rank0.log)
+rank 1 on ring-ip-b pid 2038057 (agent-reported, log: ~/.local/share/omarchy-cluster/rank1.log)
+gateway engine: http://127.0.0.1:8031
+gateway pid: 15679 (log: ~/.local/share/omarchy-cluster/gateway.log)
