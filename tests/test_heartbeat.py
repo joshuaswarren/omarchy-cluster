@@ -77,6 +77,7 @@ def test_startup_uses_same_identity_for_hub_and_advertisement(monkeypatch, name,
     monkeypatch.setattr(agent.threading, "Thread", thread)
     monkeypatch.setattr(agent, "advertise_start", advertise)
     monkeypatch.setattr(agent, "ThreadingHTTPServer", Mock(return_value=server))
+    monkeypatch.setattr(agent, "_secure", lambda srv: None)  # TLS has its own tests; this one needs no key on disk
     monkeypatch.setattr(agent.socket, "gethostname", lambda: "worker.example.test")
     monkeypatch.setattr(agent.Handler, "agent", None)
 

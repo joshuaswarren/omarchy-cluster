@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from omarchy_cluster import bootstrap, discover
+from omarchy_cluster import bootstrap, discover, tls
 
 OMARCHY_RELEASE = 'ID=omarchy\nNAME="Omarchy"\nPRETTY_NAME="Omarchy Linux"\n'
 UNIT = "omarchy-cluster-agent.service"
@@ -234,7 +234,15 @@ def test_joining_a_peer_again_clears_its_left_record(journal, tmp_path):
     src = tmp_path / "src"
     (src / "omarchy_cluster").mkdir(parents=True)
     (src / "omarchy_cluster" / "__init__.py").write_text("x = 1\n")
-    bootstrap.bootstrap("someone@127.0.0.1", ssh=lambda target, command, stdin=None: (
-        (0, "peer\n", "") if command.startswith("hostname -s") else (0, "ok\n" if "sys.version_info" in command else "Linux\n" if command.startswith("uname") else "", "")),
-        src_dir=str(src), token="tok", say=lambda *_: None, check=lambda host, port: True)
+    crt = open(tls.ensure_cert(str(tmp_path / "cert"))[0]).read()
+
+    def ssh(target, command, stdin=None):
+        if command.startswith("hostname -s"):
+            return 0, "peer\n", ""
+        if "agent.crt" in command:
+            return 0, crt, ""  # the key the node presents, read over ssh and pinned
+        return 0, "ok\n" if "sys.version_info" in command else "Linux\n" if command.startswith("uname") else "", ""
+
+    bootstrap.bootstrap("someone@127.0.0.1", ssh=ssh, src_dir=str(src), token="tok", say=lambda *_: None,
+                        check=lambda host, port: True)
     assert "peer" not in discover.read_left()

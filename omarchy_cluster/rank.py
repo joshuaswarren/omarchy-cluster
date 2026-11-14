@@ -321,6 +321,9 @@ def _choose(rows, info, group, now, ms):
     return split, [r[0] for r in rows]
 
 
+TOP_P_CANDIDATES = 4096
+
+
 def _sampler(sampling, share=None, follow=False):
     """The token picker for stream_generate, or None for plain greedy decode.
     `sampling` is the gateway's {temperature, top_p, seed}; `share` is rank 0's
@@ -335,16 +338,31 @@ def _sampler(sampling, share=None, follow=False):
         if share is None:
             return None
         return lambda logprobs: share(mx.argmax(logprobs, axis=-1))
-    from mlx_lm.sample_utils import apply_top_p
     seed = sampling.get("seed")
     key = [mx.random.key(seed if seed is not None else secrets.randbits(32))]
     temperature, top_p = sampling.get("temperature") or 1.0, sampling.get("top_p")
+    nucleus = top_p is not None and top_p < 1
 
     def pick(logprobs):
         key[0], step = mx.random.split(key[0])
-        if top_p is not None and top_p < 1:
-            logprobs = apply_top_p(logprobs, top_p)
-        y = mx.random.categorical(logprobs * (1 / temperature), key=step)
+        scaled = logprobs * (1 / temperature)
+        if nucleus:
+            # top_p inside the TOP_P_CANDIDATES most likely tokens: a full-vocabulary sort, cumsum and scatter cost
+            # 26 ms per token on the lab GPUs (issue 97). The nucleus of a real model is a handful of tokens; where
+            # it would exceed the candidates the pick is made among the most likely TOP_P_CANDIDATES.
+            n = scaled.shape[-1]
+            idx = (mx.argpartition(-scaled, TOP_P_CANDIDATES, axis=-1)[..., :TOP_P_CANDIDATES]
+                   if n > TOP_P_CANDIDATES else mx.broadcast_to(mx.arange(n), scaled.shape))
+            cand = mx.take_along_axis(scaled, idx, axis=-1)
+            order = mx.argsort(-cand, axis=-1)
+            cand, idx = mx.take_along_axis(cand, order, axis=-1), mx.take_along_axis(idx, order, axis=-1)
+            probs = mx.softmax(cand, axis=-1)
+            cand = mx.where(mx.cumsum(probs, axis=-1) - probs < top_p, cand, -mx.inf)  # the token that crosses top_p stays
+            y = mx.take_along_axis(idx, mx.argmax(cand + mx.random.gumbel(shape=cand.shape, key=step), axis=-1,
+                                                  keepdims=True), axis=-1)[..., 0]
+        else:
+            # the Gumbel-max trick is what categorical does, without its 26 ms: same distribution, 0.5 ms
+            y = mx.argmax(scaled + mx.random.gumbel(shape=scaled.shape, key=step), axis=-1)
         return share(y) if share else y
     return pick
 
