@@ -51,8 +51,11 @@ token), and appends one line to `~/.local/state/omarchy-cluster/join.log`. If th
 cannot be disabled, or its state, token or hostname cannot be read (ssh or user-bus failure), it
 exits 1 and leaves the token and the trust record. Run twice, the second run changes nothing and the journal line
 says `agent already stopped and disabled, token already gone`; a peer with no agent unit says
-`agent not installed`. The token on this machine is the pool's token and
-stays. A discovered node with no ip or host is refused by name; pass `user@host` instead.
+`agent not installed`. A stopped agent no longer advertises, so a successful `leave NAME` also writes the peer's
+`user@host` to `~/.local/state/omarchy-cluster/left`; a repeat `leave NAME` finds its target there. The left record
+is never trust: `discover` does not read it, it only names a peer that was left on purpose, and a name that was
+never joined is still refused. A later `join` of the peer clears its left line. The token on this machine is the
+pool's token and stays. A discovered node with no ip or host is refused by name; pass `user@host` instead.
 
 ### `agent [--port 8025] [--name NAME] [--hub URL]`
 Run the agent in the foreground. Serves facts, rank start/stop and probe helpers on

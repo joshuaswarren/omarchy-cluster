@@ -117,6 +117,7 @@ def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, ch
         raise BootstrapError("the agent on %s:%d did not answer /v1/health within 30 s" % (host, port))
     name = step("hostname", "hostname -s").strip()
     discover.remember_joined(name, _addresses(host, port, token), port)
+    discover.forget_left(name)
     say("%s: agent running. It shows up in `omarchy-cluster discover` as %s" % (target, name))
     return name
 
@@ -192,12 +193,17 @@ def _is_omarchy(target, ssh):
                                              or "/etc/os-release is missing or has no Omarchy id")
 
 
-def _resolve(candidate, user, find):
-    """The ssh target for a candidate: user@host as given, or a discover name looked up."""
+def _resolve(candidate, user, find, left=None):
+    """The ssh target for a candidate: user@host as given, or a discover name looked up. `left` (leave
+    only) is the record of peers already left: a stopped agent no longer advertises, so a repeat
+    `leave NAME` finds its target there. A name that was never joined is still refused."""
     if "@" in candidate:
         return candidate
     nodes = find()
     node = nodes.get(candidate)
+    if node is None and candidate in (left or {}):
+        host = left[candidate].rpartition("@")[2]
+        return "%s@%s" % (user or left[candidate].rpartition("@")[0] or getpass.getuser(), host)
     if node is None:
         raise BootstrapError("no candidate %r; `omarchy-cluster discover` lists: %s"
                              % (candidate, ", ".join(sorted(nodes)) or "(none)"))
@@ -279,7 +285,7 @@ def leave(candidate, user=None, ssh=ssh_run, say=print, clock=datetime.now, find
     the peer's copy of the cluster token, drops this machine's trust record for it, journals the leave. Running it again changes nothing and says so.
 
     The token on this machine is the pool's token and stays: other nodes still use it."""
-    target = _resolve(candidate, user, find)
+    target = _resolve(candidate, user, find, discover.read_left())
     ok, why = _is_omarchy(target, ssh)
     if not ok:
         raise BootstrapError("%s refused: %s" % (target, why))
@@ -287,5 +293,6 @@ def leave(candidate, user=None, ssh=ssh_run, say=print, clock=datetime.now, find
     agent = _stop_agent(target, ssh)
     token = _remove_token(target, ssh)
     discover.forget_joined(name)  # last: discovery must not trust a peer that still holds a live token
+    discover.remember_left(name, target)  # so the same `leave` can run again after the agent stops advertising
     say("%s: %s, %s" % (target, agent, token))
     _journal(clock, "leave  %s (%s): %s, %s" % (candidate, target, agent, token))

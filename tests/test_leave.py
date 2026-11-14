@@ -71,7 +71,8 @@ def journal(tmp_path, monkeypatch):
 
 def run_leave(ssh, candidate="m2-max", find=FOUND, **kw):
     out = []
-    bootstrap.leave(candidate, ssh=ssh, say=out.append, clock=CLOCK, find=lambda *a, **k: find, **kw)
+    bootstrap.leave(candidate, ssh=ssh, say=out.append, clock=CLOCK,
+                    find=lambda *a, **k: find() if callable(find) else find, **kw)
     return out
 
 
@@ -187,3 +188,42 @@ def test_a_failed_leave_keeps_the_trust_record(journal, joined):
     with pytest.raises(bootstrap.BootstrapError):
         run_leave(PeerSsh(stop_fails=True))
     assert "m2-max" in discover.read_joined()
+
+
+def advertised_only_while_active(peer):
+    """discover as it really behaves: a stopped agent no longer advertises."""
+    return lambda *a, **k: FOUND if peer.active else {}
+
+
+def test_a_repeat_leave_by_name_still_runs_after_the_stopped_agent_stops_advertising(journal):
+    peer = PeerSsh()
+    run_leave(peer, find=advertised_only_while_active(peer))
+    peer.calls.clear()
+    out = run_leave(peer, find=advertised_only_while_active(peer))
+    assert out == ["%s@10.0.0.6: agent already stopped and disabled, token already gone" % getpass.getuser()]
+    assert not any(c.startswith(("systemctl --user disable", "rm -f")) for c in peer.calls)
+
+
+def test_a_repeat_leave_does_not_trust_the_peer_again(journal):
+    peer = PeerSsh()
+    run_leave(peer, find=advertised_only_while_active(peer))
+    run_leave(peer, find=advertised_only_while_active(peer))
+    assert discover.read_joined() == {}
+
+
+def test_a_name_that_was_never_joined_is_still_refused(journal):
+    peer = PeerSsh()
+    run_leave(peer, find=advertised_only_while_active(peer))
+    with pytest.raises(bootstrap.BootstrapError, match="no candidate 'stranger'"):
+        run_leave(peer, candidate="stranger", find=advertised_only_while_active(peer))
+
+
+def test_joining_a_peer_again_clears_its_left_record(journal, tmp_path):
+    discover.remember_left("peer", "someone@10.0.0.6")
+    src = tmp_path / "src"
+    (src / "omarchy_cluster").mkdir(parents=True)
+    (src / "omarchy_cluster" / "__init__.py").write_text("x = 1\n")
+    bootstrap.bootstrap("someone@127.0.0.1", ssh=lambda target, command, stdin=None: (
+        (0, "peer\n", "") if command.startswith("hostname -s") else (0, "ok\n" if "sys.version_info" in command else "Linux\n" if command.startswith("uname") else "", "")),
+        src_dir=str(src), token="tok", say=lambda *_: None, check=lambda host, port: True)
+    assert "peer" not in discover.read_left()
