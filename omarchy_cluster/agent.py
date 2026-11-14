@@ -485,7 +485,17 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(n) or b"{}")
 
+    def _authed(self):
+        """Every route needs the cluster token; the agent binds 0.0.0.0, so nothing here answers the LAN without it."""
+        token = cluster_token.read()
+        if token and hmac.compare_digest(token, self.headers.get("X-Cluster-Token", "")):
+            return True
+        self._json(403, {"error": "bad or missing cluster token"})
+        return False
+
     def do_GET(self):
+        if not self._authed():
+            return
         if self.path == "/v1/health":
             return self._json(200, {"ok": True, "version": AGENT_VERSION})
         if self.path == "/v1/facts":
@@ -496,11 +506,9 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if not self._authed():
+            return
         if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start", "/v1/gpu-cap"):
-            token = cluster_token.read()
-            supplied = self.headers.get("X-Cluster-Token", "")
-            if not token or not hmac.compare_digest(token, supplied):
-                return self._json(403, {"error": "bad or missing cluster token"})
             try:
                 req = self._body()
             except ValueError:

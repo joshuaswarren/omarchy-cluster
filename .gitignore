@@ -2,3 +2,6 @@ __pycache__/
 *.egg-info/
 .venv/
 ios/out/
+packaging/*.tar.gz
+packaging/pkg/
+packaging/src/

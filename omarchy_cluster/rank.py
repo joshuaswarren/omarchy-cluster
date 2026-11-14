@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import queue
+import secrets
 import struct
 import threading
 import time
@@ -241,29 +242,59 @@ def _measured_split(model_ref, group):
     return split, [r[0] for r in rows]
 
 
+def _sampler(sampling, share=None, follow=False):
+    """The token picker for stream_generate, or None for plain greedy decode.
+    `sampling` is the gateway's {temperature, top_p, seed}; `share` is rank 0's
+    all_gather of its pick in a split. Rank 0 alone samples, from one seeded key
+    that advances once per token, so a seed fixes the text for a given split.
+    A `follow` rank (every rank but 0 in a split) sees one-hot logits that carry
+    rank 0's token; it takes the argmax, never a sample, or its layers drift."""
+    import mlx.core as mx
+    if follow:
+        return None
+    if not sampling:
+        if share is None:
+            return None
+        return lambda logprobs: share(mx.argmax(logprobs, axis=-1))
+    from mlx_lm.sample_utils import apply_top_p
+    seed = sampling.get("seed")
+    key = [mx.random.key(seed if seed is not None else secrets.randbits(32))]
+    temperature, top_p = sampling.get("temperature") or 1.0, sampling.get("top_p")
+
+    def pick(logprobs):
+        key[0], step = mx.random.split(key[0])
+        if top_p is not None and top_p < 1:
+            logprobs = apply_top_p(logprobs, top_p)
+        y = mx.random.categorical(logprobs * (1 / temperature), key=step)
+        return share(y) if share else y
+    return pick
+
+
 def _share_token(model):
     """Only rank 0 samples. It all_gathers its token and every other rank
     swaps lm_head for that all_gather: ranks on different backends can argmax
     a near-tie differently (ClusterRun5: 26,1 split, rank texts diverged), and
     a rank that feeds its own token to its layers corrupts rank 0's output."""
     import mlx.core as mx
-    if model.model.pipeline_size == 1 or "lm_head" not in model:
+    if model.model.pipeline_size == 1:
         return
+    tied = "lm_head" not in model  # tied embeddings: logits come from embed_tokens.as_linear
     gather = mx.distributed.all_gather  # bound now: _stream's timing must not force it during prefill
     if model.model.pipeline_rank == 0:
-        def sampler(logprobs):
-            y = mx.argmax(logprobs, axis=-1)
-            return mx.depends(y, gather(y.astype(mx.float32)))
-        model.omarchy_sampler = sampler
+        model.omarchy_share = lambda y: mx.depends(y, gather(y.astype(mx.float32)))
         return
-    vocab = model.lm_head.weight.shape[0]
+    model.omarchy_follow = True
+    vocab = model.model.embed_tokens.weight.shape[0] if tied else model.lm_head.weight.shape[0]
 
     def head(h):
         # depends: keep this collective after the forward's all_gather of h
         tok = gather(mx.depends(mx.zeros((1,), mx.float32), h))[0]
         hot = (mx.arange(vocab) == tok.astype(mx.int32)).astype(mx.float32)
         return mx.broadcast_to(hot, h.shape[:-1] + (vocab,))
-    model.lm_head = head
+    if tied:
+        model.model.embed_tokens.as_linear = head
+    else:
+        model.lm_head = head
 
 
 def _init_ring(mx, wait_s=1800, pause_s=2.0):
@@ -320,7 +351,7 @@ def rank1_worker(model_ref, engine, counts=None):
 _RING_OPS = ("recv_like", "send", "all_gather")
 
 
-def _stream(model, tokenizer, prompt, max_tokens, marks=None, every=1, on_sample=None):
+def _stream(model, tokenizer, prompt, max_tokens, marks=None, every=1, on_sample=None, sampling=None):
     """mlx-lm stream_generate. Given a `marks` list, the ring ops of every
     `every`-th decode forward are evaluated on entry and exit and timestamped,
     so that step splits into own compute vs ring wait (the forced evals
@@ -335,7 +366,8 @@ def _stream(model, tokenizer, prompt, max_tokens, marks=None, every=1, on_sample
     only moves the wait from the GPU to the host."""
     import mlx.core as mx
     from mlx_lm import stream_generate
-    kw = {"max_tokens": max_tokens, "sampler": getattr(model, "omarchy_sampler", None)}
+    kw = {"max_tokens": max_tokens, "sampler": _sampler(sampling, getattr(model, "omarchy_share", None),
+                                          getattr(model, "omarchy_follow", False))}
     if marks is None:
         marks = []
     dist = mx.distributed
@@ -424,7 +456,7 @@ class Engine:
         self.ready = threading.Event()
         self.tok = None
         self.model = None
-        self._jobs = queue.SimpleQueue()  # (messages, max_tokens, timing, result queue); one worker keeps runs serial
+        self._jobs = queue.SimpleQueue()  # (messages, max_tokens, timing, sampling, result queue); one worker keeps runs serial
         self._id = 0
         self._pending = None  # {"id", "prompt" token ids, "max_tokens", "timing"} for rank1
         self._published = self._fetched = None  # perf_counter of publish / rank1's first fetch
@@ -468,7 +500,7 @@ class Engine:
             return
         self.ready.set()
         while True:
-            messages, max_tokens, timing, result = self._jobs.get()
+            messages, max_tokens, timing, sampling, result = self._jobs.get()
             with self._status_lock:
                 self._status["running"] = 1  # the single worker: at most one job runs
             try:
@@ -476,7 +508,7 @@ class Engine:
                 if isinstance(messages, dict) and "score" in messages:
                     res = self._score(messages["score"])
                 else:
-                    res = self._generate(messages, max_tokens, timing)
+                    res = self._generate(messages, max_tokens, timing, sampling)
             except Exception as e:  # noqa: BLE001
                 res = {"error": "%s: %s" % (type(e).__name__, e)}
             with self._status_lock:
@@ -507,7 +539,7 @@ class Engine:
         if self.model is None:
             raise RuntimeError("engine boot failed: %s" % self._error)
 
-    def _generate(self, messages, max_tokens, timing=False):
+    def _generate(self, messages, max_tokens, timing=False, sampling=None):
         if isinstance(messages, str):
             prompt = self.tok.encode(messages, add_special_tokens=False)
         else:
@@ -523,7 +555,7 @@ class Engine:
         parts = []
         for response in _stream(self.model, self.tok, prompt, max_tokens, marks,
                                 every=1 if timing else self.WATCH_EVERY,
-                                on_sample=self._sample if self._watch else None):
+                                on_sample=self._sample if self._watch else None, sampling=sampling):
             parts.append(response.text)
         wall_ms = 1000 * (time.perf_counter() - self._published)
         prefill_ms = 1000 * response.prompt_tokens / response.prompt_tps
@@ -589,16 +621,16 @@ class Engine:
         with self._status_lock:
             return json.loads(json.dumps(self._status))
 
-    def generate(self, messages, max_tokens=64, timing=False):
+    def generate(self, messages, max_tokens=64, timing=False, sampling=None):
         self.wait_ready()
         result = queue.SimpleQueue()
-        self._jobs.put((messages, max_tokens, timing, result))
+        self._jobs.put((messages, max_tokens, timing, sampling, result))
         return result.get()
 
     def score(self, tokens):
         self.wait_ready()
         result = queue.SimpleQueue()
-        self._jobs.put(({"score": tokens}, 0, False, result))
+        self._jobs.put(({"score": tokens}, 0, False, None, result))
         return result.get()
 
     POLL_WAIT_S = 30.0
@@ -648,8 +680,6 @@ class EngineHandler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n) or b"{}")
         except (ValueError, json.JSONDecodeError) as e:
             return self._json(400, {"error": str(e)})
-        if self.path == "/generate" and req.get("sampling"):
-            return self._json(400, {"error": "the MLX ranks sample greedily so far (#68); send temperature 0"})
         messages = req.get("messages") or [{"role": "user",
                                             "content": req.get("prompt", "")}]
         if req.get("raw") and isinstance(req.get("prompt"), str):
@@ -668,7 +698,7 @@ class EngineHandler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "token ids must be integers in [0, %d)" % vocab})
             return self._json(200, self.engine.score(tokens))
         res = self.engine.generate(messages, max_tokens=int(req.get("max_tokens", 64)),
-                                   timing=bool(req.get("timing")))
+                                   timing=bool(req.get("timing")), sampling=req.get("sampling") or None)
         return self._json(200, res)
 
 

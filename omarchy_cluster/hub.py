@@ -78,7 +78,7 @@ function draw(t) {
     if (!pos[e.a] || !pos[e.b]) continue;
     const [x1, y1] = pos[e.a], [x2, y2] = pos[e.b];
     g.appendChild(el("line", {class: "edge", x1, y1, x2, y2}));
-    const rate = [e.gbps_a2b, e.gbps_b2a].filter((v) => v).map((v) => v.toFixed(2)).join(" / ");
+    const rate = [e.gbps_a2b, e.gbps_b2a].filter((v) => v != null).map((v) => v.toFixed(2)).join(" / ");
     g.appendChild(el("text", {x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 6, "text-anchor": "middle"},
                      e.media + (rate ? " " + rate + " Gb/s" : "")));
   }

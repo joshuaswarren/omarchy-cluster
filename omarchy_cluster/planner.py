@@ -77,19 +77,10 @@ def window_pattern(tc):
     return [False] * total, 0
 
 
-def model_info(model_ref):
-    path = find_model_path(model_ref)
-    if not path:
-        return None
-    with open(os.path.join(path, "config.json")) as f:
-        cfg = json.load(f)
+def _info(ref, path, cfg, weights):
     tc = cfg.get("text_config", cfg)  # qwen3_5-style multimodal wrappers nest the LM
-    weights = sum(
-        os.path.getsize(os.path.join(path, f))
-        for f in os.listdir(path)
-        if f.endswith(".safetensors"))
     return {
-        "ref": model_ref,
+        "ref": ref,
         "path": path,
         "layers": int(tc.get("num_hidden_layers", 0)),
         "hidden": int(tc.get("hidden_size", 0)),
@@ -102,6 +93,50 @@ def model_info(model_ref):
         "kv_window": window_pattern(tc)[1],
         "weights_bytes": weights,
     }
+
+
+def model_info(model_ref):
+    path = find_model_path(model_ref)
+    if not path:
+        return None
+    with open(os.path.join(path, "config.json")) as f:
+        cfg = json.load(f)
+    weights = sum(
+        os.path.getsize(os.path.join(path, f))
+        for f in os.listdir(path)
+        if f.endswith(".safetensors"))
+    return _info(model_ref, path, cfg, weights)
+
+
+HUB = "https://huggingface.co"
+
+
+def _hub_fetch(url):
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=10) as r:
+        return r.read()
+
+
+def model_info_or_hub(model_ref, fetch=_hub_fetch):
+    """`model_info`, or for a model this host does not hold, its config and weight sizes from the hub: placing needs
+    only the numbers, so a host that runs no rank stores nothing. None when the hub cannot say (offline, not a model)."""
+    info = model_info(model_ref)
+    if info:
+        return info
+    try:
+        cfg = json.loads(fetch("%s/%s/resolve/main/config.json" % (HUB, model_ref)))
+        listing = json.loads(fetch("%s/api/models/%s?blobs=true" % (HUB, model_ref)))
+        if not isinstance(cfg, dict) or not isinstance(listing, dict) or not isinstance(listing.get("siblings"), list):
+            return None
+        # root files only, as the local scan: a nested checkpoint is not part of the model that loads
+        weights = sum(int(f["size"]) for f in listing["siblings"]
+                      if f["rfilename"].endswith(".safetensors") and "/" not in f["rfilename"])
+        info = _info(model_ref, None, cfg, weights)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if not weights or min(info["layers"], info["hidden"], info["kv_heads"], info["head_dim"]) <= 0:
+        return None
+    return info
 
 
 def kv_bytes_per_token(info):

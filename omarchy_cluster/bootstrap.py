@@ -13,6 +13,7 @@ import tarfile
 import time
 import urllib.request
 
+from . import client, discover
 from . import token as cluster_token
 
 AGENT_PORT = 8025
@@ -37,11 +38,12 @@ def ssh_run(target, command, stdin=None):
     return r.returncode, r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
 
 
-def agent_answers(host, port, wait_s=30.0):
+def agent_answers(host, port, wait_s=30.0, token=None):
     end = time.monotonic() + wait_s
     while True:
         try:
-            with urllib.request.urlopen("http://%s:%d/v1/health" % (host, port), timeout=3) as r:
+            req = urllib.request.Request("http://%s:%d/v1/health" % (host, port), headers=client._headers(token=token))
+            with client.urlopen(req, 3) as r:
                 if r.status == 200:
                     return True
         except OSError:
@@ -59,10 +61,11 @@ def _package_tarball(src_dir):
     return buf.getvalue()
 
 
-def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, check=agent_answers,
+def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, check=None,
               say=print):
     """Install and start the agent on target (user@host). Returns the node's discover name."""
     token = token or cluster_token.read()
+    check = check or (lambda host, port: agent_answers(host, port, token=token))  # the new agent wants the token we copy
     if not token:
         raise BootstrapError("no cluster token on this machine: run `omarchy-cluster install-agent` "
                              "here first, or pass --token-file")
@@ -95,8 +98,21 @@ def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, ch
     if not check(host, port):
         raise BootstrapError("the agent on %s:%d did not answer /v1/health within 30 s" % (host, port))
     name = step("hostname", "hostname -s").strip()
+    discover.remember_joined(name, _addresses(host, port, token), port)
     say("%s: agent running. It shows up in `omarchy-cluster discover` as %s" % (target, name))
     return name
+
+
+def _addresses(host, port, token):
+    """Every address this machine will trust for the node: the one it just reached over ssh, plus the
+    interface addresses the node reports (asked with the token, on the ssh-authenticated address)."""
+    addrs = {discover._resolve(host)}
+    try:
+        facts = client.fetch_facts(host, port, token=token)
+        addrs.update(a["ip"] for ifc in facts.get("interfaces", []) for a in ifc.get("ips", []))
+    except Exception:  # noqa: BLE001 - the ssh address alone is still a valid record
+        pass
+    return addrs
 
 
 def _ensure_avahi(target, ssh, say):

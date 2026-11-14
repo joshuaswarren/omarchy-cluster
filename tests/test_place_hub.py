@@ -232,3 +232,10 @@ def test_a_given_links_file_that_cannot_choose_the_ring_address_stops_serve(tmp_
 def test_no_links_given_still_uses_the_first_address():
     node = {"facts": {"interfaces": [{"ips": [{"ip": "10.9.9.9"}]}]}}
     assert cli._pick_route_ip(node, [{"node": "a"}, {"node": "b"}], "a", None) == "10.9.9.9"
+
+
+def test_a_node_keeps_ten_percent_of_its_free_memory_before_it_holds_the_model_whole():
+    need_gb = (INFO["weights_bytes"] + planner.kv_bytes_per_token(INFO) * 2048) / 1e9
+    for free_gb, mode in ((need_gb / 0.9 * 1.001, "replica"), (need_gb / 0.9 * 0.999, "none")):
+        plan = planner.plan_placement({"a": facts(free_gb, 128)}, {"pairs": []}, INFO)
+        assert plan["mode"] == mode

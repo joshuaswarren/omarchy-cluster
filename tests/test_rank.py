@@ -350,25 +350,6 @@ def test_init_ring_does_not_retry_other_connect_errors():
         rank._init_ring(SimpleNamespace(distributed=NoRoute()), wait_s=5, pause_s=0)
     assert calls == ["ring"]
 
-def test_rank_engine_refuses_sampling_with_a_400_that_carries_the_reason():
-    import json
-    import urllib.error
-    import urllib.request
-    rank.EngineHandler.engine = SimpleNamespace()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), rank.EngineHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        request = urllib.request.Request("http://127.0.0.1:%d/generate" % server.server_port,
-                                         data=json.dumps({"prompt": "hi", "sampling": {"temperature": 0.7}}).encode())
-        with pytest.raises(urllib.error.HTTPError) as error:
-            urllib.request.urlopen(request, timeout=2)
-        assert error.value.code == 400
-        assert "greedily" in json.load(error.value)["error"]
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
 def test_init_ring_retries_on_this_platforms_econnrefused(monkeypatch):
     """ECONNREFUSED is 111 on Linux and 61 on macOS; the retry must follow the platform's value."""
     monkeypatch.setattr(rank.errno, "ECONNREFUSED", 61)

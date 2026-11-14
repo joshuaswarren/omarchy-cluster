@@ -1,0 +1,2 @@
+stopped local process group 14303
+stopped rank pid 2036942 on ring-ip-b: {'stopped': 2036942, 'escalated': False, 'ports_swept': [52100, 8031]}
