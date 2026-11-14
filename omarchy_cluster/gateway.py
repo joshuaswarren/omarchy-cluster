@@ -25,6 +25,7 @@ MAX_CONCURRENT = 4  # llama-server's default slot count; the MLX ranks queue beh
 QUEUE_WAIT_S = 600.0
 CONCURRENCY_FLOOR_TOKPS = 154.63  # the k=1 aggregate decode tok/s from the receipts table; k>1 switches off below it
 RATE_WINDOW = 8  # completions per aggregate-rate reading (two rounds of 4 clients)
+PROBE_AFTER = 16  # completions below the floor at k=1 before the gate tries the configured k again
 
 
 class Slots:
@@ -83,6 +84,8 @@ class Gateway(BaseHTTPRequestHandler):
     queue_wait_s = QUEUE_WAIT_S  # how long a request waits for a slot before the 503
     floor_tokps = CONCURRENCY_FLOOR_TOKPS
     _measured = deque(maxlen=RATE_WINDOW)  # (admitted, finish, completion tokens) of the last completions
+    PROBE_AFTER = PROBE_AFTER
+    _off_count = 0  # completions that missed the floor since the gate last had a reason to try k>1
     _running = 0
     _count_lock = threading.Lock()
 
@@ -119,16 +122,25 @@ class Gateway(BaseHTTPRequestHandler):
 
     @classmethod
     def _aggregate_rate(cls, samples):
-        """Tokens per wall second over a window of (admitted, finish, tokens)
-        samples: the span runs from the earliest engine admission to the last
-        finish, so it covers the served work for these tokens (not queue time
-        that predates an evicted completion). The earliest admission, not the
-        first finish's admission: _measured is completion-ordered, and with
-        concurrent requests a later-admitted request can finish first."""
+        """Tokens per second of engine-busy time over a window of (admitted, finish, tokens)
+        samples. Busy time is the union of the [admitted, finish] intervals: concurrent
+        requests overlap, so they shorten it (that is the k>1 gain), and an idle gap between
+        bursts is not served work, so it adds nothing. The queue wait before admission is
+        outside the interval too."""
         if len(samples) < 2:
             return None
-        span = samples[-1][1] - min(a for a, _, _ in samples)
-        return sum(t for _, _, t in samples) / span if span > 0 else None
+        busy = 0.0
+        first, last = None, None
+        for admitted, finish, _ in sorted((a, f, t) for a, f, t in samples):
+            if last is None:
+                first, last = admitted, finish
+            elif admitted > last:
+                busy += last - first
+                first, last = admitted, finish
+            else:
+                last = max(last, finish)
+        busy += last - first
+        return sum(t for _, _, t in samples) / busy if busy > 0 else None
 
     @classmethod
     def _record_rate(cls, admitted, tokens):
@@ -136,16 +148,29 @@ class Gateway(BaseHTTPRequestHandler):
         gateway's own wall clock (per-request tok/s falls when streams share an engine,
         so it is the wrong gate signal). Above floor_tokps the configured k runs; at or
         below it the gate switches off and requests queue one at a time. resize() keeps
-        one shared permit pool: waiters already parked re-check the new limit. Serving
-        at k=1 measures at about the floor (the floor is the k=1 median), so the gate
-        stays off until a k>1 stretch clears it; idle gaps count against the window."""
+        one shared permit pool: waiters already parked re-check the new limit.
+
+        Serving at k=1 can only measure the k=1 rate, so it can never show that k>1 would
+        clear the floor. After PROBE_AFTER completions below the floor with the gate off,
+        the gate allows the configured k again and judges it on a fresh window: two
+        completions at k>1 that clear the floor keep it on, two that do not switch it off."""
         with cls._count_lock:
             cls._measured.append((admitted, time.perf_counter(), tokens))
             rate = cls._aggregate_rate(list(cls._measured))
             if rate is None:
                 return
-            k = cls.max_concurrent if rate > cls.floor_tokps else 1
             limit = getattr(cls.slots, "limit", None)  # a foreign gate (a test double) cannot resize
+            if rate > cls.floor_tokps:
+                k = cls.max_concurrent
+                cls._off_count = 0
+            else:
+                cls._off_count += 1
+                if limit == 1 and cls._off_count >= cls.PROBE_AFTER:
+                    k = cls.max_concurrent  # probe: a fresh window decides
+                    cls._measured.clear()
+                    cls._off_count = 0
+                else:
+                    k = 1
             if limit is not None and k != limit:
                 cls.slots.resize(k)
 
@@ -304,6 +329,7 @@ def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031", max_concurrent=MAX_
     Gateway.max_concurrent = max_concurrent
     Gateway.slots = Slots(max_concurrent)
     Gateway._measured.clear()
+    Gateway._off_count = 0
     srv = ThreadingHTTPServer(("0.0.0.0", port), Gateway)
     srv.daemon_threads = True
     print("omarchy-cluster gateway on :%d -> engine %s" % (port, Gateway.engine), flush=True)

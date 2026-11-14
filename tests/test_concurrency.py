@@ -42,6 +42,7 @@ def fresh_gate(monkeypatch):
     """Isolate the gateway's class-level gate state between tests."""
     monkeypatch.setattr(Gateway, "_measured", deque(maxlen=8), raising=False)
     monkeypatch.setattr(Gateway, "_running", 0, raising=False)
+    monkeypatch.setattr(Gateway, "_off_count", 0, raising=False)
     return Gateway
 
 
@@ -218,14 +219,84 @@ def test_the_slot_gate_wakes_the_next_ticket_after_an_upshift():
             t.join(timeout=5)
 
 
-def test_the_aggregate_rate_counts_clustered_completions_over_their_own_span():
-    assert Gateway._aggregate_rate([(0.0, 0.25, 100), (1.0, 1.25, 100)]) == 160.0
-    # 200 tokens over the 1.25 s the window really spans; a first-finish anchor
-    # would have read 800 and kept the gate on below the floor.
+def test_the_aggregate_rate_counts_tokens_over_the_time_the_engine_was_busy():
+    assert Gateway._aggregate_rate([(0.0, 0.25, 100), (1.0, 1.25, 100)]) == 400.0  # 200 tokens, 0.5 s busy: the idle second is not served work
+    assert Gateway._aggregate_rate([(0.0, 0.25, 25), (0.0, 0.25, 25)]) == 200.0  # two at once
     assert Gateway._aggregate_rate([(0.0, 1.0, 96), (1.0, 2.0, 96)]) == 96.0  # k=1 steady
     assert Gateway._aggregate_rate([(1.0, 1.5, 100), (0.0, 2.0, 100)]) == 100.0
-    # a later admission finishing first: the min admission anchors the span, not the first finish
+    # a later admission finishing first: the busy time is the union of the intervals
+    assert Gateway._aggregate_rate([(0.0, 0.25, 25), (10.0, 10.25, 25)]) == 100.0  # not 5 tok/s over the 10 s gap
     assert Gateway._aggregate_rate([(0.0, 1.0, 96)]) is None  # one sample: no window yet
+
+
+class Clock:
+    """gateway.time.perf_counter under the test's control."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def perf_counter(self):
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    from omarchy_cluster import gateway
+    c = Clock()
+    monkeypatch.setattr(gateway, "time", c)
+    return c
+
+
+def finish(clock, tokens, start, end):
+    """One completion: admitted at `start`, finished at `end` on the controlled clock."""
+    clock.now = end
+    Gateway._record_rate(start, tokens)
+
+
+def test_idle_time_between_bursts_does_not_switch_a_measured_better_k2_off(fresh_gate, monkeypatch, clock):
+    serve_slots(monkeypatch, 2)
+    monkeypatch.setattr(Gateway, "floor_tokps", 154.63)
+    for start in (0.0, 10.25, 20.5):  # three bursts of two parallel 25-token, 0.25 s requests: 200 tok/s each
+        finish(clock, 25, start, start + 0.25)
+        finish(clock, 25, start, start + 0.25)
+        assert fresh_gate.slots.limit == 2
+
+
+def test_a_gate_that_switched_off_tries_k2_again_and_keeps_it_when_the_rate_clears_the_floor(fresh_gate, monkeypatch, clock):
+    serve_slots(monkeypatch, 2)
+    monkeypatch.setattr(Gateway, "floor_tokps", 154.63)
+    t = 0.0
+    for _ in range(8):  # serial 25-token, 0.25 s requests: 100 tok/s, below the floor
+        finish(clock, 25, t, t + 0.25)
+        t += 0.25
+    assert fresh_gate.slots.limit == 1
+    for _ in range(fresh_gate.PROBE_AFTER):  # keep serving serially; the gate must look again
+        finish(clock, 25, t, t + 0.25)
+        t += 0.25
+        if fresh_gate.slots.limit == 2:
+            break
+    assert fresh_gate.slots.limit == 2  # the probe: k=2 is allowed for a fresh window
+    finish(clock, 25, t, t + 0.25)  # the window shows two requests running at once: 200 tok/s
+    finish(clock, 25, t, t + 0.25)
+    assert fresh_gate.slots.limit == 2
+
+
+def test_a_probe_that_still_measures_serial_rates_goes_back_to_k1(fresh_gate, monkeypatch, clock):
+    serve_slots(monkeypatch, 2)
+    monkeypatch.setattr(Gateway, "floor_tokps", 154.63)
+    t = 0.0
+    for _ in range(8):
+        finish(clock, 25, t, t + 0.25)
+        t += 0.25
+    for _ in range(fresh_gate.PROBE_AFTER + 1):
+        finish(clock, 25, t, t + 0.25)
+        t += 0.25
+        if fresh_gate.slots.limit == 2:
+            break
+    assert fresh_gate.slots.limit == 2  # probing now
+    finish(clock, 25, t, t + 0.25)
+    finish(clock, 25, t + 0.25, t + 0.5)  # the load is still serial: 100 tok/s
+    assert fresh_gate.slots.limit == 1
 
 
 def test_three_queued_requests_run_one_at_a_time_in_arrival_order(fresh_gate, monkeypatch, http_server):
