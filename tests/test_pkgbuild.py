@@ -33,3 +33,8 @@ def test_installs_the_wheel_and_the_licence():
     text = PKGBUILD.read_text()
     assert "python -m installer" in text
     assert "/usr/share/licenses/$pkgname/LICENSE" in text
+
+
+def test_the_documented_build_extracts_the_archive():
+    # `makepkg -e` skips extraction, so a fresh build directory has no source tree for build() to enter
+    assert "makepkg -ef" not in PKGBUILD.read_text()

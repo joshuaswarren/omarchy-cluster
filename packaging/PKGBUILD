@@ -1,5 +1,5 @@
 # Maintainer: Joshua Warren <816217+joshuaswarren@users.noreply.github.com>
-# Build: packaging/make-source.sh writes omarchy-cluster-$pkgver.tar.gz beside this file, then `makepkg -ef`.
+# Build: packaging/make-source.sh writes omarchy-cluster-$pkgver.tar.gz beside this file, then `makepkg -Cf` (it extracts the archive).
 # The package is pure Python and builds from that archive only; nothing is downloaded.
 pkgname=omarchy-cluster
 pkgver=0.3.4
