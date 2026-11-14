@@ -11,6 +11,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from omarchy_cluster import chat
 
 
+@pytest.fixture(autouse=True)
+def home(tmp_path, monkeypatch):
+    """Point HOME at a scratch dir so the REPL's journal never writes the real one."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    return tmp_path
+
+
 @pytest.fixture
 def gateway():
     """A gateway stub: records each chat request, answers from a queue of (status, body)."""
@@ -70,11 +77,11 @@ def test_each_turn_sends_the_whole_conversation_so_far(gateway):
     assert any("12.5 tok/s" in line for line in out)
 
 
-def test_the_request_asks_for_greedy_decoding_only(gateway):
+def test_the_repl_sends_greedy_sampling_temperature_0(gateway):
     url, seen, replies = gateway
     replies.append(answer("x"))
     run(url, ["hi"])
-    assert "temperature" not in seen[0]["body"] or seen[0]["body"]["temperature"] == 0
+    assert seen[0]["body"]["temperature"] == 0
 
 
 def test_a_system_prompt_leads_every_request(gateway):
@@ -98,6 +105,51 @@ def test_a_failed_turn_prints_the_error_and_is_not_kept_in_the_history(gateway):
     out = run(url, ["first", "second"])
     assert any("engine: down" in line for line in out)
     assert seen[1]["body"]["messages"] == [{"role": "user", "content": "second"}]
+
+
+def test_a_200_reply_with_an_unexpected_shape_prints_an_error_and_keeps_going(gateway):
+    url, seen, replies = gateway
+    replies += [(200, {"object": "not a chat completion"}), answer("back")]
+    out = run(url, ["first", "second"])
+    assert any("unexpected reply shape" in line for line in out)
+    assert seen[1]["body"]["messages"] == [{"role": "user", "content": "second"}]
+
+
+@pytest.mark.parametrize("body", [
+    {"choices": [{"message": {"content": None}}]},
+    {"choices": [{"message": {"content": 5}}]},
+    {"choices": [{"message": "ok"}]},
+    {"choices": ["ok"]},
+    ["not", "an", "object"],
+])
+def test_a_malformed_200_body_is_an_error_and_never_enters_the_history(gateway, body):
+    url, seen, replies = gateway
+    replies += [(200, body), answer("back")]
+    out = run(url, ["first", "second"])
+    assert any("unexpected reply shape" in line for line in out)
+    assert seen[1]["body"]["messages"] == [{"role": "user", "content": "second"}]
+
+
+@pytest.mark.parametrize("timings", [12, {"tokens_per_s": "unknown"}, {"tokens_per_s": True}, ["x"],
+                                     {"tokens_per_s": 10 ** 400}, {"tokens_per_s": float("inf")},
+                                     {"tokens_per_s": float("nan")}, {"tokens_per_s": -3}])
+def test_a_malformed_timing_is_dropped_and_the_reply_still_prints(gateway, home, timings):
+    url, seen, replies = gateway
+    replies.append((200, {"choices": [{"message": {"content": "ok"}}], "timings": timings}))
+    out = run(url, ["hi", "/exit"])
+    assert "ok" in out and not any("tok/s" in line for line in out)
+    assert (home / ".local" / "state" / "omarchy-cluster" / "chat.log").read_text().count("turns=1") == 1
+
+
+def test_one_journal_line_per_session_and_no_other_state_files(gateway, home):
+    url, seen, replies = gateway
+    replies += [answer("hello"), answer("fine")]
+    run(url, ["hi", "how are you", "/exit"])
+    log = home / ".local" / "state" / "omarchy-cluster" / "chat.log"
+    lines = log.read_text().splitlines()
+    assert len(lines) == 1 and "chat" in lines[0] and "turns=2" in lines[0]
+    others = [p for p in home.rglob("*") if p.is_file() and p != log]
+    assert others == [], "the REPL wrote a state file: %s" % others
 
 
 def test_reset_clears_the_history_and_blank_lines_and_exit_are_handled(gateway):
