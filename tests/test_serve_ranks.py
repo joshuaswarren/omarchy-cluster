@@ -150,3 +150,24 @@ def test_an_explicit_plan_sizes_a_model_this_host_does_not_hold_from_the_hub(tmp
     monkeypatch.setattr(planner, "model_info_or_hub", lambda ref: held)
     plan = cli._explicit_plan(serve_args("org/not-here", nodes="studio,m2", split="4,4"))
     assert plan["model"] == "org/not-here" and plan["layers"] == held["layers"]
+
+
+def served_engine(cluster_state):
+    return cluster_state["engine"]
+
+
+def test_a_whole_model_placed_on_a_remote_node_is_reached_at_that_nodes_address(tmp_path, monkeypatch, cluster):
+    states = []
+    monkeypatch.setattr(cli, "_start_gateway", lambda state, port, engine, max_concurrent: states.append(engine))
+    cli.cmd_serve(serve_args(make_model(tmp_path), nodes="m2"))
+    assert states == ["http://10.0.0.2:18031"]  # never loopback: the gateway is not on that node
+    assert [(c["ip"], c["rank"]) for c in cluster] == [("10.0.0.2", 0)]
+
+
+def test_a_remote_node_that_advertises_no_address_is_refused_before_any_rank_starts(tmp_path, monkeypatch, cluster):
+    nodes = make_nodes()
+    nodes["m2"]["ip"] = None
+    monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **k: nodes)
+    with pytest.raises(SystemExit, match="m2.*address"):
+        cli.cmd_serve(serve_args(make_model(tmp_path), nodes="m2"))
+    assert cluster == []
