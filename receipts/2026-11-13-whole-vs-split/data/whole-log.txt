@@ -1,0 +1,7 @@
+2026-11-13T21:54:24Z whole: serve 
+2026-11-13T21:54:32Z whole: serve rc=0
+2026-11-13T22:00:58Z whole: ready=1
+2026-11-13T22:00:59Z whole rep 1: 717 bytes
+2026-11-13T22:01:00Z whole rep 2: 718 bytes
+2026-11-13T22:01:02Z whole rep 3: 718 bytes
+2026-11-13T22:01:02Z whole: stopped

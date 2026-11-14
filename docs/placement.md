@@ -15,7 +15,10 @@ the llama.cpp engine.
 2. The planner tries one stage first (the whole model on the one node with the
    most memory), then more stages, and stops at the first feasible plan; `place`
    prints "whole on NODE" or "split across N nodes" on its first line. `--stages N`
-   forces N. Feasible means: every stage holds at least one layer in
+   forces N. A node holds the model whole only when its weights plus the KV cache for the
+   planned context fit in 90 percent of its free memory: the headroom is 10 percent. On two lab
+   laptops, whole on the faster one decoded 1.6 times faster than a split for a model that fits
+   one machine ([receipt](../receipts/2026-11-13-whole-vs-split)). Feasible means: every stage holds at least one layer in
    90 percent of its free memory (`max_layers`), all stages together hold every
    layer, and every boundary has a measured pinned route from `probe`.
 3. Boundary cost is the bf16 activation (2 bytes x hidden x 2) over the pinned
