@@ -59,3 +59,46 @@ def test_facts_report_the_free_bytes_of_the_model_volume(tmp_path, monkeypatch):
     free = facts.model_volume_free()
     assert isinstance(free, int) and free > 0
     assert facts.collect_facts()["model_volume_free_bytes"] > 0
+
+
+def test_a_node_that_already_holds_the_model_is_not_charged_a_second_copy():
+    # 16 GB free, but the complete 17.2 GB model is already in its cache: serving it downloads nothing
+    holder = node(90, 94, disk_gb=16)
+    holder["cached_models"] = {INFO["ref"]: INFO["weights_bytes"]}
+    plan = planner.plan_placement({"holder": holder}, {"pairs": []}, INFO)
+    assert (plan["mode"], plan["stages"][0]["node"]) == ("replica", "holder")
+
+
+def test_a_partly_cached_model_is_charged_only_its_missing_bytes():
+    half = node(90, 94, disk_gb=9)
+    half["cached_models"] = {INFO["ref"]: INFO["weights_bytes"] // 2}  # 8.6 GB present + 9 GB free > 17.2 GB
+    assert planner.plan_placement({"half": half}, {"pairs": []}, INFO)["mode"] == "replica"
+    empty = node(90, 94, disk_gb=9)
+    assert planner.plan_placement({"empty": empty}, {"pairs": []}, INFO)["mode"] == "none"
+
+
+def test_a_cached_copy_of_another_model_buys_nothing():
+    other = node(90, 94, disk_gb=16)
+    other["cached_models"] = {"someone/else": INFO["weights_bytes"]}
+    assert planner.plan_placement({"other": other}, {"pairs": []}, INFO)["mode"] == "none"
+
+
+def test_a_node_with_no_disk_does_not_hide_a_placement_on_the_others():
+    # ranked by total memory a(62) < b(94) < c(128); b has no disk, a and c each fit a part and share a measured route
+    nodes = {"a": node(60, 62, disk_gb=10), "b": node(90, 94, disk_gb=0), "c": node(120, 128, disk_gb=10)}
+    plan = planner.plan_placement(nodes, links("a", "c"), INFO)
+    assert plan["mode"] == "pipeline" and sorted(s["node"] for s in plan["stages"]) == ["a", "c"]
+
+
+def test_facts_list_the_complete_cached_models_by_weight_bytes(tmp_path, monkeypatch):
+    from omarchy_cluster import facts
+    from omarchy_cluster import models
+    monkeypatch.setattr(models, "cache_dir", lambda: str(tmp_path))
+    snap = tmp_path / "models--org--good/snapshots/abc"
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text("{}")
+    (snap / "model.safetensors").write_bytes(b"x" * 1234)
+    partial = tmp_path / "models--org--partial/snapshots/abc"
+    partial.mkdir(parents=True)
+    (partial / "config.json").write_text("{}")  # no weights: not a cached model
+    assert facts.collect_facts()["cached_models"] == {"org/good": 1234}

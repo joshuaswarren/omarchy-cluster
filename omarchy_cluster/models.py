@@ -118,6 +118,14 @@ def list_local():
     return out
 
 
+def cached_weight_bytes():
+    """{repo: bytes of its .safetensors files} for every cached repo with a complete snapshot: what a rank already
+    has on disk and need not download again (the planner's disk check counts it as free)."""
+    return {m["repo"]: sum(os.path.getsize(os.path.join(m["path"], f)) for f in os.listdir(m["path"])
+                           if f.endswith(".safetensors"))
+            for m in list_local()}
+
+
 def _downloader():
     import huggingface_hub
     return huggingface_hub.snapshot_download

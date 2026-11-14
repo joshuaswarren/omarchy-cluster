@@ -385,6 +385,15 @@ def model_volume_free():
     return st.f_bavail * st.f_frsize
 
 
+def cached_models():
+    """{repo: weight bytes} of the complete models in this node's cache (omarchy_cluster.models.cached_weight_bytes)."""
+    try:
+        from . import models
+        return models.cached_weight_bytes()
+    except OSError:
+        return {}
+
+
 def collect_facts():
     facts = {
         "agent_version": AGENT_VERSION,
@@ -397,6 +406,7 @@ def collect_facts():
         "memory_total_bytes": memory_total_bytes(),
         "memory_free_bytes": memory_free_bytes(),
         "model_volume_free_bytes": model_volume_free(),
+        "cached_models": cached_models(),
         "interfaces": interfaces(),
         "boot_id": boot_id(),
         "tools": {"iperf3": bool(shutil.which("iperf3"))},

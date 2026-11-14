@@ -177,12 +177,14 @@ def max_layers(free_bytes, info, ctx_tokens=DEFAULT_CTX_TOKENS):
 
 
 def disk_layers(facts, info):
-    """Layers this node can download into its model volume (about weights_bytes / layers each); every layer when the
-    node does not report the volume, so an older agent is not limited."""
+    """Layers this node can hold on its model volume (about weights_bytes / layers each). What the node already caches
+    of this model needs no second copy, so it adds to the free space. Every layer when the node does not report the
+    volume, so an older agent is not limited."""
     free = facts.get("model_volume_free_bytes")
     if free is None:
         return info["layers"]
-    return int(free // (info["weights_bytes"] / max(info["layers"], 1)))
+    have = min((facts.get("cached_models") or {}).get(info["ref"], 0), info["weights_bytes"])
+    return int((free + have) // (info["weights_bytes"] / max(info["layers"], 1)))
 
 
 def choose_split(layer_ms, caps, n_layers):
@@ -226,6 +228,8 @@ def plan_placement(nodes, links, info, ctx_tokens=DEFAULT_CTX_TOKENS, no_decode=
     # Keep every unified-memory node available for prefill; only the final rank
     # must be eligible for decode.
     ranks = [n for n, f in nodes.items() if f.get("unified_memory", True)]
+    if _disk:  # a node with no room on disk for even one layer cannot be a stage; it must not hide a plan on the others
+        ranks = [n for n in ranks if disk_layers(nodes[n], info) >= 1]
     ranks.sort(key=lambda n: nodes[n]["memory_total_bytes"])
     no_decode = set(no_decode)
     if not any(n not in no_decode for n in ranks):
