@@ -138,7 +138,6 @@ def run_clients(gateway, prompts, stagger=0.0):
 
 def serve_slots(monkeypatch, k):
     monkeypatch.setattr(Gateway, "max_concurrent", k, raising=False)
-    monkeypatch.setattr(Gateway, "slot_count", k, raising=False)
     monkeypatch.setattr(Gateway, "slots", Slots(k))
 
 
@@ -155,6 +154,41 @@ def test_the_slot_gate_resizes_while_requests_hold_it():
     slots.release()
     slots.resize(2)
     assert slots.acquire(timeout=0.05) and slots.acquire(timeout=0.05)  # the raise admits again
+
+
+def test_the_slot_gate_serves_parked_waiters_in_arrival_order_through_a_downshift():
+    slots = Slots(4)
+    for _ in range(4):
+        assert slots.acquire(timeout=1)
+    order = []
+
+    def waiter(i):
+        if slots.acquire(timeout=5):
+            order.append(i)
+            slots.release()
+
+    waiters = []
+    for i in range(4):
+        t = threading.Thread(target=waiter, args=(i,))
+        t.start()
+        waiters.append(t)
+        time.sleep(0.05)  # one park step: each waiter is parked well before the next starts
+    while len(slots._tickets) < 4:
+        time.sleep(0.02)  # all four parked, in order
+    slots.resize(1)
+    for _ in range(4):
+        slots.release()  # the four holders finish under the new limit
+    for t in waiters:
+        t.join(timeout=10)
+    assert order == [0, 1, 2, 3]  # a downshift must not scramble the queue
+
+
+def test_the_aggregate_rate_counts_clustered_completions_over_their_own_span():
+    assert Gateway._aggregate_rate([(0.0, 0.25, 100), (1.0, 1.25, 100)]) == 160.0
+    # 200 tokens over the 1.25 s the window really spans; a first-finish anchor
+    # would have read 800 and kept the gate on below the floor.
+    assert Gateway._aggregate_rate([(0.0, 1.0, 96), (1.0, 2.0, 96)]) == 96.0  # k=1 steady
+    assert Gateway._aggregate_rate([(0.0, 1.0, 96)]) is None  # one sample: no window yet
 
 
 def test_three_queued_requests_run_one_at_a_time_in_arrival_order(fresh_gate, monkeypatch, http_server):
@@ -199,7 +233,7 @@ def test_the_k2_gate_switches_off_when_the_fixture_floor_is_missed(fresh_gate, m
     for t in threads:
         t.join(timeout=10)
     assert results == [200, 200]
-    assert fresh_gate.slot_count == 1  # both completions missed the floor: the gate switched off
+    assert fresh_gate.slots.limit == 1  # both completions missed the floor: the gate switched off
 
     with gate.lock:
         gate.peak = 0
@@ -247,7 +281,7 @@ def test_the_k2_gate_stays_on_above_the_floor(fresh_gate, monkeypatch, http_serv
         t.join(timeout=10)
     assert late_results == [200, 200]
     assert gate.peak == 2
-    assert fresh_gate.slot_count == 2
+    assert fresh_gate.slots.limit == 2
 
 
 def test_status_reports_the_running_request_count(fresh_gate, monkeypatch, http_server):

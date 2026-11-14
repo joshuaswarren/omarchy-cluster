@@ -130,7 +130,7 @@ llama.cpp flags (`--engine llamacpp`):
 | `--rpc-cache` | RPC nodes keep received layers on disk for the next load |
 | `--host-layers N` | keep exactly N layers on the gateway machine, nodes in the order given |
 | `--llama-arg=ARG` | extra llama-server argument (repeat). Write the `=`: an argument starting with `-` is otherwise read as a `serve` option. Example: `--llama-arg=--no-warmup --llama-arg=-fa --llama-arg=on` |
-| `--max-concurrent N` | requests the gateway passes to the engine at once (default 4); more wait up to 10 minutes, then get HTTP 503 with `Retry-After`. k above 1 runs only while the measured aggregate decode rate stays above the floor (154.63 tok/s, `receipts/2026-11-12-concurrent-serving`); below it the gate switches off and requests queue one at a time. llama.cpp batches them in its slots; the MLX ring runs one at a time |
+| `--max-concurrent N` | requests the gateway passes to the engine at once (default 4); more wait up to 10 minutes, then get HTTP 503 with `Retry-After`. k above 1 runs only while the gateway's measured completion throughput (tokens per wall second) stays above the floor (154.63 tok/s, `receipts/2026-11-12-concurrent-serving`); below it the gate switches off and requests queue one at a time. llama.cpp batches them in its slots; the MLX ring runs one at a time |
 
 iPhone node flags: `--ios-bundle`, `--pm3`, `--phone-cap-gb`, `--rpc-layers`,
 `--rpc-port`. See [ios/README.md](../ios/README.md).

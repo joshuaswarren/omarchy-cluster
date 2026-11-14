@@ -58,9 +58,13 @@ recomputed from those files, nothing new measured.
 
 The on/off floor from step 3 lives in one place: `CONCURRENCY_FLOOR_TOKPS` in
 `omarchy_cluster/gateway.py`, set to the CPU k=1 median above (154.63). While the gateway's
-own wall-clock aggregate decode rate over the last 8 completions is above the floor, the
-configured `--max-concurrent` runs; at or below it the gate switches off and requests queue
-one at a time. `GET /status` carries the running count.
+own completion throughput (tokens per wall second, from each request's arrival to its
+finish, over the last 8 completions) is above the floor, the configured `--max-concurrent`
+runs; at or below it the gate switches off and requests queue one at a time. Serving at
+k=1 measures at about the floor (it is the k=1 median), so the gate stays off until a k>1
+stretch clears it; idle gaps count against the window and keep it off. A request admitted
+before a downshift finishes at the old limit; the new limit binds future entries. `GET
+/status` carries the running count.
 
 ### Not run here
 

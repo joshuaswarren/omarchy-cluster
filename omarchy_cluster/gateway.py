@@ -32,28 +32,42 @@ class Slots:
     wait: a permit pool (held under a condition) plus the current limit every
     waiter re-checks. A downshift therefore also stops waiters already parked
     on it; replacing the semaphore would leave the old queue running at the
-    old limit in its own permit pool. acquire/release match the semaphore
-    calls the request path already makes."""
+    old limit in its own permit pool. A request admitted before a downshift
+    finishes at the old limit; the new limit binds future entries. Parked
+    waiters hold arrival tickets and only the head of the ticket queue may
+    take a freed permit, so queued requests are served in arrival order even
+    when the limit changes underneath them. acquire/release match the
+    semaphore calls the request path already makes."""
 
     def __init__(self, limit):
         self._cond = threading.Condition()
         self.limit = limit
         self.held = 0
+        self._tickets = deque()  # parked waiters, arrival order
 
     def acquire(self, timeout):
         deadline = time.monotonic() + timeout
+        ticket = object()
         with self._cond:
-            while self.held >= self.limit:
+            self._tickets.append(ticket)
+            while True:
+                if self._tickets[0] is ticket and self.held < self.limit:
+                    self._tickets.popleft()
+                    self.held += 1
+                    return True
                 left = deadline - time.monotonic()
-                if left <= 0 or not self._cond.wait(left):
+                if left <= 0:
+                    self._tickets.remove(ticket)
+                    self._cond.notify_all()  # a departed head frees the next one to re-check
                     return False
-            self.held += 1
-            return True
+                self._cond.wait(left)
 
     def release(self):
         with self._cond:
+            if self.held <= 0:
+                raise RuntimeError("slot released without holding one")
             self.held -= 1
-            self._cond.notify()
+            self._cond.notify_all()
 
     def resize(self, limit):
         with self._cond:
@@ -64,12 +78,10 @@ class Slots:
 class Gateway(BaseHTTPRequestHandler):
     engine = None  # base url of rank-0 engine
     max_concurrent = MAX_CONCURRENT
-    slot_count = MAX_CONCURRENT  # permits in `slots` right now; the 503 text uses it
     slots = Slots(MAX_CONCURRENT)  # engine calls in flight at once
     queue_wait_s = QUEUE_WAIT_S  # how long a request waits for a slot before the 503
     floor_tokps = CONCURRENCY_FLOOR_TOKPS
-    rate_window = RATE_WINDOW
-    _measured = deque(maxlen=RATE_WINDOW)  # (finish, completion tokens) of the last completions
+    _measured = deque(maxlen=RATE_WINDOW)  # (arrival, finish, completion tokens) of the last completions
     _running = 0
     _count_lock = threading.Lock()
 
@@ -105,26 +117,34 @@ class Gateway(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     @classmethod
-    def _record_rate(cls, tokens):
-        """Aggregate decode tok/s over the last rate_window completions on the gateway's
-        own wall clock (per-request tok/s falls when streams share an engine, so it is the
-        wrong gate signal). The first completion's tokens predate the window's start, so
-        they stay out of the numerator. Above floor_tokps the configured k runs; at or
+    def _aggregate_rate(cls, samples):
+        """Tokens per wall second over a window of (arrival, finish, tokens) samples:
+        the span runs from the earliest arrival to the last finish, so a batch of
+        completions that finish together is counted once over the wall time it
+        actually spanned instead of overcounting against earlier rounds."""
+        if len(samples) < 2:
+            return None
+        span = samples[-1][1] - samples[0][0]
+        return sum(t for _, _, t in samples) / span if span > 0 else None
+
+    @classmethod
+    def _record_rate(cls, arrival, tokens):
+        """Aggregate completion throughput over the last RATE_WINDOW completions on the
+        gateway's own wall clock (per-request tok/s falls when streams share an engine,
+        so it is the wrong gate signal). Above floor_tokps the configured k runs; at or
         below it the gate switches off and requests queue one at a time. resize() keeps
-        one shared permit pool: waiters already parked re-check the new limit."""
+        one shared permit pool: waiters already parked re-check the new limit. Serving
+        at k=1 measures at about the floor (the floor is the k=1 median), so the gate
+        stays off until a k>1 stretch clears it; idle gaps count against the window."""
         with cls._count_lock:
-            cls._measured.append((time.perf_counter(), tokens))
-            if len(cls._measured) < 2:
-                return
-            span = cls._measured[-1][0] - cls._measured[0][0]
-            tokens_in_window = sum(t for _, t in list(cls._measured)[1:])
-            rate = tokens_in_window / span if span > 0 else None
+            cls._measured.append((arrival, time.perf_counter(), tokens))
+            rate = cls._aggregate_rate(list(cls._measured))
             if rate is None:
                 return
             k = cls.max_concurrent if rate > cls.floor_tokps else 1
-            if k != cls.slot_count:
+            limit = getattr(cls.slots, "limit", None)  # a foreign gate (a test double) cannot resize
+            if limit is not None and k != limit:
                 cls.slots.resize(k)
-                cls.slot_count = k
 
     def do_GET(self):
         if self.path in ("/health", "/v1/health"):
@@ -194,9 +214,11 @@ class Gateway(BaseHTTPRequestHandler):
         data = json.dumps(payload).encode()
         rq = urllib.request.Request(self.engine + "/generate", data=data,
                                     headers={"Content-Type": "application/json"})
-        slots = self.slots  # a gate flip swaps the class attribute; release what we acquired
+        arrived = time.perf_counter()  # the rate window counts from arrival, queue wait included
+        slots = self.slots  # the gate resizes in place; release the object you acquired
         if not slots.acquire(timeout=self.queue_wait_s):
-            body = json.dumps({"error": "all %d request slots are busy; retry" % self.slot_count}).encode()
+            body = json.dumps({"error": "all %d request slots are busy; retry"
+                               % getattr(slots, "limit", self.max_concurrent)}).encode()
             self.send_response(503)
             self.send_header("Retry-After", "5")
             self.send_header("Content-Type", "application/json")
@@ -222,7 +244,7 @@ class Gateway(BaseHTTPRequestHandler):
             return self._json(400, {"error": res["error"]})
         if "error" in res:
             return self._json(502, {"error": "engine: %s" % res["error"]})
-        self._record_rate(res["completion_tokens"])
+        self._record_rate(arrived, res["completion_tokens"])
         now = int(time.time())
         common = {
             "id": "chatcmpl-omarchy-%d" % now,
@@ -277,7 +299,6 @@ def _sampling(req):
 def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031", max_concurrent=MAX_CONCURRENT):
     Gateway.engine = engine.rstrip("/")
     Gateway.max_concurrent = max_concurrent
-    Gateway.slot_count = max_concurrent
     Gateway.slots = Slots(max_concurrent)
     Gateway._measured.clear()
     srv = ThreadingHTTPServer(("0.0.0.0", port), Gateway)
