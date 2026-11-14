@@ -276,21 +276,25 @@ def _share_token(model):
     a near-tie differently (ClusterRun5: 26,1 split, rank texts diverged), and
     a rank that feeds its own token to its layers corrupts rank 0's output."""
     import mlx.core as mx
-    if model.model.pipeline_size == 1 or "lm_head" not in model:
+    if model.model.pipeline_size == 1:
         return
+    tied = "lm_head" not in model  # tied embeddings: logits come from embed_tokens.as_linear
     gather = mx.distributed.all_gather  # bound now: _stream's timing must not force it during prefill
     if model.model.pipeline_rank == 0:
         model.omarchy_share = lambda y: mx.depends(y, gather(y.astype(mx.float32)))
         return
     model.omarchy_follow = True
-    vocab = model.lm_head.weight.shape[0]
+    vocab = model.model.embed_tokens.weight.shape[0] if tied else model.lm_head.weight.shape[0]
 
     def head(h):
         # depends: keep this collective after the forward's all_gather of h
         tok = gather(mx.depends(mx.zeros((1,), mx.float32), h))[0]
         hot = (mx.arange(vocab) == tok.astype(mx.int32)).astype(mx.float32)
         return mx.broadcast_to(hot, h.shape[:-1] + (vocab,))
-    model.lm_head = head
+    if tied:
+        model.model.embed_tokens.as_linear = head
+    else:
+        model.lm_head = head
 
 
 def _init_ring(mx, wait_s=1800, pause_s=2.0):
