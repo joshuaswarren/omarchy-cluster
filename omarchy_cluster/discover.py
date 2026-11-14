@@ -13,6 +13,7 @@ from .client import fetch_facts
 SERVICE = "_omarchy-cluster._tcp"
 DEFAULT_PORT = 8025
 HOSTFILE = os.path.expanduser("~/.config/omarchy-cluster/hosts")
+JOINED = os.path.expanduser("~/.local/state/omarchy-cluster/joined")
 
 
 def _run(cmd, timeout):
@@ -120,6 +121,12 @@ def _resolve(addr):
         return addr  # leave as-is; facts fetch will fail visibly
 
 
+def _trusted(node, ip, overrides, joined):
+    if node.get("source") in ("local", "hostfile") or node["name"] in overrides:
+        return True
+    return ip in joined.get(node["name"], ())
+
+
 def merge_discovered(found, overrides):
     """Hostfile wins per name; unknown hostfile names are added."""
     nodes = {name: dict(node, source="mdns") for name, node in found.items()}
@@ -132,19 +139,62 @@ def merge_discovered(found, overrides):
     return nodes
 
 
+def read_joined(path=None):
+    """{name: {address, ...}}: the nodes `bootstrap`/`join` installed, as this machine recorded them."""
+    joined = {}
+    try:
+        with open(path or JOINED) as f:
+            for line in f:
+                name, _, addrs = line.strip().partition(" ")
+                if name:
+                    joined[name] = set(a for a in addrs.split(",") if a)
+    except FileNotFoundError:
+        pass
+    return joined
+
+
+def remember_joined(name, addresses, path=None):
+    """Record a node this machine installed over ssh. One line per name; addresses merge."""
+    path = path or JOINED
+    joined = read_joined(path)
+    joined.setdefault(name, set()).update(addresses)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        for node in sorted(joined):
+            f.write("%s %s\n" % (node, ",".join(sorted(joined[node]))))
+
+
+def forget_joined(name, path=None):
+    path = path or JOINED
+    joined = read_joined(path)
+    if joined.pop(name, None) is not None:
+        with open(path, "w") as f:
+            for node in sorted(joined):
+                f.write("%s %s\n" % (node, ",".join(sorted(joined[node]))))
+
+
 def discover_nodes(mdns_timeout=4.0, hostfile=HOSTFILE):
     """Browse mDNS, apply hostfile overrides, verify each node with /v1/facts.
 
+    The cluster token goes only to nodes this machine trusts: this machine, hostfile entries (the
+    operator wrote them) and nodes it joined, at an address recorded then. An advertiser that is
+    none of these gets no request at all: anyone on the LAN can advertise the service.
+
     Returns {name: {name, ip, port, source, facts|None, error}}."""
-    nodes = merge_discovered(browse(mdns_timeout), read_hostfile(hostfile))
+    overrides = read_hostfile(hostfile)
+    nodes = merge_discovered(browse(mdns_timeout), overrides)
     local = platform.node().split(".")[0] or "localhost"
     nodes.setdefault(local, {"name": local, "host": local, "ip": "127.0.0.1",
                              "ips": ["127.0.0.1"], "port": DEFAULT_PORT, "source": "local"})
+    joined = read_joined()
     for node in nodes.values():
         node["facts"] = node["error"] = None
         best = None  # (score, ip, facts) - prefer the fastest interface that answers
         for ip in node.get("ips") or [node.get("ip")]:
             if not ip:
+                continue
+            if not _trusted(node, ip, overrides, joined):
+                node["error"] = "not joined: run `omarchy-cluster join %s`" % node["name"]
                 continue
             try:
                 facts = fetch_facts(ip, node.get("port", DEFAULT_PORT))
@@ -168,6 +218,8 @@ def discover_nodes(mdns_timeout=4.0, hostfile=HOSTFILE):
             for speed, _, ip in ranked:
                 if speed <= best[0] and ip in (node.get("ips") or []):
                     break  # already on the best known address
+                if not _trusted(node, ip, overrides, joined):
+                    continue
                 try:
                     node["facts"] = fetch_facts(ip, node.get("port", DEFAULT_PORT))
                     node["ip"] = ip

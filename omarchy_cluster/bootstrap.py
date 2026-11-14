@@ -13,7 +13,7 @@ import tarfile
 import time
 import urllib.request
 
-from . import client
+from . import client, discover
 from . import token as cluster_token
 
 AGENT_PORT = 8025
@@ -98,8 +98,21 @@ def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, ch
     if not check(host, port):
         raise BootstrapError("the agent on %s:%d did not answer /v1/health within 30 s" % (host, port))
     name = step("hostname", "hostname -s").strip()
+    discover.remember_joined(name, _addresses(host, port, token))
     say("%s: agent running. It shows up in `omarchy-cluster discover` as %s" % (target, name))
     return name
+
+
+def _addresses(host, port, token):
+    """Every address this machine will trust for the node: the one it just reached over ssh, plus the
+    interface addresses the node reports (asked with the token, on the ssh-authenticated address)."""
+    addrs = {discover._resolve(host)}
+    try:
+        facts = client.fetch_facts(host, port, token=token)
+        addrs.update(a["ip"] for ifc in facts.get("interfaces", []) for a in ifc.get("ips", []))
+    except Exception:  # noqa: BLE001 - the ssh address alone is still a valid record
+        pass
+    return addrs
 
 
 def _ensure_avahi(target, ssh, say):

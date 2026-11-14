@@ -16,8 +16,8 @@ def _headers(extra=None, token=None):
     return headers
 
 
-def fetch_facts(ip, port, timeout=4):
-    req = urllib.request.Request("http://%s:%d/v1/facts" % (ip, port), headers=_headers())
+def fetch_facts(ip, port, timeout=4, token=None):
+    req = urllib.request.Request("http://%s:%d/v1/facts" % (ip, port), headers=_headers(token=token))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 

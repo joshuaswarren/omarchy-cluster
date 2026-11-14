@@ -13,6 +13,7 @@ Files the tools read and write:
 | `~/.local/state/omarchy-cluster/links.json` | probe's measured routes (override with `--links` / `--out`) |
 | `~/.local/state/omarchy-cluster/layer-ms.json` | fastest decode ms/layer seen per node |
 | `~/.local/state/omarchy-cluster/live-env` | default `OMARCHY_LIVE_ENV` file |
+| `~/.local/state/omarchy-cluster/joined` | one line per node `bootstrap` installed: its name and the addresses this machine trusts for it |
 
 ## Node commands
 
@@ -39,7 +40,13 @@ Python the agent runs in.
 
 ### `discover [--mdns-timeout 4.0]`
 Lists nodes found over mDNS (`_omarchy-cluster._tcp`, Avahi on Linux, dns-sd on
-macOS) plus any plain-text hosts-file override.
+macOS) plus any plain-text hosts-file override. The cluster token goes only to trusted
+nodes: this machine, hosts-file entries, and nodes `bootstrap` installed (recorded in
+`joined` with the addresses the node reported). Any other advertiser is listed with the
+error `not joined` and gets no request at all, because anyone on the network can
+advertise the service. A node whose address changed shows `not joined` until
+`bootstrap` runs on it again. Pools set up before this rule need that one run per node,
+or a hosts-file line.
 
 ### `probe [--seconds 3.0] [--out PATH]`
 Measures RTT and bandwidth for every node pair and every interface route, writes
