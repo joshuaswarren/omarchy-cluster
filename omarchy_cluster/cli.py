@@ -12,7 +12,7 @@ import urllib.request
 import signal
 
 from . import AGENT_VERSION
-from . import client, discover, probe as probe_mod
+from . import client, discover, probe as probe_mod, tls
 
 GB = 1024.0 ** 3
 
@@ -132,6 +132,7 @@ def cmd_install_agent(args):
         with open(os.open(tokpath, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             f.write(secrets.token_urlsafe(32))
     os.chmod(tokpath, 0o600)
+    tls.ensure_cert(tokdir)  # the key a joining machine reads over ssh and pins
 
     wrapper = os.path.join(home, ".local/bin/omarchy-cluster")
     os.makedirs(os.path.dirname(wrapper), exist_ok=True)
@@ -219,6 +220,18 @@ def _self_test_inbound(port, py):
                   (port, py, py))
     except OSError as e:  # noqa: BLE001 - self-test failures are advisory
         print("WARN: inbound self-test bind failed: %s" % e)
+
+
+def cmd_pin(args):
+    from . import bootstrap
+    failed = 0
+    for target in args.targets:
+        try:
+            print("%s: pinned %s" % (target, bootstrap.pin(target, port=args.port)))
+        except bootstrap.BootstrapError as e:
+            failed += 1
+            print("pin: %s" % e, file=sys.stderr)
+    sys.exit(1 if failed else 0)
 
 
 def cmd_bootstrap(args):
@@ -418,7 +431,7 @@ def _launch_rank_via_agent(node, rank, model, layers, hostfile_content, args, fa
         payload["engine_url"] = args.engine_url
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        "http://%s:%d/v1/rank/start" % (node["ip"], node.get("port", 8025)),
+        client.agent_url(node["ip"], node.get("port", 8025), "/v1/rank/start"),
         data=data, headers={"Content-Type": "application/json",
                             "X-Cluster-Token": tok})
     with client.urlopen(req, 30) as r:
@@ -428,7 +441,7 @@ def _launch_rank_via_agent(node, rank, model, layers, hostfile_content, args, fa
 def _stop_rank_via_agent(node, pid):
     tok = _read_local_token()
     req = urllib.request.Request(
-        "http://%s:%d/v1/rank/stop" % (node["ip"], node.get("port", 8025)),
+        client.agent_url(node["ip"], node.get("port", 8025), "/v1/rank/stop"),
         data=json.dumps({"pid": pid, "ports": node.get("ports", [52100, 8031])}).encode(),
         headers={"Content-Type": "application/json", "X-Cluster-Token": tok})
     try:
@@ -770,7 +783,7 @@ def _rpc_start_mismatch(req, res):
 
 def _agent_post(node, path, payload, timeout=30):
     req = urllib.request.Request(
-        "http://%s:%d%s" % (node["ip"], node.get("port", 8025), path),
+        client.agent_url(node["ip"], node.get("port", 8025), path),
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", "X-Cluster-Token": _read_local_token()})
     with client.urlopen(req, timeout) as r:
@@ -1067,6 +1080,11 @@ def main(argv=None):
     p.add_argument("--token-file", default=None,
                    help="send this cluster token instead of this machine's own")
     p.set_defaults(fn=cmd_bootstrap)
+
+    p = sub.add_parser("pin", help="over ssh: record the TLS key of a node whose agent is already installed")
+    p.add_argument("targets", nargs="+", metavar="user@host")
+    p.add_argument("--port", type=int, default=8025)
+    p.set_defaults(fn=cmd_pin)
 
     p = sub.add_parser("join", help="one command: resolve a candidate from discover, refuse "
                                     "non-Omarchy peers, install the agent and journal the join")

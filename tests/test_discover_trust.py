@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from omarchy_cluster import bootstrap, discover
+from omarchy_cluster import bootstrap, discover, pins, tls
 from omarchy_cluster import token as cluster_token
 
 SECRET = "review-only-cluster-secret"
@@ -31,11 +31,19 @@ class Rogue(BaseHTTPRequestHandler):
         pass
 
 
+def over_tls(server, certdir):
+    server.socket = tls.server_context(certdir).wrap_socket(server.socket, server_side=True)
+    return server
+
+
 @pytest.fixture
 def advertiser(tmp_path, monkeypatch):
-    """A loopback listener that records the token header it is sent, plus empty trust files."""
+    """A loopback TLS listener that records the token header it is sent, plus empty trust files. Its key is this
+    machine's own agent key (loopback is pinned from the local certificate); other addresses have no pin until a test joins them."""
     Rogue.seen = []
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Rogue)
+    monkeypatch.setattr(pins, "LOCAL_CERT_DIR", str(tmp_path / "cert"))
+    monkeypatch.setattr(pins, "PINS", str(tmp_path / "pins"))
+    server = over_tls(ThreadingHTTPServer(("127.0.0.1", 0), Rogue), str(tmp_path / "cert"))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setattr(cluster_token, "read", lambda: SECRET)
     monkeypatch.setattr(discover.platform, "node", lambda: "this-machine")
@@ -111,6 +119,8 @@ def test_bootstrap_records_the_node_it_installed_with_its_addresses(advertiser):
             return 0, "peer\n", ""
         if command.startswith("uname -s"):
             return 0, "Linux\n", ""
+        if "agent.crt" in command:
+            return 0, open(tls.ensure_cert(str(tmp / "cert"))[0]).read(), ""
         return 0, "", ""
 
     src = tmp / "src"
@@ -119,6 +129,7 @@ def test_bootstrap_records_the_node_it_installed_with_its_addresses(advertiser):
     bootstrap.bootstrap("jw@127.0.0.1", ssh=ssh, src_dir=str(src), token="tok", say=lambda *_: None,
                         check=lambda host, port: True)
     assert discover.read_joined()["peer"] >= {"127.0.0.1:8025"}
+    assert pins.read()["127.0.0.1:8025"] == tls.fingerprint(str(tmp / "cert" / "agent.crt"))  # the key read over ssh
 
 
 def test_this_machines_own_advertisement_is_trusted_and_goes_to_loopback(advertiser, monkeypatch):
@@ -148,7 +159,7 @@ def test_a_hostfile_entry_without_a_port_ignores_the_advertised_port(advertiser,
 
 
 def test_a_redirect_never_carries_the_token_to_another_listener(advertiser, monkeypatch):
-    port, _ = advertiser
+    port, tmp_path = advertiser
 
     class Redirect(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -160,7 +171,7 @@ def test_a_redirect_never_carries_the_token_to_another_listener(advertiser, monk
         def log_message(self, *a):
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+    server = over_tls(ThreadingHTTPServer(("127.0.0.1", 0), Redirect), str(tmp_path / "cert"))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         discover.remember_joined("peer", ["127.0.0.1"], server.server_port)
@@ -170,3 +181,21 @@ def test_a_redirect_never_carries_the_token_to_another_listener(advertiser, monk
         server.shutdown()
         server.server_close()
     assert Rogue.seen == [] and node["facts"] is None and "302" in node["error"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="needs a second loopback address")
+def test_a_machine_that_takes_over_a_joined_address_gets_no_token(advertiser, tmp_path, monkeypatch):
+    """Issue 98 risk 2: the node joined at 127.0.0.2 presented another key; whoever answers there now is not it."""
+    _, tmp = advertiser
+    other_crt, other_key = tls.ensure_cert(str(tmp_path / "joined-node"))
+    server = over_tls(ThreadingHTTPServer(("127.0.0.2", 0), Rogue), str(tmp / "cert"))  # the taker-over's own key
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        discover.remember_joined("peer", ["127.0.0.2"], server.server_port)
+        pins.remember(["127.0.0.2"], server.server_port, tls.fingerprint(other_crt))
+        advertise(monkeypatch, server.server_port, ip="127.0.0.2")
+        node = peer(discover.discover_nodes(hostfile=discover.HOSTFILE))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert Rogue.seen == [] and node["facts"] is None and "pinned" in node["error"]

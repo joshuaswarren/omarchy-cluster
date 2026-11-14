@@ -13,13 +13,14 @@ from __future__ import annotations
 import io
 import getpass
 import os
+import ssl
 import subprocess
 import tarfile
 import time
 import urllib.request
 from datetime import datetime
 
-from . import client, discover
+from . import client, discover, pins, tls
 from . import token as cluster_token
 
 AGENT_PORT = 8025
@@ -38,18 +39,27 @@ class BootstrapError(Exception):
 
 
 def ssh_run(target, command, stdin=None):
-    """Run one command on target. Returns (exit code, stdout, stderr)."""
+    """Run one command on target. Returns (exit code, stdout, stderr). The host key is always checked, whatever the
+    operator's ssh config says: the TLS key pinned for the node is read over this connection, so an impostor at the
+    address must not get past it."""
     feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", target, command],
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+                        "-o", "ConnectTimeout=10",
+                        "--", target, command],
                        capture_output=True, timeout=600, **feed)
-    return r.returncode, r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
+    err = r.stderr.decode(errors="replace")
+    if r.returncode == 255 and "Host key verification failed" in err:
+        raise BootstrapError("ssh cannot verify the host key of %s: run `ssh %s` once yourself and verify the key it "
+                             "shows (known_hosts must hold it); the cluster pins the TLS key it reads over that "
+                             "connection, so it will not use an unverified host" % (target, target))
+    return r.returncode, r.stdout.decode(errors="replace"), err
 
 
 def agent_answers(host, port, wait_s=30.0, token=None):
     end = time.monotonic() + wait_s
     while True:
         try:
-            req = urllib.request.Request("http://%s:%d/v1/health" % (host, port), headers=client._headers(token=token))
+            req = urllib.request.Request(client.agent_url(host, port, "/v1/health"), headers=client._headers(token=token))
             with client.urlopen(req, 3) as r:
                 if r.status == 200:
                     return True
@@ -113,13 +123,38 @@ def bootstrap(target, ssh=ssh_run, src_dir=None, token=None, port=AGENT_PORT, ch
          token.encode())
     step("install-agent", "PYTHONPATH=%s python3 -m omarchy_cluster.cli install-agent --port %d"
          % (REMOTE_SRC, port))
+    pin = _remote_pin(step)  # read over ssh, which has already authenticated the node
+    host = discover._resolve(host)  # pins are per address: check and record the one the key was pinned under
+    pins.remember({host}, port, pin)
     if not check(host, port):
         raise BootstrapError("the agent on %s:%d did not answer /v1/health within 30 s" % (host, port))
     name = step("hostname", "hostname -s").strip()
-    discover.remember_joined(name, _addresses(host, port, token), port)
+    addresses = _addresses(host, port, token)
+    pins.remember(addresses, port, pin)
+    discover.remember_joined(name, addresses, port)
     discover.forget_left(name)
     say("%s: agent running. It shows up in `omarchy-cluster discover` as %s" % (target, name))
     return name
+
+
+def pin(target, ssh=ssh_run, port=AGENT_PORT):
+    """Pin the key of a node whose agent is already installed (one the hosts file lists, or one joined before
+    agents spoke TLS). The key is read over ssh. A node whose agent predates TLS needs `bootstrap` again."""
+    def step(what, command):
+        rc, out, err = ssh(target, command)
+        if rc != 0:
+            raise BootstrapError("%s failed on %s: %s (an agent installed before TLS needs `omarchy-cluster bootstrap`)"
+                                 % (what, target, (err or out).strip()))
+        return out
+    address = discover._resolve(target.rpartition("@")[2])
+    pins.remember({address}, port, _remote_pin(step))
+    return address
+
+
+def _remote_pin(step):
+    """The SHA-256 of the certificate the node's agent presents, from its certificate file."""
+    pem = step("certificate read", "cat ~/.config/omarchy-cluster/%s" % tls.CERT_NAME)
+    return tls.fingerprint_der(ssl.PEM_cert_to_DER_cert(pem))
 
 
 def _addresses(host, port, token):
