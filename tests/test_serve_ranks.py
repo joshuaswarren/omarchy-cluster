@@ -157,6 +157,8 @@ def served_engine(cluster_state):
 
 
 def test_a_whole_model_placed_on_a_remote_node_is_reached_at_that_nodes_address(tmp_path, monkeypatch, cluster):
+    monkeypatch.setattr(cli.platform, "node", lambda: "gateway-box")
+    monkeypatch.setattr(cli, "cmd_place", lambda args: {"mode": "replica", "stages": [{"node": "m2"}]})  # no saved links.json needed
     states = []
     monkeypatch.setattr(cli, "_start_gateway", lambda state, port, engine, max_concurrent: states.append(engine))
     cli.cmd_serve(serve_args(make_model(tmp_path), nodes="m2"))
@@ -168,6 +170,8 @@ def test_a_remote_node_that_advertises_no_address_is_refused_before_any_rank_sta
     nodes = make_nodes()
     nodes["m2"]["ip"] = None
     monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **k: nodes)
+    monkeypatch.setattr(cli.platform, "node", lambda: "gateway-box")
+    monkeypatch.setattr(cli, "cmd_place", lambda args: {"mode": "replica", "stages": [{"node": "m2"}]})
     with pytest.raises(SystemExit, match="m2.*address"):
         cli.cmd_serve(serve_args(make_model(tmp_path), nodes="m2"))
     assert cluster == []
