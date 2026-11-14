@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import AGENT_VERSION
 from . import facts as facts_mod
+from . import tls
 from . import token as cluster_token
 from .discover import advertise_start
 
@@ -559,6 +560,13 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
 
+def _secure(srv):
+    """Serve TLS with this node's own key (made on first start). The handshake runs in the handler's thread, not in
+    accept(): a client that stalls mid-handshake must not stop the listener."""
+    srv.socket = tls.server_context(os.path.expanduser("~/.config/omarchy-cluster")).wrap_socket(
+        srv.socket, server_side=True, do_handshake_on_connect=False)
+
+
 def serve(port=DEFAULT_HTTP_PORT, name=None, hub=None):
     name = name or socket.gethostname().split(".")[0]
     hb = Heartbeat()
@@ -571,6 +579,7 @@ def serve(port=DEFAULT_HTTP_PORT, name=None, hub=None):
     Handler.agent = AgentState(hb)
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     srv.daemon_threads = True
+    _secure(srv)
     print("omarchy-cluster agent %s listening on :%d (mdns %s)"
           % (AGENT_VERSION, port, "up" if adv and adv.poll() is None else "unavailable"), flush=True)
     try:

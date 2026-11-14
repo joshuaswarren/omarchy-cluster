@@ -130,7 +130,14 @@ ranks still need `mlx` and `mlx-lm` in a Python the agent can use. Use ssh keys;
 
 ## Security
 
-- The agent on :8025 requires the cluster token (HMAC-checked on every request);
+- The agent on :8025 speaks TLS with its own key (made at `install-agent`, kept in
+  `~/.config/omarchy-cluster/agent.key`, 0600). `bootstrap` reads the node's certificate
+  over ssh and pins its SHA-256 in `~/.local/state/omarchy-cluster/pins`; this machine sends the
+  token only to an address whose key matches, so a machine that takes over a recorded address
+  gets a refused handshake and no token. An address with no pin is sent nothing. For a node that
+  is already installed (a hosts-file entry, or a node joined before TLS) run
+  `omarchy-cluster pin user@host`; an agent that predates TLS needs `bootstrap` again.
+  The agent requires the cluster token (HMAC-checked on every request);
   ranks are started only through the agent, so there is no node-to-node ssh.
 - The gateway on :8020 serves callers on the same machine without a token. Any other
   caller must send `Authorization: Bearer <cluster token>`; without it the gateway
@@ -142,8 +149,9 @@ ranks still need `mlx` and `mlx-lm` in a Python the agent can use. Use ssh keys;
   ssh node2 'omarchy-cluster install-agent --token-file ~/.config/omarchy-cluster/token'
   ```
 
-- Traffic is plain HTTP over your LAN: no TLS, no per-user auth. This is a homelab
-  trust model. Run it on a network you trust.
+- The agent control plane is TLS with pinned keys. The gateway (:8020), the engine and the
+  rank ring are still plain HTTP over your LAN, with no per-user auth: prompts and answers
+  cross the LAN unencrypted. This is a homelab trust model. Run it on a network you trust.
 - llama.cpp's `ggml-rpc-server` has no authentication. Bind it to one address on a
   network you trust (the engine does this when the agent starts it).
 

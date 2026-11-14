@@ -1,19 +1,28 @@
 import os
 import sys
+import tempfile
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from omarchy_cluster import bootstrap
+from omarchy_cluster import bootstrap, discover, pins, tls
+
+
+@pytest.fixture(autouse=True)
+def isolated_trust_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(discover, "JOINED", str(tmp_path / "state" / "joined"))
+    monkeypatch.setattr(pins, "PINS", str(tmp_path / "state" / "pins"))
+    monkeypatch.setattr(pins, "LOCAL_CERT_DIR", str(tmp_path / "nolocal"))
 
 
 class FakeSsh:
     """Records every remote command; answers the probes the way a stock node would."""
 
     def __init__(self, os_name="Linux", python_ok=True, avahi=True, manager="pacman", sudo_ok=True,
-                 hostname="omarchy-m2", fail_on=None):
+                 hostname="omarchy-m2", fail_on=None, cert_dir=None):
         self.calls = []
+        self.cert_dir = cert_dir or tempfile.mkdtemp(prefix="bootstrap-cert-")
         self.os_name, self.python_ok, self.avahi = os_name, python_ok, avahi
         self.manager, self.sudo_ok, self.hostname, self.fail_on = manager, sudo_ok, hostname, fail_on
 
@@ -35,6 +44,8 @@ class FakeSsh:
             return (0, "", "") if self.sudo_ok else (1, "", "sudo: a password is required")
         if command.startswith("hostname -s"):
             return 0, self.hostname + "\n", ""
+        if "agent.crt" in command:
+            return 0, open(tls.ensure_cert(self.cert_dir)[0]).read(), ""
         return 0, "", ""
 
     def commands(self):
@@ -54,6 +65,15 @@ def src(tmp_path):
     (tmp_path / "omarchy_cluster").mkdir()
     (tmp_path / "omarchy_cluster" / "__init__.py").write_text("x = 1\n")
     return tmp_path
+
+
+def test_bootstrap_pins_the_key_the_node_presents_before_it_checks_health(src):
+    ssh = FakeSsh()
+    seen = []
+    run_bootstrap(ssh, src, check=lambda host, port: seen.append(pins.read()) or True)
+    expected = tls.fingerprint(tls.ensure_cert(ssh.cert_dir)[0])
+    assert list(seen[0].values()) == [expected]  # pinned already when the health check runs
+    assert set(pins.read().values()) == {expected}
 
 
 def test_a_stock_linux_node_gets_the_package_token_and_agent_in_order_and_its_name_is_printed(src):
@@ -169,3 +189,15 @@ def test_an_unreadable_token_file_is_a_clean_error(monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as e:
         cli.main(["bootstrap", "me@node1", "--token-file", str(tmp_path / "missing")])
     assert "cannot read --token-file" in str(e.value)
+
+
+def test_pin_records_the_key_of_an_already_installed_node_without_reinstalling(src):
+    ssh = FakeSsh()
+    bootstrap.pin("me@192.0.2.7", ssh=ssh, port=8025)
+    assert pins.read() == {"192.0.2.7:8025": tls.fingerprint(tls.ensure_cert(ssh.cert_dir)[0])}
+    assert not any("install-agent" in c or "tar -xzf" in c for c in ssh.commands())
+
+
+def test_pin_says_so_when_the_node_has_no_certificate_yet(src):
+    with pytest.raises(bootstrap.BootstrapError, match="certificate read failed"):
+        bootstrap.pin("me@192.0.2.7", ssh=FakeSsh(fail_on="agent.crt"))

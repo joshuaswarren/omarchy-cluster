@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from omarchy_cluster import agent, bootstrap, client
+from omarchy_cluster import agent, bootstrap, client, pins, tls
 from omarchy_cluster import token as cluster_token
 
 TOKEN = "t0k3n-for-the-test"
@@ -99,10 +99,12 @@ def _fake_agent(seen):
 
 
 @pytest.fixture
-def fake_agent(monkeypatch):
+def fake_agent(monkeypatch, tmp_path):
     monkeypatch.setattr(cluster_token, "read", lambda: TOKEN)
+    monkeypatch.setattr(pins, "LOCAL_CERT_DIR", str(tmp_path))  # loopback is pinned from this machine's own agent key
     seen = []
     server = _fake_agent(seen)
+    server.socket = tls.server_context(str(tmp_path)).wrap_socket(server.socket, server_side=True)
     try:
         yield server.server_port, seen
     finally:
