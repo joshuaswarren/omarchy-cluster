@@ -2,7 +2,7 @@
 # Build: packaging/make-source.sh writes omarchy-cluster-$pkgver.tar.gz beside this file, then `makepkg -Cf` (it extracts the archive).
 # The package is pure Python and builds from that archive only; nothing is downloaded.
 pkgname=omarchy-cluster
-pkgver=0.3.4
+pkgver=0.3.5
 pkgrel=1
 pkgdesc='Split one local model across Apple Silicon and Omarchy machines on your LAN; OpenAI-compatible gateway'
 arch=('any')
