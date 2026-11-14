@@ -192,8 +192,11 @@ def test_pull_restarts_cleanly_after_a_cut_connection(fake_cache, monkeypatch):
             blobs = fake_cache / "models--org--new" / "blobs"
             blobs.mkdir(parents=True)
             (blobs / "sha256-partial.incomplete").write_bytes(b"x" * 500)
+            _half_pulled(fake_cache, "org--new")  # config, index and shard 1 landed before the cut
             raise ConnectionError("connection cut mid-download")
-        return _fake_download_landing(fake_cache)(repo_id)
+        snap = fake_cache / "models--org--new" / "snapshots" / "rev1"  # the resume lands the missing shard
+        (snap / "model-00002-of-00002.safetensors").write_bytes(b"x" * 100)
+        return str(snap)
 
     monkeypatch.setattr(models, "_downloader", lambda: cut_download)
     with pytest.raises(ConnectionError):
@@ -233,3 +236,46 @@ def test_place_names_an_unpulled_model_as_missing(tmp_path, monkeypatch):
     args = argparse.Namespace(model="org/unpulled", nodes=None, links="links.json")
     with pytest.raises(SystemExit, match=r"model not found locally or in HF cache: org/unpulled"):
         cli.cmd_place(args)
+
+
+def _half_pulled(cache, repo="org--partial"):
+    """An interrupted multi-file pull: config, the shard index and shard 1 landed; shard 2 is only a .incomplete blob."""
+    root = cache / ("models--" + repo)
+    snap = root / "snapshots" / "rev1"
+    snap.mkdir(parents=True)
+    (root / "refs").mkdir(exist_ok=True)
+    (root / "refs" / "main").write_text("rev1")
+    (snap / "config.json").write_text(json.dumps({"num_hidden_layers": 2, "hidden_size": 8,
+                                                  "num_attention_heads": 2}))
+    (snap / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {
+        "a": "model-00001-of-00002.safetensors", "b": "model-00002-of-00002.safetensors"}}))
+    (snap / "model-00001-of-00002.safetensors").write_bytes(b"x" * 100)
+    (root / "blobs").mkdir(exist_ok=True)
+    (root / "blobs" / "sha256-two.incomplete").write_bytes(b"x" * 10)
+    return snap
+
+
+def test_a_snapshot_missing_a_shard_is_not_listed(fake_cache):
+    _half_pulled(fake_cache)
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+
+
+def test_a_snapshot_with_every_shard_is_listed(fake_cache):
+    snap = _half_pulled(fake_cache)
+    (snap / "model-00002-of-00002.safetensors").write_bytes(b"x" * 100)
+    assert [row["repo"] for row in models.list_local()] == ["org/good", "org/partial"]
+
+
+def test_the_planner_does_not_resolve_or_size_a_half_pulled_model(fake_cache, monkeypatch, tmp_path):
+    from omarchy_cluster import planner
+    home = tmp_path / "home"
+    target = home / ".cache" / "huggingface"
+    target.mkdir(parents=True)
+    os.symlink(str(fake_cache), str(target / "hub"))
+    monkeypatch.setenv("HOME", str(home))
+    snap = _half_pulled(fake_cache)
+    assert planner.find_model_path("org/partial") is None
+    assert planner.model_info("org/partial") is None
+    (snap / "model-00002-of-00002.safetensors").write_bytes(b"x" * 100)
+    assert planner.find_model_path("org/partial") == str(target / "hub" / "models--org--partial" / "snapshots" / "rev1")
+

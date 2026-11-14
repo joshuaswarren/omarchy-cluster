@@ -90,8 +90,10 @@ repo id, downloaded size, weight-file count. Exits 1 when the cache is empty.
 ### `models pull REPO`
 Downloads a Hugging Face repo (for example `mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit`)
 into the cache `place` and `serve` already read, so download then serve is two commands
-with nothing between. An interrupted download (cut connection) resumes on the next pull;
-a half-pulled repo is never listed or served. Needs `huggingface_hub` on the machine that
+with nothing between. An interrupted download (cut connection) resumes on the next pull.
+A snapshot counts as pulled only when `config.json` is there and every shard that
+`model.safetensors.index.json` names is there; a half-pulled repo is not listed and
+`place` and `serve` do not resolve it. Needs `huggingface_hub` on the machine that
 downloads (`pip install huggingface_hub`).
 
 ### `place MODEL [--ctx 2048] [--links PATH] [--no-decode NAME]... [--nodes N1,N2] [--stages N] [--json]`

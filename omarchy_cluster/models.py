@@ -7,6 +7,7 @@ into the same cache layout planner.find_model_path already resolves, so
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -43,13 +44,32 @@ def _snapshot_info(snap):
                 total += os.path.getsize(p)
             except OSError:
                 pass
-            if f.endswith((".safetensors", ".gguf", ".npz", ".bin")):
+            if f.endswith(WEIGHT_SUFFIXES):
                 weight_files += 1
     return total, weight_files
 
 
+WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".npz", ".bin")
+
+
+def snapshot_complete(snap):
+    """True when serve could load this snapshot: config.json, and every shard the safetensors index names.
+    An interrupted pull can leave config, the index and some shards."""
+    if not os.path.isfile(os.path.join(snap, "config.json")):
+        return False
+    index = os.path.join(snap, "model.safetensors.index.json")
+    if not os.path.isfile(index):
+        return True
+    try:
+        with open(index) as f:
+            shards = set(json.load(f)["weight_map"].values())
+    except (OSError, ValueError, KeyError, AttributeError):
+        return False
+    return all(os.path.isfile(os.path.join(snap, shard)) for shard in shards)
+
+
 def list_local():
-    """Every cached repo with a config.json snapshot: [{repo, path, bytes, weights}]."""
+    """Every cached repo with a complete snapshot (see snapshot_complete): [{repo, path, bytes, weights}]."""
     out = []
     base = cache_dir()
     try:
@@ -67,7 +87,7 @@ def list_local():
             continue
         for entry in revisions:
             snap = os.path.join(snaps, entry)
-            if not os.path.isfile(os.path.join(snap, "config.json")):
+            if not snapshot_complete(snap):
                 continue
             total, weights = _snapshot_info(snap)
             out.append({"repo": repo, "path": snap, "bytes": total, "weights": weights})
