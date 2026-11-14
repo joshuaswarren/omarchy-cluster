@@ -445,3 +445,17 @@ def test_layers_are_always_timed_from_a_config_only_copy_so_every_rank_times_the
     finally:
         import shutil
         shutil.rmtree(copy)
+
+
+def test_the_split_sizes_a_local_partial_or_json_only_dir_from_the_index_not_the_files_present(tmp_path):
+    """A local path exists but is not held whole (its own shards, or json only): the files present under-report,
+    and the split's layer cap would be wrong. The index total decides (issue 96, review)."""
+    from omarchy_cluster import rank
+    for present in (0, 1_000_000_000):
+        case = tmp_path / ("case-%d" % present)
+        case.mkdir()
+        snap = _json_only_snapshot(case)
+        if present:
+            (snap / "model-00001-of-00002.safetensors").write_bytes(b"x" * present)
+        info = rank._split_info(str(snap), lambda ref: pytest.fail("downloaded"))
+        assert (info["weights_bytes"], info["layers"], info["path"]) == (17_200_000_000, 48, str(snap))

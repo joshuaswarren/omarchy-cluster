@@ -237,7 +237,14 @@ def _split_info(model_ref, download=_download_json):
     """The model's numbers for the split. A model this node holds whole is read from its cache; otherwise from the
     json-only download, since a rank holds only its own shard files (issue 96) and must not fetch the rest."""
     from . import planner
-    return planner.model_info(model_ref) or planner.model_info_from_index(download(model_ref), model_ref)
+    path = planner.find_model_path(model_ref)
+    if path:
+        # a local path exists but may hold only json files or this rank's own shards: the files present
+        # under-report, and the index total is what the split's layer cap must be sized from (review)
+        if os.path.isfile(os.path.join(path, "model.safetensors.index.json")):
+            return planner.model_info_from_index(path, model_ref)
+        return planner.model_info(model_ref)
+    return planner.model_info_from_index(download(model_ref), model_ref)
 
 
 def _measured_split(model_ref, group):
@@ -264,6 +271,29 @@ def _measured_split(model_ref, group):
     return _choose(rows, info, group, now, ms)
 
 
+def _quantize_random_like_checkpoint(model, path):
+    """Quantize a config-only load the way the real checkpoint is quantized: the config's default bits/group for
+    every quantizable module, its explicit per-path entries where it names them. mlx-lm's loader predicate refuses
+    the default for a module with no `.scales` in the loaded weights, so an empty checkpoint would otherwise stay
+    float32 and time the wrong operators and memory (issue 96 review)."""
+    from pathlib import Path
+
+    import mlx.nn as nn
+    from mlx_lm.utils import load_config
+    q = load_config(Path(path)).get("quantization") or {}
+    group_size, bits = q.get("group_size", 64), q.get("bits", 4)
+
+    def predicate(p, module):
+        if not hasattr(module, "to_quantized"):
+            return False
+        if p in q:
+            entry = q[p]
+            return dict(entry) if isinstance(entry, dict) else bool(entry)
+        return module.weight.shape[-1] % group_size == 0
+
+    nn.quantize(model, group_size=group_size, bits=bits, class_predicate=predicate)
+
+
 def _time_layers(cfg_dir):
     """ms per layer measured in a child process (see _measured_split), from the config-only directory."""
     import subprocess
@@ -272,8 +302,10 @@ def _time_layers(cfg_dir):
         [sys.executable, "-c", "import sys; from pathlib import Path; "
          "from omarchy_cluster.adapters import register_adapters; register_adapters(); "
          "from mlx_lm.utils import load_model; "
-         "from omarchy_cluster.rank import _layer_ms; "
-         "print(_layer_ms(load_model(Path(sys.argv[1]), lazy=True, strict=False)[0]))",
+         "from omarchy_cluster.rank import _layer_ms, _quantize_random_like_checkpoint; "
+         "model, _ = load_model(Path(sys.argv[1]), lazy=True, strict=False); "
+         "_quantize_random_like_checkpoint(model, sys.argv[1]); "
+         "print(_layer_ms(model))",
          cfg_dir], capture_output=True, text=True, check=True).stdout
 
 
@@ -633,7 +665,8 @@ class Engine:
             own = split[0] * layer_ms[0]
             up = sum(c * m for c, m in zip(split[1:], layer_ms[1:]))
         else:
-            best = _fastest_layer_ms("%s %s" % (sys.executable, self.model_ref), 0.0)
+            # the same 'cfg ...' key _measured_split writes: config-only timing, the only calibration there is
+            best = _fastest_layer_ms("cfg %s %s" % (sys.executable, self.model_ref), 0.0)
             own = split[0] * best if best > 0 else None
         self._watch = {"rank0": _Watch(own), "rank1+": _Watch(up)}
         with self._status_lock:

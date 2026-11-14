@@ -199,7 +199,7 @@ def test_watch_with_explicit_split_flags_a_burst_present_from_the_start(monkeypa
     monkeypatch.setattr(rank, "_fastest_layer_ms",
                         lambda key, ms, path=None: real(key, ms, str(tmp_path / "layer-ms.json")))
     import sys
-    rank._fastest_layer_ms("%s model" % sys.executable, 0.39)
+    rank._fastest_layer_ms("cfg %s model" % sys.executable, 0.39)
     engine = rank.Engine("model", 2)
     engine._start_watch([26, 1], None)
     for t in range(4):
@@ -363,3 +363,22 @@ def test_init_ring_retries_on_this_platforms_econnrefused(monkeypatch):
             return "group"
 
     assert rank._init_ring(SimpleNamespace(distributed=Mac()), wait_s=5, pause_s=0) == "group"
+
+
+def test_an_explicit_split_watchdog_reads_the_same_key_the_calibration_wrote(tmp_path, monkeypatch):
+    """_measured_split stores its reference under 'cfg <python> <model>' (config-only timing); the explicit-split
+    watchdog fallback must read that same key, or a fresh calibrate-then---split serve flags nothing (review)."""
+    import json
+    import sys
+    import threading
+    from omarchy_cluster import rank
+    monkeypatch.setenv("HOME", str(tmp_path))
+    store = tmp_path / ".local/state/omarchy-cluster"
+    store.mkdir(parents=True)
+    (store / "layer-ms.json").write_text(json.dumps({"cfg %s m" % sys.executable: 1.5}))
+    eng = object.__new__(rank.Engine)
+    eng.model_ref = "m"
+    eng._status = {"split": None, "layer_ms": None, "parts": {}, "events": []}
+    eng._status_lock = threading.Lock()
+    eng._start_watch([24, 24], None)
+    assert eng._watch["rank0"].ref == 24 * 1.5
