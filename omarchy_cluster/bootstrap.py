@@ -266,16 +266,26 @@ def _remove_token(target, ssh):
     return "token removed"
 
 
+def _peer_name(target, ssh):
+    """The name this machine recorded the peer under when it joined it: `hostname -s` there."""
+    rc, out, err = ssh(target, "hostname -s")
+    if rc != 0 or not out.strip():
+        raise BootstrapError("%s: could not read the peer's hostname (%s)" % (target, (err or out).strip() or "exit %d" % rc))
+    return out.strip()
+
+
 def leave(candidate, user=None, ssh=ssh_run, say=print, clock=datetime.now, find=discover.discover_nodes):
     """`omarchy-cluster leave <candidate>`: undo a join on the peer. Stops and disables the agent, removes
-    the peer's copy of the cluster token, journals the leave. Running it again changes nothing and says so.
+    the peer's copy of the cluster token, drops this machine's trust record for it, journals the leave. Running it again changes nothing and says so.
 
     The token on this machine is the pool's token and stays: other nodes still use it."""
     target = _resolve(candidate, user, find)
     ok, why = _is_omarchy(target, ssh)
     if not ok:
         raise BootstrapError("%s refused: %s" % (target, why))
+    name = _peer_name(target, ssh)
     agent = _stop_agent(target, ssh)
     token = _remove_token(target, ssh)
+    discover.forget_joined(name)  # last: discovery must not trust a peer that still holds a live token
     say("%s: %s, %s" % (target, agent, token))
     _journal(clock, "leave  %s (%s): %s, %s" % (candidate, target, agent, token))

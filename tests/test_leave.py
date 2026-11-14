@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from omarchy_cluster import bootstrap
+from omarchy_cluster import bootstrap, discover
 
 OMARCHY_RELEASE = 'ID=omarchy\nNAME="Omarchy"\nPRETTY_NAME="Omarchy Linux"\n'
 UNIT = "omarchy-cluster-agent.service"
@@ -19,15 +19,18 @@ class PeerSsh:
     """A peer that keeps systemd's state: the unit file stays after `disable --now`; active and enabled flip."""
 
     def __init__(self, os_name="Linux", installed=True, active=True, enabled=True, token=True,
-                 stop_fails=False, show_rc=0, test_rc=None):
+                 stop_fails=False, show_rc=0, test_rc=None, hostname_rc=0):
         self.calls = []
         self.os_name, self.installed, self.active, self.enabled = os_name, installed, active, enabled
         self.token, self.stop_fails, self.show_rc, self.test_rc = token, stop_fails, show_rc, test_rc
+        self.hostname_rc = hostname_rc
 
     def __call__(self, target, command, stdin=None):
         self.calls.append(command)
         if command.startswith("uname -s"):
             return 0, self.os_name + "\n", ""
+        if command.startswith("hostname -s"):
+            return self.hostname_rc, "m2-max\n" if not self.hostname_rc else "", "" if not self.hostname_rc else "no hostname"
         if "/etc/os-release" in command:
             return 0, OMARCHY_RELEASE, ""
         if command.startswith("systemctl --user show"):
@@ -50,6 +53,13 @@ class PeerSsh:
             self.token = False
             return 0, "", ""
         return 0, "", ""
+
+
+@pytest.fixture(autouse=True)
+def joined(tmp_path, monkeypatch):
+    path = tmp_path / "joined"
+    monkeypatch.setattr(discover, "JOINED", str(path))
+    return path
 
 
 @pytest.fixture
@@ -145,3 +155,35 @@ def test_the_cli_wires_leave(capsys):
         main(["leave", "--help"])
     assert ei.value.code == 0
     assert "CANDIDATE" in capsys.readouterr().out
+
+
+def test_leave_forgets_the_trust_record_for_that_peer_only(journal, joined):
+    discover.remember_joined("m2-max", ["10.0.0.6"])
+    discover.remember_joined("studio", ["10.0.0.7"])
+    run_leave(PeerSsh())
+    assert discover.read_joined() == {"studio": {"10.0.0.7:8025"}}  # discovery no longer sends m2-max the token
+
+
+def test_a_second_leave_leaves_the_other_records_alone(journal, joined):
+    discover.remember_joined("m2-max", ["10.0.0.6"])
+    discover.remember_joined("studio", ["10.0.0.7"])
+    peer = PeerSsh()
+    run_leave(peer)
+    run_leave(peer)
+    assert discover.read_joined() == {"studio": {"10.0.0.7:8025"}}
+
+
+def test_leave_that_cannot_learn_the_peers_name_changes_nothing(journal, joined):
+    discover.remember_joined("m2-max", ["10.0.0.6"])
+    peer = PeerSsh(hostname_rc=255)
+    with pytest.raises(bootstrap.BootstrapError, match="hostname"):
+        run_leave(peer)
+    assert peer.active and peer.token and not journal.exists()
+    assert discover.read_joined() == {"m2-max": {"10.0.0.6:8025"}}
+
+
+def test_a_failed_leave_keeps_the_trust_record(journal, joined):
+    discover.remember_joined("m2-max", ["10.0.0.6"])
+    with pytest.raises(bootstrap.BootstrapError):
+        run_leave(PeerSsh(stop_fails=True))
+    assert "m2-max" in discover.read_joined()
