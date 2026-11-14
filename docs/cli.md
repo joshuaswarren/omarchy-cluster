@@ -183,7 +183,7 @@ llama.cpp flags (`--engine llamacpp`):
 | `--rpc-cache` | RPC nodes keep received layers on disk for the next load |
 | `--host-layers N` | keep exactly N layers on the gateway machine, nodes in the order given |
 | `--llama-arg=ARG` | extra llama-server argument (repeat). Write the `=`: an argument starting with `-` is otherwise read as a `serve` option. Example: `--llama-arg=--no-warmup --llama-arg=-fa --llama-arg=on` |
-| `--max-concurrent N` | requests the gateway passes to the engine at once (default 4); more wait up to 10 minutes, then get HTTP 503 with `Retry-After`. llama.cpp batches them in its slots; the MLX ring runs one at a time |
+| `--max-concurrent N` | requests the gateway passes to the engine at once (default 4); more wait up to 10 minutes, then get HTTP 503 with `Retry-After`. k above 1 runs only while the gateway's measured completion throughput (tokens per wall second) stays above the floor (154.63 tok/s, `receipts/2026-11-12-concurrent-serving`); below it the gate switches off and requests queue one at a time. llama.cpp batches them in its slots; the MLX ring runs one at a time |
 
 iPhone node flags: `--ios-bundle`, `--pm3`, `--phone-cap-gb`, `--rpc-layers`,
 `--rpc-port`. See [ios/README.md](../ios/README.md).
@@ -198,8 +198,12 @@ A terminal chat with a running `serve`. It sends the whole conversation to
 `POST /v1/chat/completions` on the gateway (default `http://127.0.0.1:8020`)
 with the cluster token if this machine has one, prints each reply, and then the
 gateway's `tokens_per_s` when the engine reports it. Replies are not streamed.
-`/reset` clears the history; `/exit`, `/quit` or end of input leave. A request
-that fails prints the error and leaves the conversation as it was.
+Sampling is greedy: it sends `temperature` 0, which is all the gateway serves
+until non-greedy sampling lands. `/reset` clears the history; `/exit`, `/quit`
+or end of input leave. A request that fails — including a 200 reply with an
+unexpected body — prints the error and leaves the conversation as it was.
+It keeps no history or memory files; each session appends one clock-stamped
+line to `~/.local/state/omarchy-cluster/chat.log`.
 
 ### `app`
 
@@ -226,7 +230,7 @@ install a desktop entry in the user's XDG applications directory.
   must carry its own (a Muse Spark Open prompt begins with the literal text
   `<|begin_of_text|>`; to end on the answer channel, end the prompt with
   `<|start|>assistant to=user<|message|>`).
-- `GET /status` reports the live split, measured ms per layer and contention events.
+- `GET /status` reports the live split, measured ms per layer, contention events, and `running`, the requests the gateway has in flight at the engine.
 - Engine errors come back as HTTP 502 with the engine's message.
 - `POST /score` on the engine port (8031) runs one teacher-forced forward over the
   given text or token ids on every rank and returns rank 0's per-token negative

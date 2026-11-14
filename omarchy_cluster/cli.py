@@ -41,7 +41,10 @@ def cmd_models_pull(args):
     def step(info):
         print("downloaded %s: %.1f GB, %d weight files" % (info["repo"], info["bytes"] / 1e9, info["weights"]))
 
-    path = models.pull(args.repo, progress=step)
+    try:
+        path = models.pull(args.repo, progress=step)
+    except models.ModelsError as e:
+        sys.exit(str(e))
     print(path)
     return 0
 
@@ -514,6 +517,10 @@ def cmd_serve(args):
     hostfile = os.path.expanduser("~/.local/state/omarchy-cluster/ring-hostfile.json")
     os.makedirs(os.path.dirname(hostfile), exist_ok=True)
     nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
+    local = platform.node().split(".")[0]
+    unreachable = [s["node"] for s in stages if s["node"] != local and not nodes.get(s["node"], {}).get("ip")]
+    if unreachable:  # the gateway reaches a remote engine at the node's address; with none, the serve would hang
+        sys.exit("node %s advertises no address the gateway can reach; nothing was started" % ", ".join(unreachable))
     rank_ips = []
     ring_ip = _name_values(getattr(args, "ring_ip", None), "--ring-ip")
     unknown = sorted(set(ring_ip) - {s["node"] for s in stages})

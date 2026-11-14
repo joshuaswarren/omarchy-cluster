@@ -465,7 +465,7 @@ class Engine:
         # contention watch: rank 0's own compute and its wait on ranks 1.. per sampled step
         self._watch = {}
         self._status = {"split": None, "layer_ms": None, "every": self.WATCH_EVERY,
-                        "parts": {}, "events": []}
+                        "parts": {}, "events": [], "running": 0}
         self._status_lock = threading.Lock()
         threading.Thread(target=self._boot, daemon=True).start()
 
@@ -501,6 +501,8 @@ class Engine:
         self.ready.set()
         while True:
             messages, max_tokens, timing, sampling, result = self._jobs.get()
+            with self._status_lock:
+                self._status["running"] = 1  # the single worker: at most one job runs
             try:
                 _apply_live_env()
                 if isinstance(messages, dict) and "score" in messages:
@@ -509,6 +511,8 @@ class Engine:
                     res = self._generate(messages, max_tokens, timing, sampling)
             except Exception as e:  # noqa: BLE001
                 res = {"error": "%s: %s" % (type(e).__name__, e)}
+            with self._status_lock:
+                self._status["running"] = 0
             result.put(res)
 
     def _score(self, tokens):
