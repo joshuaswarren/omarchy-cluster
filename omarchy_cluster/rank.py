@@ -242,12 +242,16 @@ def _measured_split(model_ref, group):
     return split, [r[0] for r in rows]
 
 
-def _sampler(sampling, share=None):
+def _sampler(sampling, share=None, follow=False):
     """The token picker for stream_generate, or None for plain greedy decode.
     `sampling` is the gateway's {temperature, top_p, seed}; `share` is rank 0's
     all_gather of its pick in a split. Rank 0 alone samples, from one seeded key
-    that advances once per token, so a seed fixes the text for a given split."""
+    that advances once per token, so a seed fixes the text for a given split.
+    A `follow` rank (every rank but 0 in a split) sees one-hot logits that carry
+    rank 0's token; it takes the argmax, never a sample, or its layers drift."""
     import mlx.core as mx
+    if follow:
+        return None
     if not sampling:
         if share is None:
             return None
@@ -278,6 +282,7 @@ def _share_token(model):
     if model.model.pipeline_rank == 0:
         model.omarchy_share = lambda y: mx.depends(y, gather(y.astype(mx.float32)))
         return
+    model.omarchy_follow = True
     vocab = model.lm_head.weight.shape[0]
 
     def head(h):
@@ -357,7 +362,8 @@ def _stream(model, tokenizer, prompt, max_tokens, marks=None, every=1, on_sample
     only moves the wait from the GPU to the host."""
     import mlx.core as mx
     from mlx_lm import stream_generate
-    kw = {"max_tokens": max_tokens, "sampler": _sampler(sampling, getattr(model, "omarchy_share", None))}
+    kw = {"max_tokens": max_tokens, "sampler": _sampler(sampling, getattr(model, "omarchy_share", None),
+                                          getattr(model, "omarchy_follow", False))}
     if marks is None:
         marks = []
     dist = mx.distributed

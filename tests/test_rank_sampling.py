@@ -100,3 +100,27 @@ def test_the_shared_token_is_the_one_rank_0_sampled():
     pick = rank._sampler({"temperature": 1.0, "seed": 5}, share=lambda y: shared.append(int(y.item())) or y)
     out = [int(pick(logprobs).item()) for _ in range(8)]
     assert shared == out == _tokens({"temperature": 1.0, "seed": 5}, steps=8)
+
+
+class _FakeModel:
+    """Just enough of an mlx-lm model for _share_token: pipeline fields and an lm_head with a vocab."""
+
+    def __init__(self, pipeline_rank, vocab=16):
+        self.model = SimpleNamespace(pipeline_size=2, pipeline_rank=pipeline_rank)
+        self.lm_head = SimpleNamespace(weight=mx.zeros((vocab, 4)))
+
+    def __contains__(self, name):
+        return name == "lm_head"
+
+
+def test_a_follower_rank_feeds_its_layers_the_token_rank_0_sampled(monkeypatch):
+    # The lab run (2 ranks, seed 7) gave garbled text: follower ranks sampled from the one-hot
+    # logits too, so their layers got random tokens. A follower must take rank 0's token exactly.
+    monkeypatch.setattr(mx.distributed, "all_gather", lambda x, **kw: mx.array([7.0, 7.0]))
+    follower = _FakeModel(pipeline_rank=1)
+    rank._share_token(follower)
+    logprobs = follower.lm_head(mx.zeros((1, 4)))
+    logprobs = logprobs - mx.logsumexp(logprobs, axis=-1, keepdims=True)  # what stream_generate hands the sampler
+    # None is stream_generate's own argmax: the follower's one-hot logits give back rank 0's token.
+    assert rank._sampler({"temperature": 0.8, "top_p": 0.95, "seed": 3}, follow=follower.omarchy_follow) is None
+    assert int(mx.argmax(logprobs, axis=-1).item()) == 7
