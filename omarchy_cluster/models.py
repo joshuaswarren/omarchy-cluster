@@ -7,6 +7,7 @@ into the same cache layout planner.find_model_path already resolves, so
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -43,13 +44,55 @@ def _snapshot_info(snap):
                 total += os.path.getsize(p)
             except OSError:
                 pass
-            if f.endswith((".safetensors", ".gguf", ".npz", ".bin")):
+            if f.endswith(WEIGHT_SUFFIXES):
                 weight_files += 1
     return total, weight_files
 
 
+WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".npz", ".bin")
+
+
+_SHARD = re.compile(r"^(?P<stem>.+)-(?P<i>\d{5})-of-(?P<n>\d{5})(?P<ext>\.[A-Za-z0-9]+)$")
+
+
+def _unindexed_weights_complete(snap):
+    """No index file: at least one weight file, and every file that names itself `-0000i-of-0000n` has all n
+    of its set (the name already says how many shards the checkpoint has)."""
+    present = {f for f in os.listdir(snap) if f.endswith(WEIGHT_SUFFIXES) and os.path.isfile(os.path.join(snap, f))}
+    for f in present:
+        m = _SHARD.match(f)
+        if m and any("%s-%05d-of-%s%s" % (m["stem"], i, m["n"], m["ext"]) not in present
+                     for i in range(1, int(m["n"]) + 1)):
+            return False
+    return bool(present)
+
+
+def snapshot_complete(snap):
+    """True when serve could load this snapshot: config.json plus weights. With a safetensors index, every
+    shard it names must be a weight file and be there; without one, see _unindexed_weights_complete. An
+    interrupted pull can leave the config, the index, or some shards. Malformed index data counts as not
+    complete."""
+    if not os.path.isfile(os.path.join(snap, "config.json")):
+        return False
+    index = os.path.join(snap, "model.safetensors.index.json")
+    if not os.path.isfile(index):
+        return _unindexed_weights_complete(snap)
+    try:
+        with open(index) as f:
+            weight_map = json.load(f)["weight_map"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    if not isinstance(weight_map, dict) or not weight_map:
+        return False
+    shards = list(weight_map.values())
+    if not all(isinstance(shard, str) and shard.endswith(WEIGHT_SUFFIXES) and os.path.basename(shard) == shard
+               for shard in shards):
+        return False
+    return all(os.path.isfile(os.path.join(snap, shard)) for shard in shards)
+
+
 def list_local():
-    """Every cached repo with a config.json snapshot: [{repo, path, bytes, weights}]."""
+    """Every cached repo with a complete snapshot (see snapshot_complete): [{repo, path, bytes, weights}]."""
     out = []
     base = cache_dir()
     try:
@@ -67,7 +110,7 @@ def list_local():
             continue
         for entry in revisions:
             snap = os.path.join(snaps, entry)
-            if not os.path.isfile(os.path.join(snap, "config.json")):
+            if not snapshot_complete(snap):
                 continue
             total, weights = _snapshot_info(snap)
             out.append({"repo": repo, "path": snap, "bytes": total, "weights": weights})

@@ -14,6 +14,7 @@ Files the tools read and write:
 | `~/.local/state/omarchy-cluster/layer-ms.json` | fastest decode ms/layer seen per node |
 | `~/.local/state/omarchy-cluster/live-env` | default `OMARCHY_LIVE_ENV` file |
 | `~/.local/state/omarchy-cluster/join.log` | join's appended record: one line per joined peer with the clock time |
+| `~/.local/state/omarchy-cluster/joined` | one line per node `bootstrap` installed: its name and the `address:port` endpoints this machine trusts for it |
 
 ## Node commands
 
@@ -61,7 +62,18 @@ Python the agent runs in.
 
 ### `discover [--mdns-timeout 4.0]`
 Lists nodes found over mDNS (`_omarchy-cluster._tcp`, Avahi on Linux, dns-sd on
-macOS) plus any plain-text hosts-file override.
+macOS) plus any plain-text hosts-file override (`name=host` or `name=host:port`). The cluster
+token goes only to trusted endpoints: this machine (loopback, port 8025; its own mDNS
+advertisement is ignored), hosts-file entries (their port, 8025 if none), and nodes
+`bootstrap` installed (recorded in `joined` with the address and port used then, plus the
+addresses the node reported). The port in an mDNS advertisement is never used. Any other
+advertiser is listed with the error `not joined` and gets no request at all, because anyone
+on the network can advertise the service under any name. The client does not follow HTTP
+redirects on token-bearing requests. A node whose address changed shows `not joined` until
+`bootstrap` runs on it again. Pools set up before this rule need that one run per node, or a
+hosts-file line. Limit: a recorded address stays trusted until removed; an address that
+another machine later takes over (DHCP reuse) receives the token, and the token crosses
+plain HTTP (issue 98).
 
 ### `probe [--seconds 3.0] [--out PATH]`
 Measures RTT and bandwidth for every node pair and every interface route, writes
@@ -104,6 +116,21 @@ free or its Data volume under 20 GB, or a node stops answering. Run it on the ga
 machine. See [troubleshooting.md](troubleshooting.md#logs-and-stopping).
 
 ## Model commands
+
+### `models list`
+Lists every model in the local Hugging Face cache that `place` and `serve` can load:
+repo id, downloaded size, weight-file count. Exits 1 when the cache is empty.
+
+### `models pull REPO`
+Downloads a Hugging Face repo (for example `mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit`)
+into the cache `place` and `serve` already read, so download then serve is two commands
+with nothing between. An interrupted download (cut connection) resumes on the next pull.
+A snapshot counts as pulled only when `config.json` is there and the weights are: every
+shard that `model.safetensors.index.json` names (each must be a weight file), or, with no
+index, at least one weight file, and all `N` files of any set named `-0000i-of-0000N`. A
+half-pulled repo, or one with a malformed index, is not listed and
+`place` and `serve` do not resolve it. Needs `huggingface_hub` on the machine that
+downloads (`pip install huggingface_hub`).
 
 ### `place MODEL [--ctx 2048] [--links PATH] [--no-decode NAME]... [--nodes N1,N2] [--stages N] [--json]`
 Checks the model fits: every stage must hold at least one layer in 90 percent of its
@@ -181,9 +208,14 @@ install a desktop entry in the user's XDG applications directory.
 
 ## Gateway API
 
+- `GET /models` lists the models this gateway can serve (the same cache `models list`
+  reads): repo id, bytes and weight-file count per repo.
+- `POST /models/pull` with `{"repo": "org/name"}` downloads a model into the cache
+  `place` and `serve` read (the `models pull` path). A bad repo id or body answers 400;
+  a failed download answers 502 and the next pull resumes it.
 - `POST /v1/chat/completions` serves OpenAI chat completions; the MLX engine applies the
   model's chat template to `messages`. Add `"timing": true` for per-step ring wait
-  and compute times. Sampling: The gateway accepts `temperature` (0-2), `top_p` (0-1] and an integer `seed`; 0 or absent is greedy. Only the llama.cpp engine samples so far: the MLX ranks and Sushi answer a sampled request with an error (#68). Rank 0 is the only rank that samples (it all_gathers its token), so a split run needs no sampling-state agreement; the same seed gives the same text once the MLX ranks land.
+  and compute times. Sampling: The gateway accepts `temperature` (0-2), `top_p` (0-1] and an integer `seed`; 0 or absent is greedy. The llama.cpp engine and the MLX ranks sample; Sushi answers a sampled request with an error. With a seed, the MLX ranks give the same text for the same placement; a different placement (whole or split) can give different text, because chips differ in the last bits (receipt: `receipts/2026-11-14-seeded-split/`). On the MLX ranks, rank 0 is the only rank that samples (from one seeded key, then it all_gathers its token), so a split run needs no sampling-state agreement.
 - `POST /v1/completions` with `"raw": true` and a `prompt` string skips the template:
   the engine tokenizes exactly that text, without adding special tokens, and both
   ranks get the same ids. The engine adds no beginning-of-text token, so a raw prompt

@@ -109,7 +109,7 @@ def test_rank_env_and_the_adapter_path_reach_a_macos_rank_too(monkeypatch):
             return b"{}"
 
     monkeypatch.setattr(cli, "_read_local_token", lambda: "t")
-    monkeypatch.setattr(cli.urllib.request, "urlopen", lambda req, timeout: sent.append(json.loads(req.data)) or Reply())
+    monkeypatch.setattr(cli.client, "urlopen", lambda req, timeout: sent.append(json.loads(req.data)) or Reply())
     args = serve_args("m", rank_pythonpath="~/adapters", rank_env=["MLX_DISABLE_COMPILE=1"], engine_url="http://10.0.0.1:18031")
     cli._launch_rank_via_agent({"ip": "10.0.0.1"}, 1, "m", "4,4", "[]", args, "macOS 26")
     assert sent[0]["env"] == {"MLX_DISABLE_COMPILE": "1"}
@@ -140,3 +140,13 @@ def test_a_whole_model_on_this_machine_is_reached_at_loopback(tmp_path, monkeypa
     monkeypatch.setattr(cli, "_start_gateway", lambda state, port, engine, max_concurrent: states.append(engine))
     cli.cmd_serve(serve_args(make_model(tmp_path)))
     assert states == ["http://127.0.0.1:18031"]
+
+
+def test_an_explicit_plan_sizes_a_model_this_host_does_not_hold_from_the_hub(tmp_path, monkeypatch, cluster):
+    from omarchy_cluster import planner
+    held = planner.model_info(make_model(tmp_path))
+    held = {**held, "ref": "org/not-here"}
+    monkeypatch.setattr(planner, "model_info", lambda ref: None)  # nothing in this host's HF cache
+    monkeypatch.setattr(planner, "model_info_or_hub", lambda ref: held)
+    plan = cli._explicit_plan(serve_args("org/not-here", nodes="studio,m2", split="4,4"))
+    assert plan["model"] == "org/not-here" and plan["layers"] == held["layers"]

@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import sys
@@ -152,3 +153,183 @@ def test_list_local_skips_a_directory_that_is_not_a_repo_name(fake_cache):
     snap.mkdir(parents=True)
     (snap / "config.json").write_text("{}")
     assert [r["repo"] for r in models.list_local()] == ["org/good"]
+
+
+def _fake_download_landing(cache, repo="org/new", revision="rev1"):
+    """A downloader that behaves like snapshot_download: lands a snapshot with config.json."""
+    def download(repo_id, **kw):
+        assert repo_id == repo
+        snap = cache / ("models--" + repo.replace("/", "--")) / "snapshots" / revision
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text("{}")
+        (snap / "model.safetensors").write_bytes(b"x" * 1000)
+        return str(snap)
+    return download
+
+
+def test_gateway_list_shows_a_pulled_model(http_server, tmp_path, monkeypatch):
+    from omarchy_cluster.gateway import Gateway
+    cache = tmp_path / "hub"
+    monkeypatch.setattr(models, "cache_dir", lambda: str(cache))
+    monkeypatch.setattr(models, "_downloader", lambda: _fake_download_landing(cache))
+    Gateway.engine = "http://127.0.0.1:1"
+    server = http_server(Gateway)
+    url = "http://127.0.0.1:{}".format(server.server_address[1])
+    assert models.list_local() == []
+    status, out = _post(url, json.dumps({"repo": "org/new"}).encode())
+    assert status == 200 and out["repo"] == "org/new" and out["weights"] == 1
+    with urllib.request.urlopen(url + "/models") as r:
+        body = json.loads(r.read())
+    assert [row["repo"] for row in body["data"]] == ["org/new"]
+
+
+def test_pull_restarts_cleanly_after_a_cut_connection(fake_cache, monkeypatch):
+    calls = []
+
+    def cut_download(repo_id, **kw):
+        calls.append(repo_id)
+        if len(calls) == 1:
+            blobs = fake_cache / "models--org--new" / "blobs"
+            blobs.mkdir(parents=True)
+            (blobs / "sha256-partial.incomplete").write_bytes(b"x" * 500)
+            _half_pulled(fake_cache, "org--new")  # config, index and shard 1 landed before the cut
+            raise ConnectionError("connection cut mid-download")
+        snap = fake_cache / "models--org--new" / "snapshots" / "rev1"  # the resume lands the missing shard
+        (snap / "model-00002-of-00002.safetensors").write_bytes(b"x" * 100)
+        return str(snap)
+
+    monkeypatch.setattr(models, "_downloader", lambda: cut_download)
+    with pytest.raises(ConnectionError):
+        models.pull("org/new")
+    # the half-pulled state is neither listed nor loadable; nothing to clean up by hand
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+    path = models.pull("org/new")
+    assert calls == ["org/new", "org/new"]
+    assert path.endswith("rev1")
+    assert [row["repo"] for row in models.list_local()] == ["org/good", "org/new"]
+
+
+def test_gateway_answers_502_when_a_pull_fails(gateway_url, monkeypatch):
+    def cut(repo_id, **kw):
+        raise ConnectionError("connection cut mid-download")
+
+    monkeypatch.setattr(models, "_downloader", lambda: cut)
+    status, out = _post(gateway_url, json.dumps({"repo": "org/good"}).encode())
+    assert status == 502 and "pull:" in out["error"]
+
+
+def test_a_pulled_model_resolves_for_place_and_serve(tmp_path, monkeypatch):
+    from omarchy_cluster import planner
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(models, "_downloader", lambda: _fake_download_landing(
+        tmp_path / ".cache/huggingface/hub"))
+    path = models.pull("org/new", progress=lambda info: None)
+    assert planner.find_model_path("org/new") == path
+    assert planner.model_info("org/new")["weights_bytes"] == 1000
+
+
+def test_place_names_an_unpulled_model_as_missing(tmp_path, monkeypatch):
+    from omarchy_cluster import cli
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **k: {"m1": {"facts": {}}})
+    monkeypatch.setattr(cli.probe_mod, "load_links", lambda path: {"pairs": []})
+    args = argparse.Namespace(model="org/unpulled", nodes=None, links="links.json")
+    with pytest.raises(SystemExit, match=r"model not found locally or in HF cache: org/unpulled"):
+        cli.cmd_place(args)
+
+
+def _half_pulled(cache, repo="org--partial"):
+    """An interrupted multi-file pull: config, the shard index and shard 1 landed; shard 2 is only a .incomplete blob."""
+    root = cache / ("models--" + repo)
+    snap = root / "snapshots" / "rev1"
+    snap.mkdir(parents=True)
+    (root / "refs").mkdir(exist_ok=True)
+    (root / "refs" / "main").write_text("rev1")
+    (snap / "config.json").write_text(json.dumps({"num_hidden_layers": 2, "hidden_size": 8,
+                                                  "num_attention_heads": 2}))
+    (snap / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {
+        "a": "model-00001-of-00002.safetensors", "b": "model-00002-of-00002.safetensors"}}))
+    (snap / "model-00001-of-00002.safetensors").write_bytes(b"x" * 100)
+    (root / "blobs").mkdir(exist_ok=True)
+    (root / "blobs" / "sha256-two.incomplete").write_bytes(b"x" * 10)
+    return snap
+
+
+def test_a_snapshot_missing_a_shard_is_not_listed(fake_cache):
+    _half_pulled(fake_cache)
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+
+
+def test_a_snapshot_with_every_shard_is_listed(fake_cache):
+    snap = _half_pulled(fake_cache)
+    (snap / "model-00002-of-00002.safetensors").write_bytes(b"x" * 100)
+    assert [row["repo"] for row in models.list_local()] == ["org/good", "org/partial"]
+
+
+def test_the_planner_does_not_resolve_or_size_a_half_pulled_model(fake_cache, monkeypatch, tmp_path):
+    from omarchy_cluster import planner
+    home = tmp_path / "home"
+    target = home / ".cache" / "huggingface"
+    target.mkdir(parents=True)
+    os.symlink(str(fake_cache), str(target / "hub"))
+    monkeypatch.setenv("HOME", str(home))
+    snap = _half_pulled(fake_cache)
+    assert planner.find_model_path("org/partial") is None
+    assert planner.model_info("org/partial") is None
+    (snap / "model-00002-of-00002.safetensors").write_bytes(b"x" * 100)
+    assert planner.find_model_path("org/partial") == str(target / "hub" / "models--org--partial" / "snapshots" / "rev1")
+
+
+
+def _snap_with_config(cache, repo="org--cfg", index=None, weights=()):
+    snap = cache / ("models--" + repo) / "snapshots" / "rev1"
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text("{}")
+    if index is not None:
+        (snap / "model.safetensors.index.json").write_text(json.dumps(index))
+    for name in weights:
+        (snap / name).write_bytes(b"x" * 10)
+    return snap
+
+
+def test_a_config_only_snapshot_is_not_listed_or_resolved(fake_cache):
+    snap = _snap_with_config(fake_cache)
+    assert not models.snapshot_complete(str(snap))
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+
+
+def test_an_unindexed_single_file_model_is_listed(fake_cache):
+    _snap_with_config(fake_cache, weights=["model.safetensors"])
+    assert [row["repo"] for row in models.list_local()] == ["org/cfg", "org/good"]
+
+
+@pytest.mark.parametrize("index", [
+    {"weight_map": {"a": []}},
+    {"weight_map": {"a": 1}},
+    {"weight_map": {}},
+    {"weight_map": []},
+    {"weight_map": {"a": "../outside.safetensors"}},
+    {"weight_map": {"a": "config.json"}},
+    {"weight_map": {"a": "tokenizer.json", "b": "model.safetensors"}},
+    {"no": "weight_map"},
+    [],
+])
+def test_a_malformed_or_empty_index_excludes_the_snapshot_without_raising(fake_cache, index):
+    _snap_with_config(fake_cache, index=index, weights=["model.safetensors"])
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+
+
+def test_one_shard_of_a_two_shard_checkpoint_with_no_index_is_not_listed(fake_cache):
+    snap = _snap_with_config(fake_cache, weights=["model-00001-of-00002.safetensors"])
+    assert not models.snapshot_complete(str(snap))
+    assert [row["repo"] for row in models.list_local()] == ["org/good"]
+
+
+def test_every_shard_of_an_unindexed_sharded_checkpoint_makes_it_listed(fake_cache):
+    _snap_with_config(fake_cache, weights=["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"])
+    assert [row["repo"] for row in models.list_local()] == ["org/cfg", "org/good"]
+
+
+def test_an_unindexed_gguf_set_is_judged_by_its_own_shard_count(fake_cache):
+    snap = _snap_with_config(fake_cache, weights=["m-00001-of-00003.gguf", "m-00003-of-00003.gguf"])
+    assert not models.snapshot_complete(str(snap))

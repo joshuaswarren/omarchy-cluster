@@ -12,7 +12,7 @@ import urllib.request
 import signal
 
 from . import AGENT_VERSION
-from . import discover, probe as probe_mod
+from . import client, discover, probe as probe_mod
 
 GB = 1024.0 ** 3
 
@@ -384,7 +384,7 @@ def cmd_place(args):
     links = probe_mod.load_links(args.links)
     if not links:
         sys.exit("no links.json; run omarchy-cluster probe first")
-    info = planner.model_info(args.model)
+    info = planner.model_info_or_hub(args.model)
     if not info:
         sys.exit("model not found locally or in HF cache: %s" % args.model)
     plan = planner.plan_placement(nodes, links, info, ctx_tokens=args.ctx,
@@ -417,7 +417,7 @@ def _launch_rank_via_agent(node, rank, model, layers, hostfile_content, args, fa
         "http://%s:%d/v1/rank/start" % (node["ip"], node.get("port", 8025)),
         data=data, headers={"Content-Type": "application/json",
                             "X-Cluster-Token": tok})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with client.urlopen(req, 30) as r:
         return json.loads(r.read())
 
 
@@ -428,7 +428,7 @@ def _stop_rank_via_agent(node, pid):
         data=json.dumps({"pid": pid, "ports": node.get("ports", [52100, 8031])}).encode(),
         headers={"Content-Type": "application/json", "X-Cluster-Token": tok})
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with client.urlopen(req, 15) as r:
             return json.loads(r.read())
     except Exception as e:  # noqa: BLE001
         return {"error": str(e)}
@@ -470,7 +470,7 @@ def _explicit_plan(args):
     missing = sorted({n for n in names if n not in found})
     if missing:
         sys.exit("node(s) not discovered: %s" % ", ".join(missing))
-    info = planner.model_info(args.model)
+    info = planner.model_info_or_hub(args.model)
     if not info:
         sys.exit("model not found locally or in HF cache: %s" % args.model)
     if sum(counts) != info["layers"] or min(counts) < 1:
@@ -765,7 +765,7 @@ def _agent_post(node, path, payload, timeout=30):
         "http://%s:%d%s" % (node["ip"], node.get("port", 8025), path),
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", "X-Cluster-Token": _read_local_token()})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with client.urlopen(req, timeout) as r:
         return json.loads(r.read())
 
 
@@ -954,8 +954,7 @@ def guard_verdict(facts_by_node):
 
 def _agent_facts(ip, port=8025, timeout=5):
     try:
-        with urllib.request.urlopen("http://%s:%d/v1/facts" % (ip, port), timeout=timeout) as r:
-            return json.loads(r.read())
+        return client.fetch_facts(ip, port, timeout)
     except (OSError, ValueError):
         return None
 

@@ -1,0 +1,4 @@
+rank 0 ring: rank=0 size=2 device=Device(gpu, 0)
+rank 0 measured 0.36 ms/layer (fastest seen 0.30), cap 28 layers; all ranks [[0.2971250116825104, 28.0], [0.3154333233833313, 28.0]] -> split [27, 1]
+rank 0 sharded_load done: ~/scratch/w7G-p711/model-q25-1p5b layers 1-27, active 0.881 GB, peak 0.881 GB
+rank 0 engine on :8031 world 2 (mlx-lm pipeline path)
