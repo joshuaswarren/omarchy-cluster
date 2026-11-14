@@ -23,17 +23,21 @@ def test_incomplete_cache_is_a_model_miss(tmp_path, monkeypatch, state):
     assert planner.model_info("example/model") is None
 
 
-def test_no_main_ref_chooses_first_complete_snapshot_in_sorted_order(tmp_path, monkeypatch):
+def test_no_main_ref_chooses_the_newest_complete_snapshot_not_the_first_by_name(tmp_path, monkeypatch):
+    import os
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
+    monkeypatch.delenv("HF_HOME", raising=False)
     snapshots = tmp_path / ".cache/huggingface/hub/models--example--model/snapshots"
-    for revision in ("zzz", "aaa", "000-incomplete"):
+    for revision, mtime in (("zzz", 200), ("aaa", 100), ("000-incomplete", 300)):
         snapshot = snapshots / revision
         snapshot.mkdir(parents=True)
         if revision != "000-incomplete":
             (snapshot / "config.json").write_text("{}")
             (snapshot / "model.safetensors").write_bytes(b"x")
-    # Directory enumeration order must not choose the newest-created or first-listed revision.
-    assert planner.find_model_path("example/model") == str(snapshots / "aaa")
+        os.utime(snapshot, (mtime, mtime))
+    # an updated repo loads the newer weights; a partial newer download is not chosen; names decide nothing
+    assert planner.find_model_path("example/model") == str(snapshots / "zzz")
 
 
 def test_explicit_local_directory_takes_precedence_over_cached_model(tmp_path, monkeypatch):

@@ -13,6 +13,7 @@ Files the tools read and write:
 | `~/.local/state/omarchy-cluster/links.json` | probe's measured routes (override with `--links` / `--out`) |
 | `~/.local/state/omarchy-cluster/layer-ms.json` | fastest decode ms/layer seen per node |
 | `~/.local/state/omarchy-cluster/live-env` | default `OMARCHY_LIVE_ENV` file |
+| `~/.local/state/omarchy-cluster/join.log` | join's appended record: one line per joined peer with the clock time |
 | `~/.local/state/omarchy-cluster/joined` | one line per node `bootstrap` installed: its name and the `address:port` endpoints this machine trusts for it |
 
 ## Node commands
@@ -30,6 +31,17 @@ to `~/.local/share/omarchy-cluster/src`, copy the cluster token (this machine's,
 `discover` name. A failing node is reported and the rest still run; the exit status is 1
 if any failed. It overwrites the node's token file with the token it sends. It installs
 no MLX.
+
+### `join CANDIDATE [--user NAME] [--port 8025] [--token-file PATH] [--auth approved-key|one-time-code]`
+The zero-setup front door (one command; `CANDIDATE` is a name from `discover`, or `user@host`).
+It resolves the candidate from discover (mDNS lists the peers first; a Thunderbolt-bridged
+link is just another network interface), refuses any peer that is not Omarchy Linux (its os-release names Omarchy, or `omarchy-version` runs) and names
+why, then runs the same steps as `bootstrap`. The peer approves the join through `--auth`:
+`approved-key` (default) means this machine's ssh key was approved once on the peer
+(`ssh-copy-id`); `one-time-code` (a code typed on the peer) is not built yet and is tracked in
+issue 64. Every completed join appends one line to `~/.local/state/omarchy-cluster/join.log`
+with the clock time; the peer then shows up in `discover` and `status` with its memory and
+pinned-route line. It writes no configuration file by hand. An empty `--token-file` is an error; the join never falls back to this machine's token when you gave a file.
 
 ### `agent [--port 8025] [--name NAME] [--hub URL]`
 Run the agent in the foreground. Serves facts, rank start/stop and probe helpers on
@@ -157,7 +169,7 @@ llama.cpp flags (`--engine llamacpp`):
 | `--rpc-cache` | RPC nodes keep received layers on disk for the next load |
 | `--host-layers N` | keep exactly N layers on the gateway machine, nodes in the order given |
 | `--llama-arg=ARG` | extra llama-server argument (repeat). Write the `=`: an argument starting with `-` is otherwise read as a `serve` option. Example: `--llama-arg=--no-warmup --llama-arg=-fa --llama-arg=on` |
-| `--max-concurrent N` | requests the gateway passes to the engine at once (default 4); more wait up to 10 minutes, then get HTTP 503 with `Retry-After`. llama.cpp batches them in its slots; the MLX ring runs one at a time |
+| `--max-concurrent N` | requests the gateway passes to the engine at once (default 4); more wait up to 10 minutes, then get HTTP 503 with `Retry-After`. k above 1 runs only while the gateway's measured completion throughput (tokens per wall second) stays above the floor (154.63 tok/s, `receipts/2026-11-12-concurrent-serving`); below it the gate switches off and requests queue one at a time. llama.cpp batches them in its slots; the MLX ring runs one at a time |
 
 iPhone node flags: `--ios-bundle`, `--pm3`, `--phone-cap-gb`, `--rpc-layers`,
 `--rpc-port`. See [ios/README.md](../ios/README.md).
@@ -204,7 +216,7 @@ install a desktop entry in the user's XDG applications directory.
   must carry its own (a Muse Spark Open prompt begins with the literal text
   `<|begin_of_text|>`; to end on the answer channel, end the prompt with
   `<|start|>assistant to=user<|message|>`).
-- `GET /status` reports the live split, measured ms per layer and contention events.
+- `GET /status` reports the live split, measured ms per layer, contention events, and `running`, the requests the gateway has in flight at the engine.
 - Engine errors come back as HTTP 502 with the engine's message.
 - `POST /score` on the engine port (8031) runs one teacher-forced forward over the
   given text or token ids on every rank and returns rank 0's per-token negative

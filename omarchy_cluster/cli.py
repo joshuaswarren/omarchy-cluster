@@ -41,7 +41,10 @@ def cmd_models_pull(args):
     def step(info):
         print("downloaded %s: %.1f GB, %d weight files" % (info["repo"], info["bytes"] / 1e9, info["weights"]))
 
-    path = models.pull(args.repo, progress=step)
+    try:
+        path = models.pull(args.repo, progress=step)
+    except models.ModelsError as e:
+        sys.exit(str(e))
     print(path)
     return 0
 
@@ -248,6 +251,26 @@ def cmd_bootstrap(args):
             print("bootstrap: %s" % e, file=sys.stderr)
             failed += 1
     if failed:
+        sys.exit(1)
+
+
+# ---- join ----
+
+def cmd_join(args):
+    from . import bootstrap
+    token = None
+    if args.token_file:
+        try:
+            with open(args.token_file) as f:
+                token = f.read().strip()
+        except OSError as e:
+            sys.exit("join: cannot read --token-file: %s" % e)
+        if not token:
+            sys.exit("join: --token-file %s is empty; put the cluster token in it" % args.token_file)
+    try:
+        bootstrap.join(args.candidate, user=args.user, token=token, port=args.port, mode=args.auth)
+    except bootstrap.BootstrapError as e:
+        print("join: %s" % e, file=sys.stderr)
         sys.exit(1)
 
 
@@ -498,6 +521,10 @@ def cmd_serve(args):
     hostfile = os.path.expanduser("~/.local/state/omarchy-cluster/ring-hostfile.json")
     os.makedirs(os.path.dirname(hostfile), exist_ok=True)
     nodes = {n: d for n, d in discover.discover_nodes().items() if d.get("facts")}
+    local = platform.node().split(".")[0]
+    unreachable = [s["node"] for s in stages if s["node"] != local and not nodes.get(s["node"], {}).get("ip")]
+    if unreachable:  # the gateway reaches a remote engine at the node's address; with none, the serve would hang
+        sys.exit("node %s advertises no address the gateway can reach; nothing was started" % ", ".join(unreachable))
     rank_ips = []
     ring_ip = _name_values(getattr(args, "ring_ip", None), "--ring-ip")
     unknown = sorted(set(ring_ip) - {s["node"] for s in stages})
@@ -1048,6 +1075,18 @@ def main(argv=None):
     p.add_argument("targets", nargs="+", metavar="user@host")
     p.add_argument("--port", type=int, default=8025)
     p.set_defaults(fn=cmd_pin)
+
+    p = sub.add_parser("join", help="one command: resolve a candidate from discover, refuse "
+                                    "non-Omarchy peers, install the agent and journal the join")
+    p.add_argument("candidate", metavar="CANDIDATE",
+                   help="a name from `omarchy-cluster discover`, or user@host")
+    p.add_argument("--user", default=None, help="ssh user for bare candidate names (default: this user)")
+    p.add_argument("--port", type=int, default=8025)
+    p.add_argument("--token-file", default=None,
+                   help="send this cluster token instead of this machine's own")
+    p.add_argument("--auth", choices=("approved-key", "one-time-code"), default="approved-key",
+                   help="how the peer approves the join; one-time-code is issue 64")
+    p.set_defaults(fn=cmd_join)
 
     p = sub.add_parser("discover", help="list discovered nodes")
     p.add_argument("--mdns-timeout", type=float, default=4.0)
