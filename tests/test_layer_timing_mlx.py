@@ -15,7 +15,9 @@ def _cfg_dir(tmp_path, quantization):
     d.mkdir()
     cfg = {"model_type": "qwen2", "hidden_size": 64, "intermediate_size": 128,
            "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 2,
-           "vocab_size": 96, "rms_norm_eps": 1e-06, "quantization": quantization}
+           "vocab_size": 96, "rms_norm_eps": 1e-06}
+    if quantization is not None:
+        cfg["quantization"] = quantization
     (d / "config.json").write_text(json.dumps(cfg))
     return d
 
@@ -32,3 +34,23 @@ def test_the_config_only_copy_times_quantized_operators_not_float32(tmp_path):
     gate = model.model.layers[0].mlp.gate_proj
     assert type(q_proj).__name__ == "QuantizedLinear" and q_proj.bits == 4
     assert type(gate).__name__ == "QuantizedLinear" and gate.bits == 8
+
+
+def test_a_model_with_no_quantization_config_stays_float32_and_false_overrides_stay_linear(tmp_path):
+    """An absent quantization config means the real checkpoint is float32: the random copy must not gain a default
+    4-bit quantization it does not have (issue 96 requalification). A per-path `false` entry names a module the
+    conversion left unquantized; it must stay Linear too."""
+    from mlx_lm.utils import load_model
+    (tmp_path / "plain").mkdir()
+    plain = _cfg_dir(tmp_path / "plain", None)
+    model, _ = load_model(plain, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, plain)
+    assert type(model.model.layers[0].self_attn.q_proj).__name__ == "Linear"
+
+    cfg = {"group_size": 64, "bits": 4, "model.layers.0.mlp.down_proj": False}
+    (tmp_path / "mixed").mkdir()
+    mixed = _cfg_dir(tmp_path / "mixed", cfg)
+    model, _ = load_model(mixed, lazy=True, strict=False)
+    rank._quantize_random_like_checkpoint(model, mixed)
+    assert type(model.model.layers[0].self_attn.q_proj).__name__ == "QuantizedLinear"
+    assert type(model.model.layers[0].mlp.down_proj).__name__ == "Linear"

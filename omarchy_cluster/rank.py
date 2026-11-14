@@ -281,6 +281,8 @@ def _quantize_random_like_checkpoint(model, path):
     import mlx.nn as nn
     from mlx_lm.utils import load_config
     q = load_config(Path(path)).get("quantization") or {}
+    if not q:
+        return model  # no quantization config: the real checkpoint is float32 and so is this copy
     group_size, bits = q.get("group_size", 64), q.get("bits", 4)
 
     def predicate(p, module):
