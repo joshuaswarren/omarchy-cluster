@@ -39,8 +39,27 @@ def test_the_address_the_node_was_found_at_goes_first_when_it_answers(agent_port
     assert cli._first_ip(node(agent_port, "127.0.0.2", "127.0.0.1", added="127.0.0.1")) == "127.0.0.1"
 
 
-def test_when_nothing_answers_the_first_listed_address_is_kept_so_the_later_check_names_the_failure():
+def test_when_nothing_answers_it_exits_naming_every_address_tried(monkeypatch):
     with socket.socket() as closed:
         closed.bind(("127.0.0.1", 0))
         port = closed.getsockname()[1]
-    assert cli._first_ip(node(port, "127.0.0.2", "127.0.0.3")) == "127.0.0.2"
+    far = node(port, "127.0.0.2", "127.0.0.3")
+    far["name"] = "far"
+    with pytest.raises(SystemExit) as stopped:
+        cli._first_ip(far)
+    assert stopped.value.code == "no address of far answers on port %d (tried: 127.0.0.2, 127.0.0.3)" % port
+    monkeypatch.setattr(probe, "load_links", lambda path=None: None)
+    with pytest.raises(SystemExit) as picked:  # the same through the route pick
+        cli._pick_route_ip({k: v for k, v in far.items() if k != "name"}, [{"node": "here"}, {"node": "far"}], "far")
+    assert str(port) in picked.value.code and "far" in picked.value.code
+
+
+def test_the_ring_says_nothing_was_started():
+    with socket.socket() as closed:
+        closed.bind(("127.0.0.1", 0))
+        port = closed.getsockname()[1]
+    far = node(port, "127.0.0.2")
+    far["name"] = "far"
+    with pytest.raises(SystemExit) as ring:
+        cli._ring_ip(cli._first_ip, far)
+    assert ring.value.code.endswith("(tried: 127.0.0.2); nothing was started")

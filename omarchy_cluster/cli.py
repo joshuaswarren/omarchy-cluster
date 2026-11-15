@@ -468,22 +468,40 @@ def _name_values(items, option):
     return out
 
 
+def _answers(ip, port):
+    try:
+        socket.create_connection((ip, port), timeout=2).close()
+        return True
+    except OSError:
+        return False
+
+
+class NoAddressAnswers(SystemExit):
+    """Exits like sys.exit(message); a caller that has already started something catches it to clean up first."""
+
+
 def _first_ip(node):
     """The address to use for a node when no probe pinned one: the first that accepts a connection to its agent port from here. A
     laptop has Wi-Fi and wired addresses and one may not be reachable from this machine. The address the node was found at goes first.
-    Where none answers, the first listed one is kept and the later check names the failure. shortcut: this tests reachability from
-    this machine only, not between two ranks; run omarchy-cluster probe to pin a route."""
+    Where none answers it exits with NoAddressAnswers naming each address tried. shortcut: this tests reachability from this machine
+    only, not between two ranks; run omarchy-cluster probe to pin a route."""
     ips = [a["ip"] for ifc in node["facts"]["interfaces"] for a in ifc["ips"]]
     ips = list(dict.fromkeys(([node["ip"]] if node.get("ip") else []) + ips))
     if not ips:
         sys.exit("no IP for %s" % node.get("name", "a node"))
+    port = node.get("port", 8025)
     for ip in ips:
-        try:
-            socket.create_connection((ip, node.get("port", 8025)), timeout=2).close()
+        if _answers(ip, port):
             return ip
-        except OSError:
-            continue
-    return ips[0]
+    raise NoAddressAnswers("no address of %s answers on port %d (tried: %s)" % (node.get("name", "a node"), port, ", ".join(ips)))
+
+
+def _ring_ip(pick, *pick_args):
+    """The ring address of a rank. No rank is started before the ring is planned, so a node with no answering address stops serve cleanly."""
+    try:
+        return pick(*pick_args)
+    except NoAddressAnswers as e:
+        sys.exit("%s; nothing was started" % e.code)
 
 
 def _explicit_plan(args):
@@ -561,9 +579,9 @@ def cmd_serve(args):
         elif explicit and len(stages) > 2:
             if args.links is not None:
                 sys.exit("--links picks ring addresses for 2 ranks only; give --ring-ip NODE=IP for each of %d ranks" % len(stages))
-            cand = _first_ip(node)
+            cand = _ring_ip(_first_ip, node)
         else:
-            cand = _pick_route_ip(node, stages, s["node"], args.links)
+            cand = _ring_ip(_pick_route_ip, node, stages, s["node"], args.links)
         rank_ips.append(cand)
     seen = {}
     entries = []
@@ -870,7 +888,15 @@ def _serve_llamacpp_nodes(args, info):
                 sys.exit("agent on %s did not start the rpc-server as asked (%s); cmd %s. "
                          "Update it: omarchy-cluster install-agent on that node."
                          % (name, why, " ".join(map(str, res.get("cmd") or []))))
-            ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name, getattr(args, "links", None))
+            try:
+                ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name, getattr(args, "links", None))
+            except NoAddressAnswers as e:  # the node's rpc-server is already running: stop it, so nothing is left behind
+                try:
+                    _agent_post(node, "/v1/rank/stop", {"pid": res["pid"]})
+                    left = "the rpc-server it had started on %s was stopped" % name
+                except OSError:
+                    left = "the rpc-server it started on %s (pid %s) may still run: omarchy-cluster stop" % (name, res["pid"])
+                sys.exit("%s; %s" % (e.code, left))
             ep, host = "%s:%d" % (ip, args.rpc_node_port), node["ip"]
             try:
                 hello = iosnode.wait_rpc(ip, args.rpc_node_port, deadline_s=120.0)
