@@ -1,3 +1,0 @@
-stopped local process group 3722190
-stopped rank pid 2771254 on 192.168.10.106: {'stopped': 2771254, 'ports_swept': [], 'scopes': ['/user.slice/user-1000.slice/user@1000.service/app.slice/gpu-turn-2771254-1794711571487953140.scope']}
-stopped rank pid 362012 on 192.168.10.218: {'stopped': 362012, 'ports_swept': [], 'scopes': ['/user.slice/user-1000.slice/user@1000.service/app.slice/gpu-turn-362012-1794711571526393698.scope']}

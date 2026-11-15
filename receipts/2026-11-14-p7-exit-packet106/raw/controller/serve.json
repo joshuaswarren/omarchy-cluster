@@ -1,0 +1,23 @@
+{
+  "stages": [
+    {
+      "node": "<jw16>",
+      "port": 8125,
+      "pid": "2771254",
+      "log": "$HOME/scratch/dhp7/p106-home/.local/share/omarchy-cluster/rank0.log"
+    },
+    {
+      "node": "<jwm2>",
+      "port": 8125,
+      "pid": "362012",
+      "log": "$HOME/scratch/dhp7/p106-home/.local/share/omarchy-cluster/rank1.log"
+    }
+  ],
+  "gateway_port": 18120,
+  "engine_port": 18131,
+  "nodes": {
+    "jw16": "<jw16>",
+    "jwm2": "<jwm2>"
+  },
+  "gateway_pid": 3722190
+}

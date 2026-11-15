@@ -1,0 +1,30 @@
+Blob modification times in each rank's private HF cache, read after the run (21:02 CST, 2026-11-14) and before the caches were deleted
+(jwm2 21:03, jw16 21:08). The run began at 20:59:06 and ended at 21:01:37 (p106-launch3.log). Times are the file's mtime, UTC-6.
+The listing is pasted from the terminal; the files it names no longer exist, so it cannot be re-read.
+
+jw16, command: find ~/scratch/dhp7/p106-home -type f -size +100M -printf "%s %TY-%Tm-%Td %TH:%TM:%TS %p\n"   (the shards)
+5366644780 2026-11-14 21:00:57.8133758150 .cache/huggingface/hub/blobs/1c/1c51766f72cf64d90e094e606f671da202f67174d0f334cf0065e94d3d12b6be
+1216066381 2026-11-14 21:01:02.1861916760 .cache/huggingface/hub/blobs/3f/3fd4d41ac5f04d064f2b71499f3764d179fdffadf2e5e323ccb3cdef94a58cec
+5321473414 2026-11-14 21:01:13.5724648180 .cache/huggingface/hub/blobs/7a/7a638a58ebbd79406d4b792d217093ab8a48d032c67a226240f3c540270d519e
+5276887419 2026-11-14 21:01:13.8904666150 .cache/huggingface/hub/blobs/6f/6fbf4824a31c4bf6ad2accedbfad32800083994bffc92aadbc8d2710badaea8f
+
+jwm2, same command (the shards)
+1216066381 2026-11-14 21:00:51.9016456180 .cache/huggingface/hub/blobs/3f/3fd4d41ac5f04d064f2b71499f3764d179fdffadf2e5e323ccb3cdef94a58cec
+5321473414 2026-11-14 21:01:01.8927144340 .cache/huggingface/hub/blobs/7a/7a638a58ebbd79406d4b792d217093ab8a48d032c67a226240f3c540270d519e
+5366644780 2026-11-14 21:01:07.7217545760 .cache/huggingface/hub/blobs/1c/1c51766f72cf64d90e094e606f671da202f67174d0f334cf0065e94d3d12b6be
+
+The four largest small files of the same hub on each rank (the pinned metadata that the prepare step puts in place), command:
+  stat -c "%s %y %n" $(ls -S | head -4)   in .../hub/models--mlx-community--Qwen3-Coder-30B-A3B-Instruct-4bit/blobs
+jw16
+2776833 2026-11-14 20:59:32.544894682 -0600 4783fe10ac3adce15ac8f358ef5462739852c569
+1671853 2026-11-14 20:59:32.499894429 -0600 31349551d90c7606f325fe0f11bbb8bd5fa0d7c7
+28881 2026-11-14 20:59:32.488905867 -0600 774f4bbf588d764cd190b4b0ca339b7eefb0daa2
+6722 2026-11-14 20:59:32.468894254 -0600 a017a30325eed7523eeeb6ec0380b9bdc79083c0
+jwm2
+2776833 2026-11-14 20:59:32.488098085 -0600 4783fe10ac3adce15ac8f358ef5462739852c569
+1671853 2026-11-14 20:59:32.452097836 -0600 31349551d90c7606f325fe0f11bbb8bd5fa0d7c7
+28881 2026-11-14 20:59:32.431097691 -0600 774f4bbf588d764cd190b4b0ca339b7eefb0daa2
+6722 2026-11-14 20:59:32.396097450 -0600 a017a30325eed7523eeeb6ec0380b9bdc79083c0
+
+The shard blobs are newer than the run start (20:59:06) on both ranks. The metadata files are stamped 20:59:32, 26 s into the run.
+Not in this listing: the `cold_cache()` pass line. The packet's `_qualify` step prints it to the supervisor, which did not keep it; see the README.
