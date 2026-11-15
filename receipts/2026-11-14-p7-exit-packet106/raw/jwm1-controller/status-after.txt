@@ -1,0 +1,101 @@
+NODE             OS                     CHIP             MEM FREE/TOT  BACKEND UP   IP
+MacStudio        ?                      ?                ?             ?       DOWN 192.168.3.26 (not joined: run `omarchy-cluster bootstrap` for MacStudio, or list it in the hosts file)
+jw16-linux       Omarchy                Apple M1 Max     45.8/62GB     cuda    up   192.168.10.106
+jwm1-linux       Arch Linux ARM         Apple M1         7.0/15GB      vulkan  up   127.0.0.1
+jwm2-linux       Omarchy                Apple M2 Max     77.0/94GB     vulkan  up   192.168.10.218
+
+pinned routes (links.json 2026-11-13T20:17:53Z):
+MacStudio <-> jw16-linux
+  rdma: not available (a: rdma_ctl status: disabled)
+   tailscale en0:192.168.10.15   -> tailscale0:100.106.98.24      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en0:192.168.10.15   -> wlan0:192.168.3.91       --  /  --   Gb/s  rtt 1.96/1.46 ms  NO-DECODE
+ * wired  en0:192.168.10.15   -> enu1u4u1:192.168.10.106   1.97/1.98 Gb/s  rtt 0.46/0.34 ms  decode-ok  PINNED
+   wired  en0:192.168.10.15   -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale en1:192.168.3.26    -> tailscale0:100.106.98.24      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en1:192.168.3.26    -> wlan0:192.168.3.91       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en1:192.168.3.26    -> enu1u4u1:192.168.10.106     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en1:192.168.3.26    -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale bridge100:192.168.139.3   -> tailscale0:100.106.98.24      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   bridge100:192.168.139.3   -> wlan0:192.168.3.91       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  bridge100:192.168.139.3   -> enu1u4u1:192.168.10.106     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   wired  bridge100:192.168.139.3   -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale bridge101:192.168.107.0   -> tailscale0:100.106.98.24      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   bridge101:192.168.107.0   -> wlan0:192.168.3.91       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  bridge101:192.168.107.0   -> enu1u4u1:192.168.10.106     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   wired  bridge101:192.168.107.0   -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale en17:169.254.139.188 -> tailscale0:100.106.98.24      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en17:169.254.139.188 -> wlan0:192.168.3.91       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  en17:169.254.139.188 -> enu1u4u1:192.168.10.106     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   wired  en17:169.254.139.188 -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  decode-ok
+MacStudio <-> jwm1-linux
+  rdma: not available (a: rdma_ctl status: disabled)
+   tailscale en0:192.168.10.15   -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en0:192.168.10.15   -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+ * wired  en0:192.168.10.15   -> enP1p3s0u4:192.168.10.217   2.01/2.02 Gb/s  rtt 0.50/0.41 ms  decode-ok  PINNED
+   wired  en0:192.168.10.15   -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale en1:192.168.3.26    -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en1:192.168.3.26    -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en1:192.168.3.26    -> enP1p3s0u4:192.168.10.217     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en1:192.168.3.26    -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale bridge100:192.168.139.3   -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   bridge100:192.168.139.3   -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  bridge100:192.168.139.3   -> enP1p3s0u4:192.168.10.217     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   wired  bridge100:192.168.139.3   -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale bridge101:192.168.107.0   -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   bridge101:192.168.107.0   -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  bridge101:192.168.107.0   -> enP1p3s0u4:192.168.10.217     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   wired  bridge101:192.168.107.0   -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale en17:169.254.139.188 -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en17:169.254.139.188 -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  en17:169.254.139.188 -> enP1p3s0u4:192.168.10.217     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   wired  en17:169.254.139.188 -> docker0:172.17.0.1         --  /  --   Gb/s  rtt --/-- ms  decode-ok
+MacStudio <-> jwm2-linux
+  rdma: not available (a: rdma_ctl status: disabled)
+   tailscale en0:192.168.10.15   -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  en0:192.168.10.15   -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale en1:192.168.3.26    -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   en1:192.168.3.26    -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale bridge100:192.168.139.3   -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  bridge100:192.168.139.3   -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale bridge101:192.168.107.0   -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  bridge101:192.168.107.0   -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale en17:169.254.139.188 -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  en17:169.254.139.188 -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+jw16-linux <-> jwm1-linux
+  rdma: not available (a: no /sys/class/infiniband devices)
+   tailscale tailscale0:100.106.98.24   -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt 0.82/0.38 ms  NO-DECODE
+   tailscale tailscale0:100.106.98.24   -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale tailscale0:100.106.98.24   -> enP1p3s0u4:192.168.10.217     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale tailscale0:100.106.98.24   -> docker0:172.17.0.1         --  /  --   Gb/s  rtt 0.07/0.19 ms  NO-DECODE
+   tailscale wlan0:192.168.3.91    -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   wlan0:192.168.3.91    -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   wlan0:192.168.3.91    -> enP1p3s0u4:192.168.10.217     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   wlan0:192.168.3.91    -> docker0:172.17.0.1         --  /  --   Gb/s  rtt 0.04/0.01 ms  NO-DECODE
+   tailscale enu1u4u1:192.168.10.106  -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   enu1u4u1:192.168.10.106  -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+ * wired  enu1u4u1:192.168.10.106  -> enP1p3s0u4:192.168.10.217   2.00/1.91 Gb/s  rtt 0.29/0.39 ms  decode-ok  PINNED
+   wired  enu1u4u1:192.168.10.106  -> docker0:172.17.0.1         --  /1.75 Gb/s  rtt 0.03/0.01 ms  decode-ok
+   tailscale docker0:172.17.0.1      -> tailscale0:100.116.114.12     --  /  --   Gb/s  rtt 0.76/0.37 ms  NO-DECODE
+   wifi   docker0:172.17.0.1      -> wlan0:192.168.3.66       --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  docker0:172.17.0.1      -> enP1p3s0u4:192.168.10.217   1.95/  --   Gb/s  rtt 0.25/0.31 ms  decode-ok
+   wired  docker0:172.17.0.1      -> docker0:172.17.0.1         --  /  --   Gb/s  rtt 0.01/-- ms  decode-ok
+jw16-linux <-> jwm2-linux
+  rdma: not available (a: no /sys/class/infiniband devices)
+   tailscale tailscale0:100.106.98.24   -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt 0.97/0.56 ms  NO-DECODE
+   tailscale tailscale0:100.106.98.24   -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale wlan0:192.168.3.91    -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   wlan0:192.168.3.91    -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale enu1u4u1:192.168.10.106  -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+ * wired  enu1u4u1:192.168.10.106  -> enu1u1:192.168.10.218   1.84/1.99 Gb/s  rtt 0.24/0.27 ms  decode-ok  PINNED
+   tailscale docker0:172.17.0.1      -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt 0.53/0.38 ms  NO-DECODE
+   wired  docker0:172.17.0.1      -> enu1u1:192.168.10.218   1.84/  --   Gb/s  rtt 0.25/0.19 ms  decode-ok
+jwm1-linux <-> jwm2-linux
+  rdma: not available (a: no /sys/class/infiniband devices)
+ * tailscale tailscale0:100.116.114.12  -> tailscale0:100.91.217.58    1.00/1.26 Gb/s  rtt 0.98/0.37 ms  NO-DECODE  PINNED
+   tailscale tailscale0:100.116.114.12  -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale wlan0:192.168.3.66    -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wifi   wlan0:192.168.3.66    -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   tailscale enP1p3s0u4:192.168.10.217  -> tailscale0:100.91.217.58      --  /  --   Gb/s  rtt --/-- ms  NO-DECODE
+   wired  enP1p3s0u4:192.168.10.217  -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  decode-ok
+   tailscale docker0:172.17.0.1      -> tailscale0:100.91.217.58    0.97/  --   Gb/s  rtt 0.48/0.27 ms  NO-DECODE
+   wired  docker0:172.17.0.1      -> enu1u1:192.168.10.218     --  /  --   Gb/s  rtt --/-- ms  decode-ok

@@ -1,0 +1,1 @@
+{"split": [24, 24], "layer_ms": null, "every": 8, "parts": {"rank1+": {"last_ms": 34.17, "ref_ms": 20.93, "ratio": 1.63, "slow_run": 0, "contended": false}, "rank0": {"last_ms": 26.15, "ref_ms": 21.39, "ratio": 1.22, "slow_run": 0, "contended": false}}, "events": [], "running": 0}
