@@ -5,7 +5,7 @@ set -euo pipefail
 
 LLAMA="$HOME/src/llama.cpp/build-linux/bin"
 MODEL="$HOME/models/Qwen3-1.7B-Q4_K_M.gguf"
-RPC=<x86-node>:50052,<x86-node>:50053
+RPC="<x86-node>:50052,<x86-node>:50053"
 OUT="$HOME/rpc-x86-bench"
 PROMPT="The three primary colors are"
 mkdir -p "$OUT"

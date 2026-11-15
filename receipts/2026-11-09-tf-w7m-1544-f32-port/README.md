@@ -48,7 +48,7 @@ Every conflict was resolved keeping both concerns:
 naming, (b) copyright header text, (c) qmm_q4_vec4 machinery and its contract fixtures.
 No other drift.
 
-## Gates run on omp-studio-local (Debian 12 PVE container, EPYC 7443P, zig 0.17.0, glslang 15)
+## Gates run on the build container (Debian 12 PVE container, EPYC 7443P, zig 0.17.0, glslang 15)
 
 - `zig fmt --check zig/` — clean.
 - Host steps (all exit 0): `vulkan-host-test`, `stage1..stage5-host-test`, `model-host-test`,
@@ -78,7 +78,7 @@ No other drift.
 Run the device contract battery on the w7m 13-inch M1 (`stage4-gpu-run`, gdn contract,
 pointwise/attention/greedy/qmm contracts) and record receipts; compare the f32 layers 0-3
 cases against the w7p device findings (argmax V==A 64/64, pooled upper95 bound). The private
-notebook entry for this run: `~/.local/share/apple-silicon-lab/entries/w7m/20261109T0400Z-omp-studio-local-tf-1544-f32-port.md`
+notebook entry for this run: in the lane's private lab notebook (not published).
 (transcripts under `artifacts/w7m/20261109-run1/`).
 
 ## Addendum 2026-11-09T12:15Z — device receipts delivered (w7m M1)
