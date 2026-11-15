@@ -1,0 +1,4 @@
+greedy 1: A pipeline rank refers to the position or rank of a pipeline in a pipeline system, often used in contexts like pipeline management, ranking systems, or pipeline processing systems. | timings {"prefill_ms": 1253.7, "decode_ms": 1755.5, "tokens_per_s": 19.59, "poll_ms": 374.0}
+greedy 2: A pipeline rank refers to the position or rank of a pipeline in a pipeline system, often used in contexts like pipeline management, ranking systems, or pipeline processing systems. | timings {"prefill_ms": 462.6, "decode_ms": 1942.1, "tokens_per_s": 17.67, "poll_ms": 0.5}
+greedy 3: A pipeline rank refers to the position or rank of a pipeline in a pipeline system, often used in contexts like pipeline management, ranking systems, or pipeline processing systems. | timings {"prefill_ms": 511.5, "decode_ms": 2094.1, "tokens_per_s": 16.4, "poll_ms": 1.3}
+sampled: Red and blue. | timings {"prefill_ms": 517.2, "decode_ms": 238.4, "tokens_per_s": 22.44, "poll_ms": 1.2}

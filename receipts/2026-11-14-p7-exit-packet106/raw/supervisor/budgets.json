@@ -1,0 +1,7 @@
+{
+ "elapsed_s": 15.9,
+ "remaining_s": 1734.1,
+ "controller_runtime": 1200,
+ "controller_wait": 1395,
+ "cleanup_s": 300
+}
