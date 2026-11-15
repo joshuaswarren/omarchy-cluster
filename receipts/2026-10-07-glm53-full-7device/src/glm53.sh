@@ -4,7 +4,7 @@
 # Env: MACGB (measured on the Mac right before the run), ESP, M2IP, budgets below.
 set -euo pipefail
 MODEL=${MODEL:-$HOME/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.gguf}
-ESP=${ESP:-10.10.0.20}; M2IP=${M2IP:-10.10.0.14}; M2NAME=${M2NAME:-omarchy-m2}
+ESP=${ESP:-<addr-9>}; M2IP=${M2IP:-<addr-8>}; M2NAME=${M2NAME:-omarchy-m2}
 HOSTL=${HOSTL:-11}; ESGPU=${ESGPU:-2.75}; ESCPU=${ESCPU:-22}; M1GB=${M1GB:-38}; M2CPU=${M2CPU:-24}; M2GB=${M2GB:-62}
 OC=$HOME/.local/bin/omarchy-cluster
 fail() { echo "FAILED: $*" >&2; $OC stop 2>&1 | tail -6; exit 1; }

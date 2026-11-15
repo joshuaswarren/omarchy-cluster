@@ -19,5 +19,5 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 124544 MiB):
 
 build: c7fc509 (1)
 === Vulkan bench ===
-/home/joshuawarren/scratch/w7g-spark-43/run-bench.sh: line 34: /home/joshuawarren/llama.cpp/build-vulkan/bin/llama-bench: No such file or directory
+$HOME/scratch/w7g-spark-43/run-bench.sh: line 34: $HOME/llama.cpp/build-vulkan/bin/llama-bench: No such file or directory
 ALL_DONE 2026-11-09T13:44:56Z

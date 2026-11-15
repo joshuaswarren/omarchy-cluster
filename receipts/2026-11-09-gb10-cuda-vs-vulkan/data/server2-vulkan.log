@@ -2,7 +2,7 @@ TU: error: ../src/freedreno/vulkan/tu_knl.cc:387: failed to open device /dev/dri
 0.00.294.234 I srv  llama_server: initializing ...
 0.00.294.260 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
 0.00.295.879 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
-0.00.297.998 I srv    load_model: loading model '/home/joshuawarren/models/gguf/w7g-43/Qwen3.8-27B-Q4_0.gguf'
+0.00.297.998 I srv    load_model: loading model '$HOME/models/gguf/w7g-43/Qwen3.8-27B-Q4_0.gguf'
 0.01.313.432 W model has unused tensor blk.64.attn_norm.weight (size = 20480 bytes) -- ignoring
 0.01.313.446 W model has unused tensor blk.64.post_attention_norm.weight (size = 20480 bytes) -- ignoring
 0.01.313.453 W model has unused tensor blk.64.attn_q.weight (size = 35389440 bytes) -- ignoring

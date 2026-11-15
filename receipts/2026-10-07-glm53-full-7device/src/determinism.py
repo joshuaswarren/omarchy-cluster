@@ -22,9 +22,9 @@ MODEL = os.environ.get("MODEL", HOME + "/models/Qwen3-1.7B-Q4_K_M.gguf")
 RUNS = int(os.environ.get("RUNS", "3"))
 PORT = 8090
 OUT = os.environ.get("OUT", HOME + "/.local/share/omarchy-bench/determinism.jsonl")
-ESP = os.environ.get("ESP", "10.10.0.20")
-MAC = os.environ.get("MAC", "10.10.0.13:50070")
-M2 = os.environ.get("M2", "10.10.0.14:50070")
+ESP = os.environ.get("ESP", "<addr-9>")
+MAC = os.environ.get("MAC", "<addr-1>:50070")
+M2 = os.environ.get("M2", "<addr-8>:50070")
 DEVICES = {
     "x86-cuda": (CPU, ["--rpc", ESP + ":50052", "-dev", "RPC0", "-ngl", "99"]),
     "x86-cpu": (CPU, ["--rpc", ESP + ":50053", "-dev", "RPC0", "-ngl", "99"]),

@@ -1,5 +1,5 @@
---- /home/joshuawarren/rpc-x86-bench/gen-alone.txt	2026-10-06 18:14:48.472660674 -0500
-+++ /home/joshuawarren/rpc-x86-bench/gen-2port.txt	2026-10-06 18:25:50.719885729 -0500
+--- $HOME/rpc-x86-bench/gen-alone.txt	2026-10-06 18:14:48.472660674 -0500
++++ $HOME/rpc-x86-bench/gen-2port.txt	2026-10-06 18:25:50.719885729 -0500
 @@ -1,6 +1,6 @@
  
  

@@ -1,5 +1,5 @@
---- /home/joshuawarren/rpc-x86-bench/gen-alone.txt	2026-10-06 18:14:48.472660674 -0500
-+++ /home/joshuawarren/rpc-x86-bench/gen-rpc.txt	2026-10-06 18:15:54.262094163 -0500
+--- $HOME/rpc-x86-bench/gen-alone.txt	2026-10-06 18:14:48.472660674 -0500
++++ $HOME/rpc-x86-bench/gen-rpc.txt	2026-10-06 18:15:54.262094163 -0500
 @@ -1,6 +1,6 @@
  
  
