@@ -229,7 +229,8 @@ def test_a_given_links_file_that_cannot_choose_the_ring_address_stops_serve(tmp_
     assert str(path) in str(e.value)
 
 
-def test_no_links_given_still_uses_the_first_address():
+def test_no_links_given_still_uses_the_first_address(monkeypatch):
+    monkeypatch.setattr(cli, "_answers", lambda ip, port: True)  # plumbing only: 10.9.9.9 is not a real host
     node = {"facts": {"interfaces": [{"ips": [{"ip": "10.9.9.9"}]}]}}
     assert cli._pick_route_ip(node, [{"node": "a"}, {"node": "b"}], "a", None) == "10.9.9.9"
 

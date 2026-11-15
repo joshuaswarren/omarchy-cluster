@@ -46,6 +46,7 @@ def cluster(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_launch_rank_via_agent", launch)
     monkeypatch.setattr(cli, "_start_gateway", lambda state, port, engine, max_concurrent: state.update(engine=engine))
     monkeypatch.setattr(llamacpp_engine, "wait_http", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_answers", lambda ip, port: True)  # plumbing only: the fake nodes' addresses are not real hosts
     return launches
 
 
