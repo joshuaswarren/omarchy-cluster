@@ -1,4 +1,4 @@
-=== llama-bench: jw16 + BOTH esper nodes (192.168.3.191:50052,192.168.3.191:50053)
+=== llama-bench: jw16 + BOTH x86-node nodes (<x86-node>:50052,<x86-node>:50053)
 | model                          |       size |     params | backend    | ngl |            test |                  t/s |
 | ------------------------------ | ---------: | ---------: | ---------- | --: | --------------: | -------------------: |
 | qwen3 1.7B Q4_K - Medium       |   1.19 GiB |     2.03 B | RPC        |  99 |           pp512 |         52.95 ± 2.96 |

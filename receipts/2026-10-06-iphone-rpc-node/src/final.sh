@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Final table in the m1max-linux quiet window. Model Qwen3-1.7B Q4_K_M; lm_head pinned to m1max-linux for every split.
+# Final table in the the M1 Max Mac quiet window. Model Qwen3-1.7B Q4_K_M; lm_head pinned to the M1 Max Mac for every split.
 set -uo pipefail
 cd "$(dirname "$0")"
 B=~/src/llama.cpp/build-linux-aligned/bin
@@ -16,7 +16,7 @@ ident() { # $1 tag, $2 ngl
     --rpc 127.0.0.1:50052 -ngl "$2" -ot "$OT" > "$OUT/$1.txt" 2> "$OUT/$1.log"
   cmp -s "$OUT/ref.txt" "$OUT/$1.txt" && echo "$1 TOKENS-IDENTICAL" || echo "$1 TOKENS-DIVERGE $(cmp "$OUT/ref.txt" "$OUT/$1.txt")"
 }
-echo "== m1max-linux alone"; bench | tee "$OUT/bench-ref.md"
+echo "== the M1 Max Mac alone"; bench | tee "$OUT/bench-ref.md"
 "$B/llama-completion" -m "$M" -p "$P" -n 64 -c 4096 --temp 0 --seed 42 -t 8 -no-cnv > "$OUT/ref.txt" 2> "$OUT/ref.log"
 for mode in metal cpu; do
   flock -u 9

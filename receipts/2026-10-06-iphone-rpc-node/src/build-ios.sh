@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Cross-build llama.cpp ggml-rpc-server for iOS arm64 from m1max-linux (Linux).
+# Cross-build llama.cpp ggml-rpc-server for iOS arm64 from the M1 Max Mac (Linux).
 # Pure C/C++ - no Swift - so the FINDINGS 15/16 Swift/SDK version matrix does not apply.
 set -euo pipefail
 LLAMA=~/src/llama.cpp
 SDK=${SDK:-~/sdk/SDKs/iPhoneOS27.0.sdk}
 ARCH="arm64-apple-ios17.0"
-MARCH="-march=armv8.2-a+dotprod+fp16"   # common denominator M1 Max (m1max-linux) and A17 Pro (phone) -> identical kernels for token identity
+MARCH="-march=armv8.2-a+dotprod+fp16"   # common denominator M1 Max (the M1 Max Mac) and A17 Pro (phone) -> identical kernels for token identity
 cmake -B "$LLAMA/build-ios" -S "$LLAMA" \
   -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
   -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \

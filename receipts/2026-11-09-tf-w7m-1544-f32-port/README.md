@@ -83,7 +83,7 @@ notebook entry for this run: `~/.local/share/apple-silicon-lab/entries/w7m/20261
 
 ## Addendum 2026-11-09T12:15Z — device receipts delivered (w7m M1)
 
-The device contract battery ran end to end on the w7m 13-inch M1 (`jwm1-linux`, T8103, boot
+The device contract battery ran end to end on the w7m 13-inch M1 (`jwm1`, T8103, boot
 `1cb0310d`), pinned to the gated tip `7db9b04f5` (the fork branch had moved two docs/cli
 commits past it; verified ancestor, battery ran at the gated tip exactly). Device: `Apple M1
 (G13G B1)`, Honeykrisp `Mesa 26.3.0-devel (git-9323171c12)` (coreglass ICD, mesa-1 lineage —

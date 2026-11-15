@@ -23,9 +23,9 @@ MODEL = os.environ.get("MODEL", HOME + "/models/Qwen3-1.7B-Q4_K_M.gguf")
 WARM = int(os.environ.get("WARM", "5"))
 PORT = 8091
 OUT = os.environ.get("OUT", HOME + "/.local/share/omarchy-bench/hopcost.jsonl")
-M2 = os.environ.get("M2", "10.10.0.14:50070")
-MAC = os.environ.get("MAC", "10.10.0.13:50070")
-MAC_TB = os.environ.get("MAC_TB", "10.10.9.1:50070")
+M2 = os.environ.get("M2", "<addr-8>:50070")
+MAC = os.environ.get("MAC", "<addr-1>:50070")
+MAC_TB = os.environ.get("MAC_TB", "<addr-3>:50070")
 LOOP = "127.0.0.1:50071"
 
 

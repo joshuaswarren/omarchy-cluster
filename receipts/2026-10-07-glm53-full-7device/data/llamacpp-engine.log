@@ -1,4 +1,4 @@
-llama-server: ~/src/llama.cpp/build-cpu/bin/llama-server -m ~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.gguf --host 127.0.0.1 --port 8032 -c 2048 -t 8 --rpc 10.10.0.20:50052,10.10.0.20:50053,10.10.0.12:50060,10.10.0.13:50060,10.10.0.14:50061,10.10.0.14:50060 -dev RPC0,RPC1,RPC2,RPC3,RPC4,RPC5 -ngl 69 --tensor-split 1,8,14,15,8,23 -ot ^output\.weight=CPU
+llama-server: ~/src/llama.cpp/build-cpu/bin/llama-server -m ~/models/GLM-5.3-UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.gguf --host 127.0.0.1 --port 8032 -c 2048 -t 8 --rpc <addr-9>:50052,<addr-9>:50053,<addr-2>:50060,<addr-1>:50060,<addr-8>:50061,<addr-8>:50060 -dev RPC0,RPC1,RPC2,RPC3,RPC4,RPC5 -ngl 69 --tensor-split 1,8,14,15,8,23 -ot ^output\.weight=CPU
 0.00.114.137 I srv  llama_server: initializing ...
 0.00.114.154 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
 0.00.114.748 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
@@ -11,7 +11,7 @@ llama-server: ~/src/llama.cpp/build-cpu/bin/llama-server -m ~/models/GLM-5.3-UD-
 45.13.476.085 W srv          init: chat template supports preserving reasoning, it is enabled by default (may use more tokens, disable via --no-reasoning-preserve)
 45.13.476.140 I srv  llama_server: model loaded
 45.13.476.149 I srv  llama_server: listening on http://127.0.0.1:8032
-llama.cpp engine on :8031 (rpc 10.10.0.20:50052,10.10.0.20:50053,10.10.0.12:50060,10.10.0.13:50060,10.10.0.14:50061,10.10.0.14:50060, split 1,8,14,15,8,23)
+llama.cpp engine on :8031 (rpc <addr-9>:50052,<addr-9>:50053,<addr-2>:50060,<addr-1>:50060,<addr-8>:50061,<addr-8>:50060, split 1,8,14,15,8,23)
 45.14.320.606 I slot get_availabl: id  3 | task -1 | selected slot by LRU, t_last = -1
 45.14.320.656 I slot launch_slot_: id  3 | task 0 | processing task, is_child = 0
 48.55.622.584 I slot print_timing: id  3 | task 0 | prompt eval time =   34443.82 ms /    20 tokens ( 1722.19 ms per token,     0.58 tokens per second)

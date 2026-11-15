@@ -29,7 +29,7 @@ say() { printf '\n===== %s\n' "$*"; }
 SUDO=""
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then SUDO="sudo"; fi
 
-say "esper RPC node setup: llama.cpp ${COMMIT:0:12}, CUDA sm_50, tcp/$PORT"
+say "x86-node RPC node setup: llama.cpp ${COMMIT:0:12}, CUDA sm_50, tcp/$PORT"
 
 # --- 1. packages -------------------------------------------------------------
 say "installing base-devel cmake git curl ufw"
@@ -124,11 +124,11 @@ if pgrep -f "$BIN" >/dev/null 2>&1; then
   sleep 1
 fi
 
-say "ufw: allow tcp/$PORT (GPU) and tcp/$PORT_CPU (CPU) from 192.168.10.0/24 and 192.168.3.0/24 (removed on exit)"
-$SUDO ufw allow from 192.168.10.0/24 to any port "$PORT" proto tcp
-$SUDO ufw allow from 192.168.3.0/24 to any port "$PORT" proto tcp
-$SUDO ufw allow from 192.168.10.0/24 to any port "$PORT_CPU" proto tcp
-$SUDO ufw allow from 192.168.3.0/24 to any port "$PORT_CPU" proto tcp
+say "ufw: allow tcp/$PORT (GPU) and tcp/$PORT_CPU (CPU) from <addr-5>/24 and <addr-6>/24 (removed on exit)"
+$SUDO ufw allow from <addr-5>/24 to any port "$PORT" proto tcp
+$SUDO ufw allow from <addr-6>/24 to any port "$PORT" proto tcp
+$SUDO ufw allow from <addr-5>/24 to any port "$PORT_CPU" proto tcp
+$SUDO ufw allow from <addr-6>/24 to any port "$PORT_CPU" proto tcp
 $SUDO ufw status verbose | grep -m1 -i status || true
 
 PIDS=()
@@ -138,8 +138,8 @@ cleanup() {
   pkill -f "$BIN" 2>/dev/null || true
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do kill "$pid" 2>/dev/null || true; done
   for p in "$PORT" "$PORT_CPU"; do
-    $SUDO ufw delete allow from 192.168.10.0/24 to any port "$p" proto tcp >/dev/null 2>&1 || true
-    $SUDO ufw delete allow from 192.168.3.0/24 to any port "$p" proto tcp >/dev/null 2>&1 || true
+    $SUDO ufw delete allow from <addr-5>/24 to any port "$p" proto tcp >/dev/null 2>&1 || true
+    $SUDO ufw delete allow from <addr-6>/24 to any port "$p" proto tcp >/dev/null 2>&1 || true
   done
   echo; echo "===== servers stopped, firewall rules for tcp/$PORT and tcp/$PORT_CPU removed"
   exit "$rc"

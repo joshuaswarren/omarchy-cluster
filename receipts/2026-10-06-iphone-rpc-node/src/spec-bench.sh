@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Speculative decoding: target Qwen3-8B on m1max-linux CPU; draft Qwen3-0.6B on m1max-linux CPU vs on the iPhone (RPC0).
-# The draft lm_head stays on m1max-linux (-otd) so 8 KB, not 593 KB of logits, crosses USB per draft token.
+# Speculative decoding: target Qwen3-8B on the M1 Max Mac CPU; draft Qwen3-0.6B on the M1 Max Mac CPU vs on the iPhone (RPC0).
+# The draft lm_head stays on the M1 Max Mac (-otd) so 8 KB, not 593 KB of logits, crosses USB per draft token.
 # Usage: spec-bench.sh <outdir>
 set -euo pipefail
 B=~/src/llama.cpp/build-linux-aligned/bin

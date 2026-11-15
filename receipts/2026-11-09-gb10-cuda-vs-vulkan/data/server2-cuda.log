@@ -1,7 +1,7 @@
 0.00.221.589 I srv  llama_server: initializing ...
 0.00.221.605 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
 0.00.225.068 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
-0.00.227.178 I srv    load_model: loading model '/home/joshuawarren/models/gguf/w7g-43/Qwen3.8-27B-Q4_0.gguf'
+0.00.227.178 I srv    load_model: loading model '$HOME/models/gguf/w7g-43/Qwen3.8-27B-Q4_0.gguf'
 0.00.895.809 W model has unused tensor blk.64.attn_norm.weight (size = 20480 bytes) -- ignoring
 0.00.895.844 W model has unused tensor blk.64.post_attention_norm.weight (size = 20480 bytes) -- ignoring
 0.00.895.851 W model has unused tensor blk.64.attn_q.weight (size = 35389440 bytes) -- ignoring

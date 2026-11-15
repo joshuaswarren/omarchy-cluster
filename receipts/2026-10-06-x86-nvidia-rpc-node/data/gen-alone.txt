@@ -11,7 +11,7 @@ Loading model... |-\|/-\|/-\|/ 
                                     ▀▀    ▀▀
 
 build      : b1-65840ed
-model      : /home/joshuawarren/models/Qwen3-1.7B-Q4_K_M.gguf
+model      : $HOME/models/Qwen3-1.7B-Q4_K_M.gguf
 ftype      : Q4_K - Medium
 modalities : text
 

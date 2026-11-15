@@ -1,4 +1,4 @@
-llama-server: ~/src/llama.cpp/build-cpu/bin/llama-server -m ~/models/GLM-5.3-Flash-UD-IQ4_XS/GLM-5.3-Flash-UD-IQ4_XS-00001-of-00005.gguf --host 127.0.0.1 --port 8032 -c 4096 -t 8 --rpc 10.10.0.13:50060,10.10.0.14:50060,10.10.0.12:50060,127.0.0.1:50060 -dev RPC0,RPC1,RPC2,RPC3 -ngl 47 --tensor-split 14,17,12,4 -ot ^output\.weight=CPU
+llama-server: ~/src/llama.cpp/build-cpu/bin/llama-server -m ~/models/GLM-5.3-Flash-UD-IQ4_XS/GLM-5.3-Flash-UD-IQ4_XS-00001-of-00005.gguf --host 127.0.0.1 --port 8032 -c 4096 -t 8 --rpc <addr-1>:50060,<addr-8>:50060,<addr-2>:50060,127.0.0.1:50060 -dev RPC0,RPC1,RPC2,RPC3 -ngl 47 --tensor-split 14,17,12,4 -ot ^output\.weight=CPU
 0.00.028.005 I srv  llama_server: initializing ...
 0.00.028.020 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
 0.00.028.605 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
@@ -11,7 +11,7 @@ llama-server: ~/src/llama.cpp/build-cpu/bin/llama-server -m ~/models/GLM-5.3-Fla
 17.22.792.287 W srv          init: chat template supports preserving reasoning, it is enabled by default (may use more tokens, disable via --no-reasoning-preserve)
 17.22.792.335 I srv  llama_server: model loaded
 17.22.792.341 I srv  llama_server: listening on http://127.0.0.1:8032
-llama.cpp engine on :8031 (rpc 10.10.0.13:50060,10.10.0.14:50060,10.10.0.12:50060,127.0.0.1:50060, split 14,17,12,4)
+llama.cpp engine on :8031 (rpc <addr-1>:50060,<addr-8>:50060,<addr-2>:50060,127.0.0.1:50060, split 14,17,12,4)
 17.29.917.046 I slot get_availabl: id  3 | task -1 | selected slot by LRU, t_last = -1
 17.29.917.090 I slot launch_slot_: id  3 | task 0 | processing task, is_child = 0
 17.36.304.134 I slot print_timing: id  3 | task 0 | prompt processing, n_tokens =      9, progress = 0.45, t =   6.39 s / 1.41 tokens per second
