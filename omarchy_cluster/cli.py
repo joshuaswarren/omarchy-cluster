@@ -847,6 +847,24 @@ def _plan_devices(devs, info, ctx, host_ram_avail, host_layers=None):
     return ordered, plan["host_layers"], plan["host_bytes"], plan["paged_bytes"]
 
 
+def _stop_started_rpc_servers(state):
+    """Stop every rpc-server serve has started (state["stages"]) and say what is left. The state file goes only if all were stopped,
+    so `omarchy-cluster stop` can still finish the rest."""
+    stages = state.get("stages", [])
+    left = []
+    for stage in stages:
+        node = {"ip": stage["node"], "ports": [stage["port"]] if stage.get("port") else [52100, state.get("engine_port", 8031)]}
+        if "error" in _stop_rank_via_agent(node, stage["pid"]):
+            left.append("%s (pid %s)" % (stage["node"], stage["pid"]))
+    if left:
+        return "the rpc-server(s) still running: %s; run omarchy-cluster stop" % ", ".join(left)
+    try:
+        os.remove(os.path.expanduser("~/.local/state/omarchy-cluster/serve.json"))
+    except FileNotFoundError:
+        pass
+    return "the %d rpc-server(s) it had started were stopped" % len(stages)
+
+
 def _serve_llamacpp_nodes(args, info):
     """GGUF on this host's llama-server, every layer spread over llama.cpp RPC servers
     that each named node's agent starts (this host too, if listed) or that run already
@@ -890,13 +908,8 @@ def _serve_llamacpp_nodes(args, info):
                          % (name, why, " ".join(map(str, res.get("cmd") or []))))
             try:
                 ip = "127.0.0.1" if name == local else _pick_route_ip(node, [{"node": local}, {"node": name}], name, getattr(args, "links", None))
-            except NoAddressAnswers as e:  # the node's rpc-server is already running: stop it, so nothing is left behind
-                try:
-                    _agent_post(node, "/v1/rank/stop", {"pid": res["pid"]})
-                    left = "the rpc-server it had started on %s was stopped" % name
-                except OSError:
-                    left = "the rpc-server it started on %s (pid %s) may still run: omarchy-cluster stop" % (name, res["pid"])
-                sys.exit("%s; %s" % (e.code, left))
+            except NoAddressAnswers as e:  # this and every earlier node's rpc-server is already running: stop them all
+                sys.exit("%s; %s" % (e.code, _stop_started_rpc_servers(state)))
             ep, host = "%s:%d" % (ip, args.rpc_node_port), node["ip"]
             try:
                 hello = iosnode.wait_rpc(ip, args.rpc_node_port, deadline_s=120.0)

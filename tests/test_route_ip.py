@@ -63,3 +63,49 @@ def test_the_ring_says_nothing_was_started():
     with pytest.raises(SystemExit) as ring:
         cli._ring_ip(cli._first_ip, far)
     assert ring.value.code.endswith("(tried: 127.0.0.2); nothing was started")
+
+
+def two_rpc_nodes_second_dead(tmp_path, monkeypatch, cannot_stop=()):
+    """alpha's rpc-server is already running when beta turns out to have no address that answers. Plumbing only: the agent calls and
+    the rpc handshake are stubbed; the address pick, the state file and the stop calls are the real code."""
+    import argparse
+    from omarchy_cluster import iosnode
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    nodes = {"alpha": {**node(8025, "10.0.0.1"), "name": "alpha"}, "beta": {**node(8025, "10.0.0.2"), "name": "beta"}}
+    started, stopped = [], []
+
+    def agent_post(target, path, payload, timeout=30):
+        started.append(target["ip"])
+        return {"pid": 4000 + len(started), "cmd": ["rpc-server", "-t", "4"], "env": []}
+
+    def stop(target, pid):
+        stopped.append((target["ip"], pid))
+        return {"error": "no answer"} if target["ip"] in cannot_stop else {}
+
+    monkeypatch.setattr(cli.discover, "discover_nodes", lambda *a, **k: nodes)
+    monkeypatch.setattr(cli, "_agent_post", agent_post)
+    monkeypatch.setattr(cli, "_answers", lambda ip, port: ip == "10.0.0.1")
+    monkeypatch.setattr(cli, "_stop_rank_via_agent", stop)
+    monkeypatch.setattr(iosnode, "wait_rpc", lambda *a, **k: {})
+    monkeypatch.setattr(probe, "load_links", lambda path=None: None)
+    args = argparse.Namespace(rpc_node=["alpha", "beta"], rpc_binary=[], rpc_env=[], rpc_threads=[], rpc_node_port=50060, rpc_cache=False,
+                              links=None, port=8020, engine_port=8031)
+    with pytest.raises(SystemExit) as stopping:
+        cli._serve_llamacpp_nodes(args, {})
+    assert started == ["10.0.0.1", "10.0.0.2"]
+    return stopping.value.code, stopped, tmp_path / ".local/state/omarchy-cluster/serve.json"
+
+
+def test_two_rpc_nodes_where_the_second_has_no_live_address_stop_both_and_say_so(tmp_path, monkeypatch):
+    code, stopped, state = two_rpc_nodes_second_dead(tmp_path, monkeypatch)
+    assert sorted(stopped) == [("10.0.0.1", "4001"), ("10.0.0.2", "4002")]
+    assert code == "no address of beta answers on port 8025 (tried: 10.0.0.2); the 2 rpc-server(s) it had started were stopped"
+    assert not state.exists()
+
+
+def test_a_server_that_cannot_be_stopped_is_named_and_the_state_file_stays_for_omarchy_cluster_stop(tmp_path, monkeypatch):
+    code, stopped, state = two_rpc_nodes_second_dead(tmp_path, monkeypatch, cannot_stop={"10.0.0.1"})
+    assert code == ("no address of beta answers on port 8025 (tried: 10.0.0.2); "
+                    "the rpc-server(s) still running: 10.0.0.1 (pid 4001); run omarchy-cluster stop")
+    assert state.exists()
