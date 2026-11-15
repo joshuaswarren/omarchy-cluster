@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import urllib.request
@@ -468,10 +469,21 @@ def _name_values(items, option):
 
 
 def _first_ip(node):
-    for ifc in node["facts"]["interfaces"]:
-        for a in ifc["ips"]:
-            return a["ip"]
-    sys.exit("no IP for %s" % node.get("name", "a node"))
+    """The address to use for a node when no probe pinned one: the first that accepts a connection to its agent port from here. A
+    laptop has Wi-Fi and wired addresses and one may not be reachable from this machine. The address the node was found at goes first.
+    Where none answers, the first listed one is kept and the later check names the failure. shortcut: this tests reachability from
+    this machine only, not between two ranks; run omarchy-cluster probe to pin a route."""
+    ips = [a["ip"] for ifc in node["facts"]["interfaces"] for a in ifc["ips"]]
+    ips = list(dict.fromkeys(([node["ip"]] if node.get("ip") else []) + ips))
+    if not ips:
+        sys.exit("no IP for %s" % node.get("name", "a node"))
+    for ip in ips:
+        try:
+            socket.create_connection((ip, node.get("port", 8025)), timeout=2).close()
+            return ip
+        except OSError:
+            continue
+    return ips[0]
 
 
 def _explicit_plan(args):
@@ -1023,11 +1035,7 @@ def _pick_route_ip(node_facts_dict, stages, node_name, links_path=None):
                 return p["a_ip"]
             if p.get("b_node") == node_name:
                 return p["b_ip"]
-    facts = node_facts_dict["facts"]
-    for ifc in facts["interfaces"]:
-        for a in ifc["ips"]:
-            return a["ip"]
-    sys.exit("no IP for %s" % node_name)
+    return _first_ip(dict(node_facts_dict, name=node_name))
 
 
 
