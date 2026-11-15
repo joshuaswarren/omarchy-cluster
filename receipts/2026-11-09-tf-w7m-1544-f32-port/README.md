@@ -79,7 +79,7 @@ Run the device contract battery on the w7m 13-inch M1 (`stage4-gpu-run`, gdn con
 pointwise/attention/greedy/qmm contracts) and record receipts; compare the f32 layers 0-3
 cases against the w7p device findings (argmax V==A 64/64, pooled upper95 bound). The private
 notebook entry for this run: in the lane's private lab notebook (not published).
-(transcripts under `artifacts/w7m/20261109-run1/`).
+(transcripts under `artifacts/w7m/20261109-run1/`, not published).
 
 ## Addendum 2026-11-09T12:15Z — device receipts delivered (w7m M1)
 
