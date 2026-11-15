@@ -14,7 +14,7 @@ the build non-obvious on current Arch:
   runs it. The archive `cuda` package itself depends on `gcc14`, which is also
   archive-only now and ships in two pieces (`gcc14` + `gcc14-libs`).
 - The bootstrap does all of this idempotently
-  ([src/esper-node.sh](src/esper-node.sh)): install, build, open only the two RPC
+  ([src/x86-node.sh](src/x86-node.sh)): install, build, open only the two RPC
   ports to the cluster LANs while running (ufw, removed again on exit), keep the
   laptop awake with `systemd-inhibit`, and serve TWO nodes: the GPU on tcp/50052
   and CPU+system-RAM on tcp/50053. A rerun skips the build and serves in seconds.

@@ -12,7 +12,7 @@ for _ in $(seq 1 30); do sleep 2; timeout 5 python3 rpc-ping.py 127.0.0.1:50052 
 timeout 30 ~/src/llama.cpp/build-linux-aligned/bin/llama-cli --rpc 127.0.0.1:50052 --list-devices 2>&1 | grep RPC0
 if [[ ${KLD:-1} == 1 ]]; then
   flock -w 900 /tmp/m1-gpu.lock ~/src/llama.cpp/build-linux-aligned/bin/llama-perplexity \
-    -m ~/models/Qwen3-1.7B-Q4_K_M.gguf --kl-divergence-base ~/src/phone-node/kld/base-the M1 Max Mac.bin --kl-divergence \
+    -m ~/models/Qwen3-1.7B-Q4_K_M.gguf --kl-divergence-base ~/src/phone-node/kld/base-m1max-mac.bin --kl-divergence \
     -c 512 --chunks 8 -t 8 --rpc 127.0.0.1:50052 -ngl 99 -f ~/src/llama.cpp/docs/build.md \
     > ~/src/phone-node/kld/$mode-ngl99.log 2>&1
   grep -E "Mean PPL\(Q\)/|Mean    KLD|99.0%   KLD|Same top p" ~/src/phone-node/kld/$mode-ngl99.log

@@ -83,7 +83,7 @@ notebook entry for this run: `~/.local/share/apple-silicon-lab/entries/w7m/20261
 
 ## Addendum 2026-11-09T12:15Z — device receipts delivered (w7m M1)
 
-The device contract battery ran end to end on the w7m 13-inch M1 (`jwm1`, T8103, boot
+The device contract battery ran end to end on the w7m 13-inch M1 (`m1-13`, T8103, boot
 `1cb0310d`), pinned to the gated tip `7db9b04f5` (the fork branch had moved two docs/cli
 commits past it; verified ancestor, battery ran at the gated tip exactly). Device: `Apple M1
 (G13G B1)`, Honeykrisp `Mesa 26.3.0-devel (git-9323171c12)` (coreglass ICD, mesa-1 lineage —
@@ -93,6 +93,6 @@ aarch64 build 121 s), the gdn contract (`-Dcontract-root=…/contract_gdn_main.z
 (default root), and `vulkan-gpu-test` passing on hardware (run1's exit 1 was the llvmpipe
 software-device refusal only). Every planted control red; no gate failure, no GPU fault.
 Full receipts, per-step logs and SHA256SUMS: apple-silicon-lab
-`artifacts/w7m/20261109-run2-jwm1-device-battery/RECEIPTS.md` (private notebook, not
+`artifacts/w7m/20261109-run2-m1-13-device-battery/RECEIPTS.md` (private notebook, not
 reproduced here). The recorded w7p model-level f32 receipts stand: packet v4 `device-out-v4`
 COMPLETE, probe rc 0 on all three cases (exact oracle ids, equal repeats).

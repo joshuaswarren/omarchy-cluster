@@ -1,4 +1,4 @@
-=== llama-bench: jw16 alone
+=== llama-bench: mbp16 alone
 | model                          |       size |     params | backend    | threads |            test |                  t/s |
 | ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
 | qwen3 1.7B Q4_K - Medium       |   1.19 GiB |     2.03 B | CPU        |      10 |           pp512 |        268.22 ± 3.06 |

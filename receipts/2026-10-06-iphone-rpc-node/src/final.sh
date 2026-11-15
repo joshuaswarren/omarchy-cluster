@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Final table in the the M1 Max Mac quiet window. Model Qwen3-1.7B Q4_K_M; lm_head pinned to the M1 Max Mac for every split.
+# Final table in the M1 Max Mac quiet window. Model Qwen3-1.7B Q4_K_M; lm_head pinned to the M1 Max Mac for every split.
 set -uo pipefail
 cd "$(dirname "$0")"
 B=~/src/llama.cpp/build-linux-aligned/bin

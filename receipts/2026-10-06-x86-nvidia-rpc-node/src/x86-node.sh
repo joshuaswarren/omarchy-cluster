@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# esper-node.sh — join the omarchy-cluster llama.cpp split as the NVIDIA RPC node.
+# x86-node.sh — join the omarchy-cluster llama.cpp split as the NVIDIA RPC node.
 #
 # Target host: a Dell laptop with a 4 GB Quadro M1200 (Maxwell, sm_50) on Omarchy
 # (Arch) Linux. Idempotent: installs packages, builds ggml-rpc-server with CUDA
-# targeting sm_50 at the exact llama.cpp commit the M1 Max node (jw16) runs — so the
+# targeting sm_50 at the exact llama.cpp commit the M1 Max node (mbp16) runs — so the
 # RPC protocol matches — opens ONLY the RPC ports to the two cluster LANs while
 # running, removes the rules on exit, and serves in the foreground until Ctrl-C.
 #
@@ -15,10 +15,10 @@
 # Stop it with Ctrl-C. Re-run any time; safe to run again.
 set -euo pipefail
 
-COMMIT=65840ed53c8653bfbf3e9014d9cbf71ac8c08725   # llama.cpp commit jw16 runs (RPC-protocol identical)
+COMMIT=65840ed53c8653bfbf3e9014d9cbf71ac8c08725   # llama.cpp commit mbp16 runs (RPC-protocol identical)
 PORT=50052       # GPU (CUDA0) node
 PORT_CPU=50053   # CPU/RAM node
-REPO="$HOME/src/llama.cpp-esper"
+REPO="$HOME/src/llama.cpp-x86node"
 BUILD="$REPO/build-cuda-rpc"
 BIN="$BUILD/bin/ggml-rpc-server"
 CUDA12_PKG="cuda-12.9.1-2-x86_64.pkg.tar.zst"     # newest CUDA 12.x in the Arch Linux Archive
@@ -88,7 +88,7 @@ if [[ -d "$LIBDIR14" && ! -e "$LIBDIR14/libgcc_s.so" ]]; then
   $SUDO ln -sf /usr/lib/libgcc_s.so.1 "$LIBDIR14/libgcc_s.so"
 fi
 
-# --- 4. llama.cpp source at jw16's exact commit --------------------------------
+# --- 4. llama.cpp source at mbp16's exact commit --------------------------------
 say "fetching llama.cpp into $REPO and checking out $COMMIT"
 if [[ ! -d "$REPO/.git" ]]; then
   git clone --filter=blob:none https://github.com/ggml-org/llama.cpp "$REPO"
