@@ -15,5 +15,5 @@ Where the README's numbers come from:
 - 1750 s: WORK_DEADLINE = OUTER_UNIT_RUNTIME (1770) - STARTUP_ALLOWANCE (20), lines 149-150 and 166. budgets.json shows elapsed_s 15.9 + remaining_s 1734.1 = 1750.0.
   The outer unit's RuntimeMaxSec is 1770; the run used 151 s.
 - Disk gate: DISK_HEADROOM = 5,000,000,000 B (line 1130); a rank refuses to fetch when free < assigned shard bytes + headroom.
-  jw16: 17,181,071,994 + 5,000,000,000 = 22.18 GB. jwm2: 11,904,184,575 + 5,000,000,000 = 16.90 GB.
+  rank 0 host: 17,181,071,994 + 5,000,000,000 = 22.18 GB. rank 1 host: 11,904,184,575 + 5,000,000,000 = 16.90 GB.
   The gate prints a line only when it refuses. None of the rank logs has one, so a pass is shown only by the fetch having completed.

@@ -1,17 +1,17 @@
 Free space and sizes read around the deletions of the private caches, 2026-11-14 (df -B1 --output=avail /home; du -sb of the private home).
-The numbers are pasted from the terminal. rm-jwm2-private-2.out and rm-jw16-private.out hold what each delete script itself printed.
+The numbers are pasted from the terminal. rm-rank1-host-private-2.out and rm-rank0-host-private.out hold what each delete script itself printed.
 
-jwm2, private home du -sb before the delete: 11,923,201,411 B (hub 11,920,233,577 + xet 611,185 + the rest)
-jwm2 df free  21:02:51  8,294,621,184
-jwm2 df free  21:03:07  15,386,226,688   (read right after the rm; the last number in rm-jwm2-private-2.out, before the filesystem had settled)
-jwm2 df free  21:03:32  19,940,089,856   (read 25 s later by a separate command; the figure the README uses)
-jwm2 private home du -sb after: 2,356,649
+rank 1 host, private home du -sb before the delete: 11,923,201,411 B (hub 11,920,233,577 + xet 611,185 + the rest)
+rank 1 host df free  21:02:51  8,294,621,184
+rank 1 host df free  21:03:07  15,386,226,688   (read right after the rm; the last number in rm-rank1-host-private-2.out, before the filesystem had settled)
+rank 1 host df free  21:03:32  19,940,089,856   (read 25 s later by a separate command; the figure the README uses)
+rank 1 host private home du -sb after: 2,356,649
 
-jw16, private home du -sb before the delete: 17,200,242,504 B
-jw16 df free  before  12,495,740,928
-jw16 df free  21:08:24 (20 s after the rm)  29,340,073,984
-jw16 private home du -sb after: 2,397,025
+rank 0 host, private home du -sb before the delete: 17,200,242,504 B
+rank 0 host df free  before  12,495,740,928
+rank 0 host df free  21:08:24 (20 s after the rm)  29,340,073,984
+rank 0 host private home du -sb after: 2,397,025
 
-jw16 real HF cache, the Nov 13 prefetch deleted at 20:49 with the coordinator's approval (before this run): df avail 12,881,215,488 -> 28,940,001,280 B;
-shard blobs freed 17,181,071,994 B. Free space just before the 20:59 launch: jw16 28,940,001,280 B (same reading as above), jwm2 21,834,788,864 B.
+rank 0 host real HF cache, the Nov 13 prefetch deleted at 20:49 with the coordinator's approval (before this run): df avail 12,881,215,488 -> 28,940,001,280 B;
+shard blobs freed 17,181,071,994 B. Free space just before the 20:59 launch: rank 0 host 28,940,001,280 B (same reading as above), rank 1 host 21,834,788,864 B.
 These two "before the launch" figures are lane notes, not files from the run.
