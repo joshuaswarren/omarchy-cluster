@@ -43,10 +43,15 @@ def ssh_run(target, command, stdin=None):
     operator's ssh config says: the TLS key pinned for the node is read over this connection, so an impostor at the
     address must not get past it."""
     feed = {"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none",
-                        "-o", "ConnectTimeout=10",
-                        "--", target, command],
-                       capture_output=True, timeout=600, **feed)
+    try:
+        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+                            "-o", "ConnectTimeout=10",
+                            "--", target, command],
+                           capture_output=True, timeout=600, **feed)
+    except subprocess.TimeoutExpired:
+        raise BootstrapError("ssh to %s timed out after 600 s running: %s" % (target, command))
+    except OSError as e:
+        raise BootstrapError("ssh to %s failed before answering (%s: %s)" % (target, type(e).__name__, e))
     err = r.stderr.decode(errors="replace")
     if r.returncode == 255 and "Host key verification failed" in err:
         raise BootstrapError("ssh cannot verify the host key of %s: run `ssh %s` once yourself and verify the key it "
@@ -170,21 +175,26 @@ def _addresses(host, port, token):
 
 
 def _ensure_avahi(target, ssh, say):
-    if ssh(target, "command -v avahi-daemon >/dev/null || test -x /usr/sbin/avahi-daemon")[0] == 0:
+    # the binary existing proves nothing; discovery needs the daemon actually running (review on #58)
+    running = ("systemctl is-active --quiet avahi-daemon 2>/dev/null || pgrep -x avahi-daemon >/dev/null")
+    if ssh(target, running)[0] == 0:
         return
     for manager, install in AVAHI_INSTALL:
         if ssh(target, "command -v %s >/dev/null" % manager)[0] == 0:
             break
     else:
-        raise BootstrapError("%s has no Avahi and no known package manager; install avahi and enable "
+        raise BootstrapError("%s has no running Avahi and no known package manager; install avahi and enable "
                              "avahi-daemon there, then run bootstrap again" % target)
     enable = "systemctl enable --now avahi-daemon"
     for command in (install, enable):
         rc, out, err = ssh(target, "sudo -n " + command)
         if rc != 0:
-            raise BootstrapError("%s has no Avahi and passwordless sudo failed (%s). On %s run: "
+            raise BootstrapError("%s has no running Avahi and passwordless sudo failed (%s). On %s run: "
                                  "sudo %s && sudo %s, then run bootstrap again"
                                  % (target, (err or out).strip(), target, install, enable))
+    if ssh(target, running)[0] != 0:
+        raise BootstrapError("%s: avahi is installed but the daemon still does not run; start it "
+                             "(sudo systemctl enable --now avahi-daemon) and run bootstrap again" % target)
     say("%s: installed avahi" % target)
 
 
