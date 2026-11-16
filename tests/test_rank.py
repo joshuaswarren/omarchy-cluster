@@ -190,6 +190,12 @@ def test_watch_flags_the_contended_rank_after_n_slow_sampled_steps(monkeypatch):
     assert st["parts"]["rank0"]["contended"] is False and len(st["events"]) == 1
 
 
+def test_status_names_the_loaded_model(monkeypatch):
+    monkeypatch.setattr(rank.Engine, "_boot", lambda self: None)
+    engine = rank.Engine("mlx-community/mini", 2)
+    assert engine.status()["model"] == "mlx-community/mini"
+
+
 def test_watch_with_explicit_split_flags_a_burst_present_from_the_start(monkeypatch, tmp_path):
     """--split 26,1 started inside contention (two-rank loopback, synthetic
     GPU contender): the fastest step seen was itself slow, so nothing tripped.
