@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -20,11 +21,13 @@ class FakeSsh:
     """Records every remote command; answers the probes the way a stock node would."""
 
     def __init__(self, os_name="Linux", python_ok=True, avahi=True, manager="pacman", sudo_ok=True,
-                 hostname="omarchy-m2", fail_on=None, cert_dir=None):
+                 hostname="omarchy-m2", fail_on=None, cert_dir=None, starts=None):
         self.calls = []
         self.cert_dir = cert_dir or tempfile.mkdtemp(prefix="bootstrap-cert-")
         self.os_name, self.python_ok, self.avahi = os_name, python_ok, avahi
         self.manager, self.sudo_ok, self.hostname, self.fail_on = manager, sudo_ok, hostname, fail_on
+        self.starts = starts  # avahi=False + starts=True: the daemon answers only after enable
+        self._running_probes = 0
 
     def __call__(self, target, command, stdin=None):
         self.calls.append((target, command, stdin))
@@ -34,6 +37,13 @@ class FakeSsh:
             return 0, self.os_name + "\n", ""
         if "sys.version_info" in command:
             return (0, "ok\n", "") if self.python_ok else (0, "old\n", "")
+        if "|| pgrep -x avahi-daemon" in command:
+            # the daemon-running probe: avahi=True means the daemon answers
+            if self.avahi:
+                return 0, "", ""
+            self._running_probes += 1
+            alive = self.starts is True and self._running_probes > 1
+            return (0, "", "") if alive else (1, "", "")
         if command.startswith("command -v avahi-daemon"):
             return (0, "/usr/bin/avahi-daemon\n", "") if self.avahi else (1, "", "")
         if command.startswith("command -v pacman"):
@@ -94,7 +104,7 @@ def test_a_stock_linux_node_gets_the_package_token_and_agent_in_order_and_its_na
 
 
 def test_missing_avahi_is_installed_with_the_nodes_package_manager(src):
-    ssh = FakeSsh(avahi=False, manager="apt-get")
+    ssh = FakeSsh(avahi=False, manager="apt-get", starts=True)
     run_bootstrap(ssh, src)
     install = [c for c in ssh.commands() if "sudo -n" in c]
     assert any("apt-get install -y avahi-daemon avahi-utils" in c for c in install)
@@ -107,6 +117,34 @@ def test_missing_avahi_without_passwordless_sudo_says_what_to_run(src):
         run_bootstrap(ssh, src)
     assert "pacman -S --noconfirm --needed avahi nss-mdns" in str(e.value)
     assert not any("install-agent" in c for c in ssh.commands())
+
+
+def test_a_dead_avahi_daemon_is_installed_and_started(src):
+    """The binary proves nothing: a dead daemon must take the install/enable path (review on #58)."""
+    ssh = FakeSsh(avahi=False, manager="pacman", starts=True)
+    name, out = run_bootstrap(ssh, src)
+    assert any("systemctl enable --now avahi-daemon" in c for c in ssh.commands())
+    assert any("installed avahi" in line for line in out)
+    assert ssh._running_probes == 2  # probed before and after the enable
+
+
+def test_an_avahi_daemon_that_stays_dead_stops_bootstrap(src):
+    ssh = FakeSsh(avahi=False, manager="pacman", starts=False)
+    with pytest.raises(bootstrap.BootstrapError) as e:
+        run_bootstrap(ssh, src)
+    assert "still does not run" in str(e.value)
+    assert not any("install-agent" in c for c in ssh.commands())
+
+
+def test_an_ssh_timeout_becomes_a_bootstrap_error(src, monkeypatch):
+    """ssh_run can raise TimeoutExpired; bootstrap must turn it into its own error (review on #58)."""
+    def exploding_run(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd=a[0] if a else "ssh", timeout=600)
+    monkeypatch.setattr(bootstrap.subprocess, "run", exploding_run)
+    with pytest.raises(bootstrap.BootstrapError) as e:
+        bootstrap.ssh_run("me@node1", "uname -s")
+    assert "timed out after 600 s" in str(e.value)
+    assert "node1" in str(e.value)
 
 
 def test_macos_needs_no_avahi(src):
