@@ -598,8 +598,13 @@ class Engine:
             self.ready.set()
             return
         self.ready.set()
+        self._serve_jobs()
+
+    def _serve_jobs(self):
+        """Consume _jobs forever: one worker thread keeps runs serial (stream jobs put
+        per-token chunk dicts into the same queue before the final result)."""
         while True:
-            messages, max_tokens, timing, sampling, result = self._jobs.get()
+            messages, max_tokens, timing, sampling, result, stream = self._jobs.get()
             with self._status_lock:
                 self._status["running"] = 1  # the single worker: at most one job runs
             try:
@@ -607,7 +612,9 @@ class Engine:
                 if isinstance(messages, dict) and "score" in messages:
                     res = self._score(messages["score"])
                 else:
-                    res = self._generate(messages, max_tokens, timing, sampling)
+                    # on_text positionally: older _generate fakes take *args only
+                    on_text = (lambda text: result.put({"chunk": text})) if stream else None
+                    res = self._generate(messages, max_tokens, timing, sampling, on_text)
             except Exception as e:  # noqa: BLE001
                 res = {"error": "%s: %s" % (type(e).__name__, e)}
             with self._status_lock:
@@ -638,7 +645,9 @@ class Engine:
         if self.model is None:
             raise RuntimeError("engine boot failed: %s" % self._error)
 
-    def _generate(self, messages, max_tokens, timing=False, sampling=None):
+    def _generate(self, messages, max_tokens=64, timing=False, sampling=None, on_text=None):
+        """Run one completion. With on_text, each token's text is reported as it decodes
+        (the streaming path); the returned dict is unchanged either way."""
         if isinstance(messages, str):
             prompt = self.tok.encode(messages, add_special_tokens=False)
         else:
@@ -656,6 +665,8 @@ class Engine:
                                 every=1 if timing else self.WATCH_EVERY,
                                 on_sample=self._sample if self._watch else None, sampling=sampling):
             parts.append(response.text)
+            if on_text is not None and response.text:
+                on_text(response.text)
         wall_ms = 1000 * (time.perf_counter() - self._published)
         prefill_ms = 1000 * response.prompt_tokens / response.prompt_tps
         text = "".join(parts)
@@ -721,16 +732,26 @@ class Engine:
         with self._status_lock:
             return json.loads(json.dumps(self._status))
 
-    def generate(self, messages, max_tokens=64, timing=False, sampling=None):
+    def generate(self, messages, max_tokens=64, timing=False, sampling=None, stream=False):
         self.wait_ready()
         result = queue.SimpleQueue()
-        self._jobs.put((messages, max_tokens, timing, sampling, result))
-        return result.get()
+        self._jobs.put((messages, max_tokens, timing, sampling, result, stream))
+        if not stream:
+            return result.get()
+
+        def events():
+            """Chunk dicts then the final dict; the final carries no 'chunk' key."""
+            while True:
+                item = result.get()
+                yield item
+                if "chunk" not in item:
+                    return
+        return events()
 
     def score(self, tokens):
         self.wait_ready()
         result = queue.SimpleQueue()
-        self._jobs.put(({"score": tokens}, 0, False, None, result))
+        self._jobs.put(({"score": tokens}, 0, False, None, result, False))
         return result.get()
 
     POLL_WAIT_S = 30.0
@@ -797,6 +818,20 @@ class EngineHandler(BaseHTTPRequestHandler):
             if not all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t < vocab for t in tokens):
                 return self._json(400, {"error": "token ids must be integers in [0, %d)" % vocab})
             return self._json(200, self.engine.score(tokens))
+        if req.get("stream"):
+            # SSE: chunk events then the final event (issue 95). The client keeps reading
+            # until the socket closes; each write flushes so tokens arrive as they decode.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            gen = self.engine.generate(messages, max_tokens=int(req.get("max_tokens", 64)),
+                                       timing=bool(req.get("timing")),
+                                       sampling=req.get("sampling") or None, stream=True)
+            for item in gen:
+                self.wfile.write(("data: %s\n\n" % json.dumps(item)).encode())
+                self.wfile.flush()
+            return
         res = self.engine.generate(messages, max_tokens=int(req.get("max_tokens", 64)),
                                    timing=bool(req.get("timing")), sampling=req.get("sampling") or None)
         return self._json(200, res)

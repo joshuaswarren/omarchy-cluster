@@ -111,3 +111,58 @@ def chat(url, messages, model="omarchy-cluster", max_tokens=256, token=None, tim
         raise RuntimeError("gateway %s answered %d %s" % (url, e.code, detail)) from e
     except OSError as e:
         raise RuntimeError("cannot reach the gateway at %s: %s" % (url, e)) from e
+
+
+def chat_stream(url, messages, model="omarchy-cluster", max_tokens=256, token=None, timeout=600,
+                on_finish=None):
+    """Yield reply text pieces as they arrive over the gateway's SSE stream (issue 95).
+
+    A gateway (or engine) that answers without streaming yields the whole text once, so
+    callers stay correct either way. on_finish, when given, is called with the final
+    event's dict (usage and timings live there). RuntimeError carries gateway errors."""
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    body = json.dumps({"model": model, "messages": messages, "max_tokens": max_tokens,
+                       "temperature": 0, "stream": True}).encode()
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=body, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if not (r.headers.get("Content-Type") or "").startswith("text/event-stream"):
+                res = json.loads(r.read())  # an older gateway answered without streaming
+                try:
+                    piece = res["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError):
+                    raise RuntimeError("gateway answered 200 with an unexpected reply shape "
+                                       "(no choices[0].message.content string)") from None
+                if not isinstance(piece, str):
+                    raise RuntimeError("gateway answered 200 with an unexpected reply shape "
+                                       "(no choices[0].message.content string)")
+                if on_finish is not None:
+                    on_finish(res)
+                yield piece
+                return
+            for raw in r:
+                line = raw.decode(errors="replace").strip()
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    return
+                item = json.loads(data)
+                if item.get("error"):
+                    raise RuntimeError(item["error"])
+                for choice in item.get("choices") or ():
+                    piece = (choice.get("delta") or {}).get("content")
+                    if piece:
+                        yield piece
+                if "usage" in item and on_finish is not None:
+                    on_finish(item)
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read()).get("error", "")
+        except (ValueError, AttributeError):
+            detail = ""
+        raise RuntimeError("gateway %s answered %d %s" % (url, e.code, detail)) from e
+    except OSError as e:
+        raise RuntimeError("cannot reach the gateway at %s: %s" % (url, e)) from e

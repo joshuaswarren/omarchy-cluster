@@ -232,7 +232,8 @@ class Gateway(BaseHTTPRequestHandler):
                 raise TypeError("request body must be a JSON object")
             payload = {"prompt": req.get("prompt"), "messages": req.get("messages"),
                        "max_tokens": int(req.get("max_tokens", 64)),
-                       "timing": bool(req.get("timing")), "raw": bool(req.get("raw"))}
+                       "timing": bool(req.get("timing")), "raw": bool(req.get("raw")),
+                       "stream": bool(req.get("stream"))}
             sampling = _sampling(req)
             payload["greedy"] = sampling is None
             if sampling:
@@ -266,6 +267,49 @@ class Gateway(BaseHTTPRequestHandler):
         admitted = time.perf_counter()  # exclude queued time; the engine starts work now
         with self._count_lock:
             Gateway._running += 1
+        if payload.get("stream"):
+            # SSE pass-through (issue 95): engine chunk events become OpenAI delta chunks,
+            # the engine's final event becomes a terminating chunk with usage and [DONE].
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                now = int(time.time())
+                with urllib.request.urlopen(rq, timeout=600) as r:
+                    for raw in r:
+                        line = raw.decode(errors="replace").strip()
+                        if not line.startswith("data: "):
+                            continue
+                        item = json.loads(line[6:])
+                        if "chunk" in item:
+                            body = json.dumps({"id": "chatcmpl-omarchy-%d" % now, "created": now,
+                                               "model": req.get("model", "omarchy-cluster"),
+                                               "object": "chat.completion.chunk",
+                                               "choices": [{"index": 0,
+                                                            "delta": {"content": item["chunk"]}}]})
+                        else:
+                            if item.get("error"):
+                                body = json.dumps({"error": item["error"]})
+                            else:
+                                self._record_rate(admitted, item.get("completion_tokens", 0))
+                                body = json.dumps({"id": "chatcmpl-omarchy-%d" % now, "created": now,
+                                                   "model": req.get("model", "omarchy-cluster"),
+                                                   "object": "chat.completion.chunk",
+                                                   "usage": {"prompt_tokens": item.get("prompt_tokens", 0),
+                                                             "completion_tokens": item.get("completion_tokens", 0)},
+                                                   "timings": {"prefill_ms": item.get("prefill_ms"),
+                                                               "decode_ms": item.get("decode_ms"),
+                                                               "tokens_per_s": item.get("tokps")}})
+                        self.wfile.write(("data: %s\n\n" % body).encode())
+                        self.wfile.flush()
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+                return
+            finally:
+                with self._count_lock:
+                    Gateway._running -= 1
+                slots.release()
         try:
             with urllib.request.urlopen(rq, timeout=600) as r:
                 res = json.loads(r.read())
