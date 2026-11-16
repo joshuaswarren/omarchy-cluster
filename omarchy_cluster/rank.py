@@ -563,7 +563,8 @@ class Engine:
         # contention watch: rank 0's own compute and its wait on ranks 1.. per sampled step
         self._watch = {}
         self._status = {"split": None, "layer_ms": None, "every": self.WATCH_EVERY,
-                        "parts": {}, "events": [], "running": 0}
+                        "parts": {}, "events": [], "running": 0,
+                        "model": self.model_ref}  # what a request's "model" must match (issue 71)
         self._status_lock = threading.Lock()
         threading.Thread(target=self._boot, daemon=True).start()
 

@@ -237,6 +237,18 @@ class Gateway(BaseHTTPRequestHandler):
             payload["greedy"] = sampling is None
             if sampling:
                 payload["sampling"] = sampling
+            asked = req.get("model")
+            if asked and asked != "omarchy-cluster":
+                # the app's model picker must not silently answer with the loaded model (issue 71)
+                try:
+                    with urllib.request.urlopen(self.engine + "/status", timeout=5) as r:
+                        loaded = (json.loads(r.read()) or {}).get("model")
+                except Exception:  # noqa: BLE001 - an unreachable engine stays the engine's 502 path
+                    loaded = None
+                if loaded and not (asked == loaded or str(loaded).endswith("/" + str(asked))
+                                   or str(loaded).endswith(str(asked))):
+                    return self._json(400, {"error": "gateway has %s loaded; refusing request for %s"
+                                             % (loaded, asked)})
         except (ValueError, TypeError, OverflowError) as e:
             return self._json(400, {"error": str(e)})
         data = json.dumps(payload).encode()

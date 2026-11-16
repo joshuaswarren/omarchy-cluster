@@ -151,6 +151,65 @@ def post(gateway, path, body):
     return urllib.request.urlopen(request, timeout=2)
 
 
+def status_engine(status):
+    class Engine(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_GET(self):
+            body = json.dumps(status).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = json.dumps(ENGINE_REPLY).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    return Engine
+
+
+@pytest.mark.parametrize("asked,loaded", [
+    ("mlx-community/other", "mlx-community/mini"),
+    ("mlx-community/mini", "mlx-community/other"),
+])
+def test_a_request_for_another_model_is_refused_with_both_names(asked, loaded, monkeypatch, http_server):
+    engine = http_server(status_engine({"ok": True, "model": loaded}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    with pytest.raises(urllib.error.HTTPError) as error:
+        post(gateway, "/v1/chat/completions",
+             {"messages": [{"role": "user", "content": "hi"}], "model": asked})
+    with error.value as response:
+        assert response.code == 400
+        message = json.load(response)["error"]
+        assert loaded in message and asked in message
+
+
+@pytest.mark.parametrize("asked,loaded", [
+    (None, "mlx-community/mini"),
+    ("omarchy-cluster", "mlx-community/mini"),
+    ("mlx-community/mini", "mlx-community/mini"),
+    ("mini", "mlx-community/mini"),
+])
+def test_a_matching_or_absent_model_reaches_the_engine(asked, loaded, monkeypatch, http_server):
+    engine = http_server(status_engine({"ok": True, "model": loaded}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    body = {"messages": [{"role": "user", "content": "hi"}]}
+    if asked is not None:
+        body["model"] = asked
+    with post(gateway, "/v1/chat/completions", body) as response:
+        assert response.code == 200
+
+
 @pytest.mark.parametrize("path", ["/v1/chat/completions", "/v1/completions"])
 def test_sampling_settings_reach_the_engine(path, monkeypatch, http_server):
     seen = []
