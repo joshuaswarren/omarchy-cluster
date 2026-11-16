@@ -20,7 +20,10 @@ Part of the Omarchy on Apple Silicon ecosystem:
 omarchy-cluster runs one local model across the machines on your network: Macs on
 macOS, Macs on Omarchy M+ Linux, even an iPhone. The machines measure each other,
 decide which node runs which layers, and serve the cluster as one
-OpenAI-compatible endpoint on :8020.
+OpenAI-compatible endpoint on :8020. Memory stays per node: each machine holds
+its own layers and KV cache in its own (unified) memory, and the cluster does
+not pool memory across machines - see
+[docs/adr-unified-memory.md](docs/adr-unified-memory.md).
 
 Use a split when a model does not fit on any one machine you own. In the
 measured runs, a split added capacity at a cost in speed. When one machine
