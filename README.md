@@ -191,6 +191,9 @@ curl -s http://127.0.0.1:8020/v1/chat/completions \
 Or chat in the terminal: `omarchy-cluster chat` talks to the gateway on :8020
 (`--gateway URL` for another one), keeps the conversation, and prints the speed
 of each reply in tokens per second. `/reset` starts over, `/exit` leaves.
+Tokens stream into the terminal as they decode: send `"stream": true` to
+`/v1/chat/completions` and the gateway answers SSE delta chunks ending with
+`data: [DONE]`; without the flag the reply stays one JSON body.
 
 `omarchy-cluster stop` stops everything. For a model bigger than one node, pick
 the split yourself so a machine you use for other work keeps free memory, for
