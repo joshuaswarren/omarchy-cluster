@@ -60,13 +60,19 @@ def repl(url=DEFAULT_GATEWAY, model="omarchy-cluster", max_tokens=256, system=No
         if not line:
             continue
         try:
-            text, tokps = _reply(client.chat(url, head + history + [{"role": "user", "content": line}],
-                                             model, max_tokens, token))
+            pieces = []
+            info = {}
+            for piece in client.chat_stream(url, head + history + [{"role": "user", "content": line}],
+                                            model, max_tokens, token, on_finish=info.update):
+                pieces.append(piece)
+                write(piece)  # tokens arrive one piece at a time; print as they land (issue 95)
+            text = "".join(pieces)
         except RuntimeError as e:
             write("error: %s" % e)
             continue
         history += [{"role": "user", "content": line}, {"role": "assistant", "content": text}]
-        write(text)
+        timings = info.get("timings")
+        tokps = _rate(timings.get("tokens_per_s") if isinstance(timings, dict) else None)
         if tokps is not None:
             write("[%.1f tok/s]" % tokps)
         turns += 1

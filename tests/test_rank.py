@@ -1,8 +1,10 @@
 import errno
+import json
 import os
 import sys
 import threading
 import time
+import urllib.request
 from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -194,6 +196,58 @@ def test_status_names_the_loaded_model(monkeypatch):
     monkeypatch.setattr(rank.Engine, "_boot", lambda self: None)
     engine = rank.Engine("mlx-community/mini", 2)
     assert engine.status()["model"] == "mlx-community/mini"
+
+
+def test_stream_generate_emits_sse_chunks_then_final(monkeypatch):
+    """stream=true on /generate: each decoded piece goes out as a data: event before the
+    final event, and the final event carries the same dict the non-stream call returns."""
+    monkeypatch.setattr(rank.Engine, "_boot", lambda self: (self.ready.set(), self._serve_jobs()))
+    engine = rank.Engine("model", 2)
+
+    class Tok:
+        def apply_chat_template(self, messages, add_generation_prompt):
+            return [1, 2]
+
+        def decode(self, ids):
+            return ""
+
+    engine.tok, engine.model = Tok(), object()
+
+    def stream(model, tok, prompt, max_tokens, marks=None, **kw):
+        for piece, count in (("Toke", 1), ("nize", 2)):
+            yield SimpleNamespace(text=piece, prompt_tokens=2, prompt_tps=1.0,
+                                  generation_tokens=count, generation_tps=1.0, peak_memory=0.0)
+
+    monkeypatch.setattr(rank, "_stream", stream)
+
+    handler_ok = []
+
+    class Handler(rank.EngineHandler):
+        def log_message(self, format, *args):
+            pass
+
+    Handler.engine = engine
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = "http://127.0.0.1:%d/generate" % server.server_port
+    try:
+        request = urllib.request.Request(url, data=json.dumps({
+            "messages": [{"role": "user", "content": "hi"}], "stream": True}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=5) as r:
+            assert r.headers["Content-Type"].startswith("text/event-stream")
+            events = [json.loads(raw.decode().strip()[6:])
+                      for raw in r if raw.strip()]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    chunks = [e["chunk"] for e in events if "chunk" in e]
+    assert chunks == ["Toke", "nize"]
+    final = [e for e in events if "chunk" not in e][-1]
+    assert final["text"] == "Tokenize" and final["completion_tokens"] == 2
+    handler_ok.append(True)
 
 
 def test_watch_with_explicit_split_flags_a_burst_present_from_the_start(monkeypatch, tmp_path):

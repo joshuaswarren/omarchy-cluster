@@ -456,3 +456,89 @@ def test_an_engine_refusal_reaches_the_client_as_a_400_with_its_text(code, reply
     with error.value as response:
         assert response.code == 400
         assert json.load(response)["error"] == reply["error"]
+
+
+def sse_engine(chunks, final):
+    """An engine whose /generate answers chunked SSE: chunk events then the final event."""
+
+    class Engine(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if not req.get("stream"):
+                body = json.dumps({"text": "".join(chunks) if chunks else final.get("text", ""),
+                                   "prompt_tokens": final.get("prompt_tokens", 0),
+                                   "completion_tokens": final.get("completion_tokens", 0),
+                                   "prefill_ms": final.get("prefill_ms", 0.0),
+                                   "decode_ms": final.get("decode_ms", 0.0),
+                                   "tokps": final.get("tokps", 0.0)}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                return self.wfile.write(body)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for text in chunks:
+                self.wfile.write(("data: %s\n\n" % json.dumps({"chunk": text})).encode())
+                self.wfile.flush()
+            self.wfile.write(("data: %s\n\n" % json.dumps(final)).encode())
+            self.wfile.flush()
+
+    return Engine
+
+
+def test_a_stream_request_gets_sse_deltas_in_order(monkeypatch, http_server):
+    """The issue-95 contract: stream=true must stream. This test fails against a gateway
+    that drops the stream key and answers one JSON body (no data: events arrive)."""
+    engine = http_server(sse_engine(["Toke", "nize", " me"], {
+        "text": "Tokenize me", "prompt_tokens": 3, "completion_tokens": 3,
+        "prefill_ms": 1.0, "decode_ms": 2.0, "tokps": 1.5}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    request = urllib.request.Request(
+        base_url(gateway) + "/v1/chat/completions",
+        data=json.dumps({"messages": [{"role": "user", "content": "hi"}], "stream": True}).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=2) as r:
+        assert r.headers["Content-Type"].startswith("text/event-stream")
+        events = []
+        for raw in r:
+            line = raw.decode(errors="replace").strip()
+            if line.startswith("data: ") and line != "data: [DONE]":
+                events.append(json.loads(line[6:]))
+        deltas = [e["choices"][0]["delta"]["content"] for e in events if "choices" in e]
+        assert deltas == ["Toke", "nize", " me"]
+        finals = [e for e in events if "choices" not in e]
+        assert finals and finals[0]["usage"]["completion_tokens"] == 3
+        assert finals[0]["timings"]["tokens_per_s"] == 1.5
+
+
+def test_a_stream_request_still_sends_done_last(monkeypatch, http_server):
+    engine = http_server(sse_engine(["a"], {"text": "a", "prompt_tokens": 1,
+                                            "completion_tokens": 1, "prefill_ms": 1.0,
+                                            "decode_ms": 1.0, "tokps": 1.0}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    request = urllib.request.Request(
+        base_url(gateway) + "/v1/chat/completions",
+        data=json.dumps({"messages": [{"role": "user", "content": "hi"}], "stream": True}).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=2) as r:
+        lines = [raw.decode(errors="replace").strip() for raw in r if raw.strip()]
+    assert lines[-1] == "data: [DONE]"
+
+
+def test_a_non_stream_request_stays_one_json_body(monkeypatch, http_server):
+    engine = http_server(sse_engine(["x"], {
+        "text": "x", "prompt_tokens": 1, "completion_tokens": 1,
+        "prefill_ms": 1.0, "decode_ms": 1.0, "tokps": 1.0}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    with post(gateway, "/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}) as r:
+        assert not r.headers["Content-Type"].startswith("text/event-stream")
+        body = json.load(r)
+    assert body["choices"][0]["message"]["content"] == "x"

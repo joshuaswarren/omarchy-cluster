@@ -31,6 +31,20 @@ def gateway():
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             seen.append({"path": self.path, "auth": self.headers.get("Authorization"), "body": body})
             status, reply = replies.pop(0)
+            if body.get("stream") and isinstance(reply, list) and isinstance(reply[-1], dict):
+                # an SSE reply: reply = [chunk texts...], final dict last (issue 95)
+                self.send_response(status)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                for text in reply[:-1]:
+                    self.wfile.write(("data: %s\n\n" % json.dumps(
+                        {"choices": [{"delta": {"content": text}}]})).encode())
+                    self.wfile.flush()
+                self.wfile.write(("data: %s\n\n" % json.dumps(
+                    {"choices": [{"delta": {}}], **reply[-1]})).encode())
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+                return
             data = json.dumps(reply).encode()
             self.send_response(status)
             self.send_header("Content-Length", str(len(data)))
@@ -68,13 +82,24 @@ def test_each_turn_sends_the_whole_conversation_so_far(gateway):
     replies += [answer("hello"), answer("fine")]
     out = run(url, ["hi", "how are you"], model="m1", max_tokens=32)
     assert seen[0]["path"] == "/v1/chat/completions"
-    assert seen[0]["body"]["messages"] == [{"role": "user", "content": "hi"}]
-    assert seen[0]["body"]["model"] == "m1" and seen[0]["body"]["max_tokens"] == 32
     assert seen[1]["body"]["messages"] == [
         {"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"},
         {"role": "user", "content": "how are you"}]
+    assert seen[1]["body"]["model"] == "m1" and seen[1]["body"]["max_tokens"] == 32
     assert "hello" in out and "fine" in out
     assert any("12.5 tok/s" in line for line in out)
+
+
+def test_a_streaming_gateway_prints_each_piece_before_the_rate_line(gateway):
+    """DH-P7-07 / issue 95: the REPL prints tokens as they arrive - the three piece
+    writes land before the rate line, and the streamed text joins the history."""
+    url, seen, replies = gateway
+    final = {"usage": {"prompt_tokens": 3, "completion_tokens": 3},
+             "timings": {"tokens_per_s": 42.0}}
+    replies += [[200, ["To", "ken", "ize", final]]]
+    out = run(url, ["hi"])
+    assert out == ["To", "ken", "ize", "[42.0 tok/s]"]
+    assert seen[0]["body"]["stream"] is True
 
 
 def test_the_repl_sends_greedy_sampling_temperature_0(gateway):
