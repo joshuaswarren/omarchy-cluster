@@ -201,14 +201,22 @@ def choose_split(layer_ms, caps, n_layers):
     """Per-rank layer counts (rank order) that minimise the decode step, the
     sum over ranks of layers x measured ms per layer: every rank keeps one
     layer and the rest go to the cheapest ranks first, up to each rank's
-    layer cap. None when the caps cannot hold n_layers."""
+    layer cap. None when the caps cannot hold n_layers.
+
+    Clamped so no rank holds fewer than a quarter of the layers unless its
+    memory cap forbids more: config-only timing on quantized-random weights
+    distorts the relative speeds and produced [1, 47] (issue #108)."""
     size = len(layer_ms)
     if n_layers < size or min(caps) < 1 or sum(caps) < n_layers:
         return None
-    split, left = [1] * size, n_layers - size
+    floor = max(1, -(-n_layers // 4))  # ceil(n_layers / 4)
+    if floor * size > n_layers:
+        floor = 1  # tiny model or many ranks: imbalance is inherent, not timing
+    split, left = [min(floor, c) for c in caps], n_layers - sum(min(floor, c) for c in caps)
     for r in sorted(range(size), key=lambda r: (layer_ms[r], r)):
-        split[r] += min(left, caps[r] - 1)
-        left -= split[r] - 1
+        extra = min(left, caps[r] - split[r])
+        split[r] += extra
+        left -= extra
     return split
 
 

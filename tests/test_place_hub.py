@@ -69,14 +69,27 @@ def test_plan_infeasible_when_stages_together_cannot_hold_the_model():
 
 
 def test_choose_split_puts_layers_on_the_cheapest_rank_up_to_its_cap():
-    # measured: desktop 1.0 ms/layer, laptop 8.2 ms/layer
-    assert planner.choose_split([1.0, 8.2], [120, 200], 27) == [26, 1]
-    assert planner.choose_split([8.2, 1.0], [120, 200], 27) == [1, 26]
+    # measured: desktop 1.0 ms/layer, laptop 8.2 ms/layer; the #108 clamp keeps
+    # each rank at ceil(27/4)=7 layers minimum unless its cap forbids it.
+    assert planner.choose_split([1.0, 8.2], [120, 200], 27) == [20, 7]
+    assert planner.choose_split([8.2, 1.0], [120, 200], 27) == [7, 20]
     assert planner.choose_split([1.0, 8.2], [20, 200], 27) == [20, 7]  # memory cap binds
     assert planner.choose_split([2.0, 1.0, 3.0], [5, 10, 30], 27) == [5, 10, 12]
-    assert planner.choose_split([1.0, 1.0], [30, 30], 27) == [26, 1]  # tie: lower rank first
+    assert planner.choose_split([1.0, 1.0], [30, 30], 27) == [20, 7]  # tie: lower rank first
     assert planner.choose_split([1.0, 8.2], [10, 10], 27) is None
     assert planner.choose_split([1.0, 8.2], [27, 0], 27) is None
+
+
+def test_choose_split_clamps_imbalance_from_config_only_timing():
+    # Issue #108: config-only timing (quantized random weights) read 11.90 vs 6.98
+    # ms/layer and produced [1, 47]; real weights are far closer. The clamp keeps
+    # every rank at a quarter of the layers unless its memory cap forbids it.
+    assert planner.choose_split([11.9, 6.98], [48, 48], 48) == [12, 36]
+    assert planner.choose_split([11.9, 6.98], [60, 60], 48) == [12, 36]
+    assert planner.choose_split([6.98, 11.9], [48, 48], 48) == [36, 12]
+    # caps below the floor still bind: the split degrades to what memory allows
+    assert planner.choose_split([11.9, 6.98], [1, 47], 48) == [1, 47]
+    assert planner.choose_split([2.0, 1.0, 3.0], [5, 10, 30], 27) == [5, 10, 12]  # rank0 cap 5 binds below floor 7
 
 
 def test_max_layers_counts_weights_and_kv_per_layer():
