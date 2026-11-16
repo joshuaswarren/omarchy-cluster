@@ -50,6 +50,8 @@ def ssh_run(target, command, stdin=None):
                            capture_output=True, timeout=600, **feed)
     except subprocess.TimeoutExpired:
         raise BootstrapError("ssh to %s timed out after 600 s running: %s" % (target, command))
+    except OSError as e:
+        raise BootstrapError("ssh to %s failed before answering (%s: %s)" % (target, type(e).__name__, e))
     err = r.stderr.decode(errors="replace")
     if r.returncode == 255 and "Host key verification failed" in err:
         raise BootstrapError("ssh cannot verify the host key of %s: run `ssh %s` once yourself and verify the key it "

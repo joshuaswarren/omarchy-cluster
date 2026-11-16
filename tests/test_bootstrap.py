@@ -147,6 +147,16 @@ def test_an_ssh_timeout_becomes_a_bootstrap_error(src, monkeypatch):
     assert "node1" in str(e.value)
 
 
+def test_an_ssh_oserror_becomes_a_bootstrap_error(src, monkeypatch):
+    """A missing ssh binary or socket failure must not leak OSError (review on #58)."""
+    def exploding_run(*a, **kw):
+        raise FileNotFoundError(2, "No such file or directory", "ssh")
+    monkeypatch.setattr(bootstrap.subprocess, "run", exploding_run)
+    with pytest.raises(bootstrap.BootstrapError) as e:
+        bootstrap.ssh_run("me@node1", "uname -s")
+    assert "FileNotFoundError" in str(e.value) and "node1" in str(e.value)
+
+
 def test_macos_needs_no_avahi(src):
     ssh = FakeSsh(os_name="Darwin", avahi=False)
     run_bootstrap(ssh, src)
