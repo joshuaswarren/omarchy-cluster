@@ -245,8 +245,7 @@ class Gateway(BaseHTTPRequestHandler):
                         loaded = (json.loads(r.read()) or {}).get("model")
                 except Exception:  # noqa: BLE001 - an unreachable engine stays the engine's 502 path
                     loaded = None
-                if loaded and not (asked == loaded or str(loaded).endswith("/" + str(asked))
-                                   or str(loaded).endswith(str(asked))):
+                if loaded and not (asked == loaded or str(loaded).rsplit("/", 1)[-1] == str(asked)):
                     return self._json(400, {"error": "gateway has %s loaded; refusing request for %s"
                                              % (loaded, asked)})
         except (ValueError, TypeError, OverflowError) as e:

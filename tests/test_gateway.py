@@ -179,6 +179,7 @@ def status_engine(status):
 @pytest.mark.parametrize("asked,loaded", [
     ("mlx-community/other", "mlx-community/mini"),
     ("mlx-community/mini", "mlx-community/other"),
+    ("xmini", "mlx-community/mini"),
 ])
 def test_a_request_for_another_model_is_refused_with_both_names(asked, loaded, monkeypatch, http_server):
     engine = http_server(status_engine({"ok": True, "model": loaded}))
