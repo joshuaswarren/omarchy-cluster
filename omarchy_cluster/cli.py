@@ -340,10 +340,11 @@ def links_table(links):
             rtt = rtt_str(r)
             dec = "decode-ok" if r.get("eligible_for_decode") else "NO-DECODE"
             tags = ("  TB" if r.get("thunderbolt") else "") + ("  RDMA" if r.get("rdma_capable") else "")
-            lines.append(" %s %-6s %s:%-15s -> %s:%-15s  %s/%s Gb/s  rtt %s  %s%s%s" % (
+            lines.append(" %s %-6s %s:%-15s -> %s:%-15s  %s/%s Gb/s  rtt %s  %s%s%s  %s" % (
                 mark, r["media"], r["a_iface"], r["a_ip"], r["b_iface"], r["b_ip"],
                 g1, g2, rtt, dec, tags,
-                "" if not is_pin else "  PINNED"))
+                "" if not is_pin else "  PINNED",
+                probe_mod.link_label(r)))
         if not pair["routes"]:
             lines.append("  (no routes)")
     return "\n".join(lines)
