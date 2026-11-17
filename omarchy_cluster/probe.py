@@ -40,7 +40,7 @@ def candidate_routes(a, b):
             seen.add((ipa, ipb))
             wireless = bool(ifa.get("wireless") or ifb.get("wireless"))
             ts = _is_tailscale(ipa) or _is_tailscale(ipb)
-            routes.append({
+            route = {
                 "a_node": a["name"], "b_node": b["name"],
                 "a_iface": ifa["name"], "a_ip": ipa,
                 "b_iface": ifb["name"], "b_ip": ipb,
@@ -50,8 +50,32 @@ def candidate_routes(a, b):
                 "rdma_capable": bool(ifa.get("rdma") and ifb.get("rdma")),
                 "rtt_tcp_ms": None, "rtt_udp_ms": None,
                 "gbps_a2b": None, "gbps_b2a": None,
-            })
+            }
+            route["link_class"] = link_class(route)
+            routes.append(route)
     return routes
+
+
+def link_class(route):
+    """What the link is, in plain words: a direct cable, the wired network, or Wi-Fi."""
+    if route.get("thunderbolt"):
+        return "cable"
+    if route.get("media") == "wifi":
+        return "wifi"
+    return "network"
+
+
+def link_label(route):
+    """One plain-words label for the link: class plus a measured-speed word.
+    'Fastest' always requires a measurement, never an interface-name guess."""
+    if route.get("errors"):
+        return "slow or broken — check the cable"
+    cls = route.get("link_class") or link_class(route)
+    if cls == "wifi":
+        return "Wi-Fi — slower"
+    if measured_gbps(route) <= 0:
+        return cls
+    return "cable — fastest" if cls == "cable" else "network — fast"
 
 
 def _agent_addr(nodes, name):
