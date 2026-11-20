@@ -155,8 +155,9 @@ ranks still need `mlx` and `mlx-lm` in a Python the agent can use. Use ssh keys;
 - The agent control plane is TLS with pinned keys. The gateway (:8020), the engine and the
   rank ring are still plain HTTP over your LAN, with no per-user auth: prompts and answers
   cross the LAN unencrypted. This is a homelab trust model. Run it on a network you trust.
-- llama.cpp's `ggml-rpc-server` has no authentication. Bind it to one address on a
-  network you trust (the engine does this when the agent starts it).
+- llama.cpp's `ggml-rpc-server` has no authentication. For a cross-host link,
+  [keep RPC on loopback and wrap it in mutual TLS](docs/secure-rpc.md). This
+  does not encrypt the gateway or engine HTTP APIs.
 
 ## Quickstart: two machines
 
@@ -212,8 +213,8 @@ paths. The [GGUF example](receipts/2026-10-16-muse-spark-llamacpp-rpc) gives
 the complete commands for a three-machine run. For MLX across four Macs,
 see [the MLX example](receipts/2026-10-16-muse-spark-mlx-full62/README.md).
 
-RPC servers have no authentication. Keep them on a trusted network and bind
-them to the address you intend to expose.
+RPC servers have no authentication. Keep raw RPC on loopback and use the
+[mutual TLS recipe](docs/secure-rpc.md) to connect hosts.
 
 ## Documentation
 
