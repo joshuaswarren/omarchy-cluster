@@ -542,3 +542,63 @@ def test_a_non_stream_request_stays_one_json_body(monkeypatch, http_server):
         assert not r.headers["Content-Type"].startswith("text/event-stream")
         body = json.load(r)
     assert body["choices"][0]["message"]["content"] == "x"
+
+
+def json_engine(reply):
+    """A JSON-only engine: it ignores `stream` and answers /generate with one JSON
+    body — the llama.cpp and sushi reply shape (issue 120)."""
+
+    class Engine(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = json.dumps(reply).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    return Engine
+
+
+def _stream_lines(gateway):
+    request = urllib.request.Request(
+        base_url(gateway) + "/v1/chat/completions",
+        data=json.dumps({"messages": [{"role": "user", "content": "hi"}], "stream": True}).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=2) as r:
+        assert r.headers["Content-Type"].startswith("text/event-stream")
+        return [raw.decode(errors="replace").strip() for raw in r if raw.strip()]
+
+
+def test_stream_over_a_json_only_engine_delivers_the_completion(monkeypatch, http_server):
+    """llama.cpp and sushi answer /generate with one JSON object even when stream=true
+    (issue 120): the gateway must still emit the text, the usage event and [DONE]."""
+    engine = http_server(json_engine({
+        "text": "sushi says hi", "prompt_tokens": 4, "completion_tokens": 3,
+        "prefill_ms": 1.0, "decode_ms": 2.0, "tokps": 1.5, "finish_reason": "stop"}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    lines = _stream_lines(gateway)
+    events = [json.loads(line[6:]) for line in lines
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    deltas = [e["choices"][0]["delta"]["content"] for e in events if "choices" in e]
+    assert deltas == ["sushi says hi"]
+    finals = [e for e in events if "choices" not in e]
+    assert finals and finals[0]["usage"]["completion_tokens"] == 3
+    assert lines[-1] == "data: [DONE]"
+
+
+def test_stream_over_a_json_only_engine_relays_an_engine_error(monkeypatch, http_server):
+    """A JSON error reply on a streamed request becomes the error event, then [DONE]."""
+    engine = http_server(json_engine({"error": "llama-server: out of slots"}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    lines = _stream_lines(gateway)
+    events = [json.loads(line[6:]) for line in lines
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    assert events[0]["error"] == "llama-server: out of slots"
+    assert lines[-1] == "data: [DONE]"

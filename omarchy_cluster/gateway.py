@@ -277,11 +277,14 @@ class Gateway(BaseHTTPRequestHandler):
                 self.end_headers()
                 now = int(time.time())
                 with urllib.request.urlopen(rq, timeout=600) as r:
-                    for raw in r:
-                        line = raw.decode(errors="replace").strip()
-                        if not line.startswith("data: "):
-                            continue
-                        item = json.loads(line[6:])
+                    if "text/event-stream" in r.headers.get("Content-Type", ""):
+                        items = _sse_items(r)
+                    else:
+                        # JSON-only engines (llama.cpp, sushi) ignore `stream`; replay
+                        # their reply as a chunk + final event so callers still get the
+                        # completion (issue 120).
+                        items = _json_reply_items(json.loads(r.read()))
+                    for item in items:
                         if "chunk" in item:
                             body = json.dumps({"id": "chatcmpl-omarchy-%d" % now, "created": now,
                                                "model": req.get("model", "omarchy-cluster"),
@@ -356,6 +359,27 @@ def _error_text(http_error):
         return json.loads(http_error.read())["error"]
     except (ValueError, KeyError, TypeError):
         return str(http_error)
+
+
+def _sse_items(response):
+    """Yield parsed JSON payloads from an engine's SSE data: lines."""
+    for raw in response:
+        line = raw.decode(errors="replace").strip()
+        if line.startswith("data: "):
+            yield json.loads(line[6:])
+
+
+def _json_reply_items(res):
+    """Replay a non-SSE /generate reply as a chunk item plus a final item, so
+    JSON-only engines (llama.cpp, sushi) still satisfy the stream contract."""
+    if not isinstance(res, dict):
+        yield {"error": "engine: malformed reply"}
+        return
+    if res.get("error") or res.get("client_error"):
+        yield {"error": res.get("error") or "engine error"}
+        return
+    yield {"chunk": res.get("text") or ""}
+    yield res
 
 
 def _number(req, key, lo, hi, lo_open=False):
