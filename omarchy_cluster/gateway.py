@@ -379,7 +379,7 @@ def _json_reply_items(res, engine="engine"):
         return
     if res.get("error") or res.get("client_error"):
         err = res.get("error")
-        if err is None:
+        if not err:
             client_error = res.get("client_error")
             err = client_error if isinstance(client_error, str) \
                 else "%s: client error" % engine
