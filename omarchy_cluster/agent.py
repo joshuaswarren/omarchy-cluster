@@ -267,10 +267,19 @@ def rank_start(req):
     # A pipeline rank's GPU queue can wait on a long ring operation (a 256-token prefill over 62 layers takes about 40 s).
     # omarchy-mlx stops a timeline wait that makes no progress for 10 s by default; the first wait in the process sets the limit.
     env.setdefault("MLX_OMARCHY_HANG_NO_PROGRESS_NS", "120000000000")
-    # Honeykrisp caps one process at a heap of 50% of RAM unless HK_SYSMEM says otherwise: a 16 GB M1 stopped at 8.07 GB (issue 11).
+    # Borealis (the renamed Honeykrisp driver) caps one process at a heap of 50% of RAM unless HK_SYSMEM
+    # / BRL_SYSMEM says otherwise: a 16 GB M1 stopped at 8.07 GB (issue 11). Set both spellings: pre-rename
+    # drivers read HK_, renamed ones read BRL_ (Ryan 2026-11-20).
     # The placement planner budgets free RAM, so the heap must not be the lower limit. A request or the environment may still set it.
     if sys.platform == "linux":
-        env.setdefault("HK_SYSMEM", str(facts_mod.memory_total_bytes()))
+        sysmem = str(facts_mod.memory_total_bytes())
+        if "HK_SYSMEM" in env and "BRL_SYSMEM" not in env:
+            env["BRL_SYSMEM"] = env["HK_SYSMEM"]
+        elif "BRL_SYSMEM" in env and "HK_SYSMEM" not in env:
+            env["HK_SYSMEM"] = env["BRL_SYSMEM"]
+        else:
+            env.setdefault("HK_SYSMEM", sysmem)
+            env.setdefault("BRL_SYSMEM", sysmem)
     if req.get("pythonpath"):
         env["PYTHONPATH"] = ":".join(
             os.path.expanduser(p) for p in req["pythonpath"].split(":") if p)
@@ -352,7 +361,7 @@ def rpc_start(req):
 
 def gpu_cap(req=None):
     """Bytes one process can allocate on this node's Vulkan GPU (vkprobe), cached per
-    boot. Run with HK_SYSMEM at the machine's RAM so the address space, not the heap
+    boot. Run with HK_SYSMEM/BRL_SYSMEM at the machine's RAM so the address space, not the heap
     setting, is what stops it. {"alloc_cap_bytes": None} where there is no such GPU."""
     if sys.platform != "linux":
         return {"alloc_cap_bytes": None}
@@ -365,7 +374,8 @@ def gpu_cap(req=None):
             return cached
     except (OSError, ValueError):
         pass
-    env = dict(os.environ, HK_SYSMEM=str(facts_mod.memory_total_bytes()),
+    sysmem = str(facts_mod.memory_total_bytes())
+    env = dict(os.environ, HK_SYSMEM=sysmem, BRL_SYSMEM=sysmem,
                PYTHONPATH=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     # never push the node past its headroom: blocks beyond free RAM take real memory
     spare_gib = max(1, int((facts_mod.memory_free_bytes() - 6_000_000_000) // (1 << 30)))

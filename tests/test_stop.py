@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -342,6 +343,9 @@ def test_rank_start_lifts_the_gpu_heap_to_the_nodes_ram_unless_set(tmp_path, mon
     assert seen["env"]["HK_SYSMEM"] == "16221847552"
     agent.rank_start(dict(req, env={"HK_SYSMEM": "60000000000"}))
     assert seen["env"]["HK_SYSMEM"] == "60000000000"
+    agent.rank_start(dict(req, env={"HK_SYSMEM": "70000000000", "BRL_SYSMEM": "80000000000"}))
+    assert seen["env"]["HK_SYSMEM"] == "70000000000"
+    assert seen["env"]["BRL_SYSMEM"] == "80000000000"
     monkeypatch.setenv("HK_SYSMEM", "9000000000")
     agent.rank_start(req)
     assert seen["env"]["HK_SYSMEM"] == "9000000000"
@@ -350,6 +354,38 @@ def test_rank_start_lifts_the_gpu_heap_to_the_nodes_ram_unless_set(tmp_path, mon
     agent.rank_start(req)
     assert "HK_SYSMEM" not in seen["env"]
 
+
+
+@pytest.mark.parametrize(("key", "counterpart"), [
+    ("HK_SYSMEM", "BRL_SYSMEM"),
+    ("BRL_SYSMEM", "HK_SYSMEM"),
+])
+@pytest.mark.parametrize("inherited", [False, True])
+def test_rank_start_mirrors_a_single_borealis_heap_setting(tmp_path, monkeypatch, key, counterpart, inherited):
+    from omarchy_cluster import agent
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HK_SYSMEM", raising=False)
+    monkeypatch.delenv("BRL_SYSMEM", raising=False)
+    monkeypatch.setattr(agent.sys, "platform", "linux")
+    monkeypatch.setattr(agent.facts_mod, "memory_total_bytes", lambda: 16_000_000_000)
+    seen = {}
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            seen["env"] = kw["env"]
+            self.pid = 1
+
+    monkeypatch.setattr(agent.subprocess, "Popen", FakePopen)
+    req = {"rank": 0, "model": "m", "layers": "", "hostfile_content": "[]", "python": "/bin/true"}
+    value = "60000000000"
+    if inherited:
+        monkeypatch.setenv(key, value)
+    else:
+        req["env"] = {key: value}
+
+    agent.rank_start(req)
+    assert seen["env"][key] == value
+    assert seen["env"][counterpart] == value
 
 def test_gateway_returns_engine_error_as_502_not_empty_reply():
     """The engine answers {"error": ...} when generation raises. The gateway
