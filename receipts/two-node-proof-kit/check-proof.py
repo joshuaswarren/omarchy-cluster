@@ -129,14 +129,36 @@ def rpc_received(path):
         raise ValueError('expected one active test RPC connection with byte counters')
     return int(counts[0])
 
+UFW_ACTIVE = re.compile(r'(?m)^Status: active$')
+PROOF_RULE = re.compile(r'(?m)^\[ *\d+\] 24861/tcp +ALLOW IN +\d{1,3}(?:\.\d{1,3}){3} +# cluster-proof-[0-9a-f]{16}$')
+
+
+def check_firewall(mac):
+    snapshots = {}
+    for stage in ('before', 'during', 'after'):
+        path = mac / f'ufw-{stage}.txt'
+        if not path.is_file():
+            raise ValueError(f'firewall: missing ufw-{stage}.txt')
+        snapshots[stage] = path.read_bytes().decode(errors='replace')
+    before, during, after = snapshots['before'], snapshots['during'], snapshots['after']
+    if not UFW_ACTIVE.search(before):
+        raise ValueError('firewall: UFW was not active before the run')
+    if re.search(r'\b24861\b', before):
+        raise ValueError('firewall: a rule for port 24861 existed before the run')
+    if not UFW_ACTIVE.search(during) or not PROOF_RULE.search(during):
+        raise ValueError('firewall: the scoped 24861/tcp proof rule was not active during the run')
+    if after != before:
+        raise ValueError('firewall not restored')
+    return True
+
+
 def verify(mac, spark):
     if any((root / 'exit-code').read_text().strip() != '0' for root in (mac, spark)):
         raise ValueError('proof or teardown failed on at least one host')
     run_ids = [(root / 'run-ca.sha256').read_text().strip() for root in (mac, spark)]
     if run_ids[0] != run_ids[1] or not re.fullmatch(r'[0-9a-f]{64}', run_ids[0]):
         raise ValueError('run receipts use different test CAs')
-    if (mac / 'ufw-before.txt').read_bytes() != (mac / 'ufw-after.txt').read_bytes():
-        raise ValueError('firewall not restored')
+    check_firewall(mac)
     single_mac, single_spark, shared = (parse_arm(root, name) for root, name in ((mac, 'mac'), (spark, 'spark'), (spark, 'shared')))
     check_parity([single_mac['ids_sha256'], single_spark['ids_sha256'], shared['ids_sha256']])
     check_llama_versions(

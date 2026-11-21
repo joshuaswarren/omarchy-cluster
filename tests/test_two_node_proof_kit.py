@@ -216,3 +216,73 @@ def test_check_reads_llama_server_version_from_stderr(tmp_path):
         capture_output=True, text=True, timeout=60, check=False,
     )
     assert "PASS llama-server version readable" in result.stdout, result.stdout + result.stderr
+
+
+UFW_BEFORE = """Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 22/tcp                     ALLOW IN    Anywhere
+"""
+UFW_DURING = UFW_BEFORE + "[ 2] 24861/tcp                  ALLOW IN    192.0.2.11                 # cluster-proof-0123456789abcdef\n"
+ENGINE_LOG = """llama_prepare_model_devices: using device CUDA0 (NVIDIA GB10)
+llama_prepare_model_devices: using device RPC0 (127.0.0.1:24864)
+load_tensors: offloaded 29/29 layers to GPU
+load_tensors:        CUDA0 model buffer size =   512.00 MiB
+"""
+
+
+def write_receipts(tmp_path):
+    """Write a complete, passing Mac and Spark receipt pair for verify()."""
+    mac, spark = tmp_path / "mac", tmp_path / "spark"
+    ids = list(range(64))
+    write_arm(mac, "mac", ids)
+    write_arm(spark, "spark", ids)
+    write_arm(spark, "shared", ids)
+    for root in (mac, spark):
+        (root / "exit-code").write_text("0\n")
+        (root / "run-ca.sha256").write_text("c" * 64 + "\n")
+        (root / "llama-version.txt").write_text(REAL_LLAMA_VERSION)
+    (mac / "ufw-before.txt").write_text(UFW_BEFORE)
+    (mac / "ufw-during.txt").write_text(UFW_DURING)
+    (mac / "ufw-after.txt").write_text(UFW_BEFORE)
+    (mac / "mac-start.utc").write_text("2026-11-21T10:00:00.000000Z\n")
+    (mac / "mac-end.utc").write_text("2026-11-21T10:00:10.000000Z\n")
+    (spark / "shared-start.utc").write_text("2026-11-21T10:01:00.000000Z\n")
+    (spark / "shared-end.utc").write_text("2026-11-21T10:01:10.000000Z\n")
+    (mac / "gpu.tsv").write_text(
+        "2026-11-21T10:00:01.000000Z 100 1\n2026-11-21T10:00:05.000000Z 900 9\n"
+        "2026-11-21T10:01:01.000000Z 1000 10\n2026-11-21T10:01:05.000000Z 2000 20\n"
+    )
+    (spark / "shared-engine.log").write_text(ENGINE_LOG)
+    (spark / "shared.pid").write_text("4242\n")
+    (spark / "gpu-mem.csv").write_text("2026/11/21 10:01:02.000, 4242, 700\n")
+    (spark / "shared-rpc-before.txt").write_text("cubic bytes_received:100 segs_out:3\n")
+    (spark / "shared-rpc-after.txt").write_text("cubic bytes_received:900 segs_out:9\n")
+    return mac, spark
+
+
+def test_verify_passes_a_complete_receipt_pair(tmp_path):
+    result = load_verifier().verify(*write_receipts(tmp_path))
+    assert result["exact_token_parity"] is True
+    assert result["firewall_restored"] is True
+
+
+def test_verify_rejects_firewall_evidence_that_proves_nothing(tmp_path):
+    verifier = load_verifier()
+    mac, spark = write_receipts(tmp_path)
+    leaked = UFW_BEFORE + "[ 2] 24861/tcp                  ALLOW IN    Anywhere\n"
+    cases = [
+        ({"before": "", "after": ""}, "not active"),
+        ({"before": "Status: inactive\n", "after": "Status: inactive\n"}, "not active"),
+        ({"before": leaked, "after": leaked}, "24861 existed"),
+        ({"during": UFW_BEFORE}, "proof rule"),
+        ({"during": UFW_DURING.replace("192.0.2.11", "Anywhere")}, "proof rule"),
+        ({"after": UFW_DURING}, "not restored"),
+    ]
+    for files, message in cases:
+        for stage, text in {"before": UFW_BEFORE, "during": UFW_DURING, "after": UFW_BEFORE, **files}.items():
+            (mac / f"ufw-{stage}.txt").write_text(text)
+        expect_value_error(verifier.verify, mac, spark, match=message)
+    (mac / "ufw-during.txt").unlink()
+    expect_value_error(verifier.verify, mac, spark, match="missing ufw-during.txt")

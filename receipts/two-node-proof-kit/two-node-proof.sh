@@ -168,6 +168,9 @@ cleanup() {
         own=0; owns_rule || own=$?
         if [[ $own == 0 ]]; then sudo -n ufw --force delete "${rule[@]}" > "$out/ufw-delete.txt" 2>&1 || rc=75; fi
         [[ $own != 2 ]] || rc=75
+    fi
+    # Snapshot on every exit path after the before-snapshot, also when no rule was added yet.
+    if [[ -f $out/ufw-before.txt ]]; then
         sudo -n ufw status numbered > "$out/ufw-after.txt" || rc=75
         cmp -s "$out/ufw-before.txt" "$out/ufw-after.txt" || rc=75
     fi
