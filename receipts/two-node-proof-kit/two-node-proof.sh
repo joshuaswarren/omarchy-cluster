@@ -8,18 +8,28 @@ usage() {
 Usage (fresh OUT and disposable TLS directories; run once on each host):
   two-node-proof.sh mac   SOURCE GGUF OUT LLAMA_SERVER TLS M2_IP RPC_SERVER SPARK_IP
   two-node-proof.sh spark SOURCE GGUF OUT LLAMA_SERVER TLS M2_IP
-SOURCE: Git checkout containing v0.3.5 plus merged PR #117.
-GGUF: exact Qwen3-1.7B-Q4_K_M.gguf. LLAMA_SERVER and RPC_SERVER must be compatible RPC builds.
+  two-node-proof.sh --check mac   SOURCE GGUF OUT LLAMA_SERVER TLS M2_IP RPC_SERVER SPARK_IP
+  two-node-proof.sh --check spark SOURCE GGUF OUT LLAMA_SERVER TLS M2_IP
+SOURCE: git checkout containing commit 10a47b69df53f60b1e9b3f67aa5092fdff2c4562
+        (git clone https://github.com/joshuaswarren/omarchy-cluster; git fetch origin 10a47b69df53f60b1e9b3f67aa5092fdff2c4562).
+GGUF: exact Qwen3-1.7B-Q4_K_M.gguf, sha256 d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5.
+LLAMA_SERVER and RPC_SERVER: llama.cpp builds from the SAME upstream commit on both hosts,
+        built with GGML_RPC=ON (Mac also GGML_VULKAN=ON, Spark also GGML_CUDA=ON). The kit records
+        each host's llama-server version; the verifier fails when the two differ.
 TLS: generate a NEW dedicated CA for each pair per the secure-RPC recipe (cluster-m2-rpc and
-cluster-spark-client). Supply ca.crt and only the local role's key and cert; removed after preflight.
+        cluster-spark-client). Supply ca.crt and only the local role's key and cert; removed after preflight.
+        The TLS directory must be mode 700 and the private key mode 600.
 On Mac wait for READY; then start Spark. After Spark finishes, signal Mac with Ctrl-C to retire early.
 Mac requires an exclusive GPU window, Vulkan0, AGX busy counters, and sudo -n UFW. Spark needs CUDA0
 and per-process nvidia-smi pmon. Both require synchronized clocks (timedatectl), Bash, Python with venv,
 pip, system setuptools/wheel, socat (or set SOCAT), OpenSSL, curl, jq, ss, setsid, Git, tar, and pgrep.
-Reserve ports 24820, 24831–24832 and 24860–24864; do not change UFW concurrently.
+Reserve ports 24820, 24831-24832 and 24860-24864; do not change UFW concurrently.
+--check runs every prerequisite check and prints one PASS/FAIL line per item; it changes nothing.
 EOF
 }
 if [[ ${1:-} == --help ]]; then usage; exit 0; fi
+check_only=0
+if [[ ${1:-} == --check ]]; then check_only=1; shift; fi
 case ${1:-}:$# in mac:9|spark:7) ;; *) usage >&2; exit 2 ;; esac
 mode=$1
 src=$(realpath "$2")
@@ -33,6 +43,75 @@ if [[ $mode == mac ]]; then peer=m2; rpc=$(realpath "$8"); spark=$9; fi
 base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 commit=10a47b69df53f60b1e9b3f67aa5092fdff2c4562
 socat=$(command -v "${SOCAT:-socat}")
+
+run_checks() {
+    local fails=0
+    say() { if [[ $2 == ok ]]; then printf 'PASS %s\n' "$1"; else printf 'FAIL %s\n' "$1"; fails=$((fails + 1)); fi; }
+    local label
+    if [[ -d $src ]] && git -C "$src" cat-file -e "$commit" 2>/dev/null; then say 'source commit present' ok; else say 'source commit present' no; fi
+    if [[ -f $model ]]; then say 'model file present' ok; else say 'model file present' no; fi
+    if [[ -f $model ]] && printf '%s  %s\n' d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5 "$model" | sha256sum -c --status; then
+        say 'model sha256 matches' ok
+    else
+        say 'model sha256 matches' no
+    fi
+    if [[ ! -e $out ]]; then say 'output directory is fresh' ok; else say 'output directory is fresh' no; fi
+    if [[ -x $llama ]]; then say 'llama-server executable' ok; else say 'llama-server executable' no; fi
+    if [[ -x $llama ]] && "$llama" --version 2>/dev/null | grep -Eq 'version: .*commit: [0-9a-f]+'; then
+        say 'llama-server version readable' ok
+    else
+        say 'llama-server version readable' no
+    fi
+    if [[ -n $socat ]] && "$socat" -V 2>&1 | grep -q WITH_OPENSSL; then say 'socat with OpenSSL' ok; else say 'socat with OpenSSL' no; fi
+    local tool missing=''
+    for tool in curl jq ss setsid pgrep git tar openssl python3; do command -v "$tool" >/dev/null || missing="$missing $tool"; done
+    if [[ -z $missing ]]; then say 'required tools present' ok; else say "required tools present (missing:$missing)" no; fi
+    local probe
+    probe=$(mktemp -d)
+    if python3 -m venv --system-site-packages "$probe/venv" >/dev/null 2>&1 && "$probe/venv/bin/python" -m pip --version >/dev/null 2>&1; then
+        say 'python venv with pip' ok
+    else
+        say 'python venv with pip' no
+    fi
+    rm -rf "$probe"
+    if [[ $(timedatectl show -p NTPSynchronized --value 2>/dev/null) == yes ]]; then say 'clock synchronized' ok; else say 'clock synchronized' no; fi
+    local busy=''
+    for p in "${ports[@]}"; do [[ -z $(ss -H -ltn "sport = :$p") ]] || busy="$busy $p"; done
+    if [[ -z $busy ]]; then say 'ports free' ok; else say "ports free (in use:$busy)" no; fi
+    local tls_ok=ok
+    [[ -d $tls && $(stat -c %a "$tls" 2>/dev/null) == 700 ]] || tls_ok=no
+    [[ -f $tls/$peer.key && $(stat -c %a "$tls/$peer.key" 2>/dev/null) == 600 ]] || tls_ok=no
+    for f in ca.crt "$peer.crt" "$peer.key"; do [[ -f $tls/$f && ! -L $tls/$f ]] || tls_ok=no; done
+    say 'TLS material and modes' "$tls_ok"
+    if python3 -c 'import ipaddress, sys; sys.exit(0 if all(not (a.is_loopback or a.is_unspecified or a.is_multicast) for a in map(ipaddress.IPv4Address, sys.argv[1:])) else 1)' "$m2" "${spark:-$m2}"; then
+        say 'peer addresses routable' ok
+    else
+        say 'peer addresses routable' no
+    fi
+    if sudo -n true 2>/dev/null; then say 'passwordless sudo' ok; else say 'passwordless sudo' no; fi
+    local avail_kib
+    avail_kib=$(df -Pk "$(dirname "$out")" | awk 'NR==2 {print $4}')
+    if [[ ${avail_kib:-0} -ge 2097152 ]]; then say 'disk space' ok; else say "disk space (${avail_kib:-0} KiB free)" no; fi
+    if [[ $mode == mac ]]; then
+        if [[ -r /sys/class/drm/renderD128/device/agx_stats ]]; then say 'AGX busy counters readable' ok; else say 'AGX busy counters readable' no; fi
+        if [[ -x ${rpc:-} ]]; then say 'RPC binary executable' ok; else say 'RPC binary executable' no; fi
+        if sudo -n ufw status 2>/dev/null | grep -q '^Status: active$'; then say 'UFW active' ok; else say 'UFW active' no; fi
+    else
+        if command -v nvidia-smi >/dev/null; then say 'nvidia-smi present' ok; else say 'nvidia-smi present' no; fi
+        local free_kib
+        free_kib=$(awk '$1 == "MemFree:" && $2 ~ /^[0-9]+$/ {print $2}' /proc/meminfo)
+        if [[ ${free_kib:-0} -ge 6291456 ]]; then say 'free memory above 6 GiB' ok; else say "free memory above 6 GiB (${free_kib:-0} KiB)" no; fi
+    fi
+    printf 'CHECKS %s\n' "$fails"
+    [[ $fails -eq 0 ]]
+}
+
+if [[ $check_only == 1 ]]; then
+    if [[ $mode == mac ]]; then ports=(24820 24831 24832 24860 24861); else ports=(24820 24831 24832 24864); fi
+    run_checks
+    exit $?
+fi
+
 python3 -c 'import ipaddress, sys; sys.exit(0 if all(not (a.is_loopback or a.is_unspecified or a.is_multicast) for a in map(ipaddress.IPv4Address, sys.argv[1:])) else "expected non-loopback IPv4 peer addresses")' "$m2" "${spark:-$m2}"
 [[ -x $llama && -d $src && -f $model && ! -e $out && -f $base/check-proof.py ]] || fail 'invalid binary, input, or output path'
 [[ $(stat -c %a "$tls") == 700 && $(stat -c %a "$tls/$peer.key") == 600 ]] || fail 'TLS directory and private key must have mode 700 and 600'
@@ -55,6 +134,7 @@ else
 fi
 for p in "${ports[@]}"; do [[ -z $(ss -H -ltn "sport = :$p") ]] || fail "port $p is in use"; done
 mkdir -- "$out"
+"$llama" --version > "$out/llama-version.txt" 2>&1 || true
 mkdir -- "$out/source" "$out/home"
 export HOME=$out/home
 unset XDG_STATE_HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME

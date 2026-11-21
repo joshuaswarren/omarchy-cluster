@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 TOKEN = re.compile(r'n_gen = (\d+), n_remaining = -?\d+, next token:\s+(\d+)')
-ID_SHA = '284de5541d2d52e9678ae8f832eb0efcb5d6c72fe605e653b84ddfb4976bf682'
+REFERENCE_ID_SHA = '284de5541d2d52e9678ae8f832eb0efcb5d6c72fe605e653b84ddfb4976bf682'
+ID_SHA = REFERENCE_ID_SHA  # kept for callers that pin our reference digest
 
 
 def parse_arm(root, name):
@@ -20,12 +21,36 @@ def parse_arm(root, name):
         raise ValueError(f'{name}: incomplete or duplicate decode log')
     ids = [token for _, token in pairs]
     digest = hashlib.sha256(json.dumps(ids, separators=(',', ':')).encode()).hexdigest()
-    if digest != ID_SHA:
-        raise ValueError(f'{name}: token IDs do not match the pinned reference (got {digest})')
     rate = response['timings']['tokens_per_s']
     if not math.isfinite(rate) or rate <= 0:
         raise ValueError(f'{name}: invalid decode rate')
-    return {'tokens': len(ids), 'ids_sha256': digest, 'decode_tokens_per_s': rate}
+    # The reference digest is our run, not a requirement: an outside tester's
+    # tokens may differ. Parity across the three arms is what the proof needs.
+    return {
+        'tokens': len(ids),
+        'ids_sha256': digest,
+        'matches_reference': digest == REFERENCE_ID_SHA,
+        'decode_tokens_per_s': rate,
+    }
+
+
+def check_parity(digests):
+    if len(set(digests)) != 1:
+        raise ValueError(f'token IDs differ between arms: {sorted(set(digests))}')
+    return True
+
+
+def check_llama_versions(mac_text, spark_text):
+    def fields(text):
+        version = re.search(r'version:\s*(\S+)', text)
+        commit = re.search(r'commit:\s*([0-9a-f]+)', text)
+        return (version.group(1) if version else None, commit.group(1) if commit else None)
+
+    mac, spark = fields(mac_text), fields(spark_text)
+    if mac != spark or mac == (None, None):
+        raise ValueError(f'llama-server builds differ between hosts: mac {mac}, spark {spark}')
+    return True
+
 
 
 def stamp(text):
@@ -101,6 +126,11 @@ def verify(mac, spark):
     if (mac / 'ufw-before.txt').read_bytes() != (mac / 'ufw-after.txt').read_bytes():
         raise ValueError('firewall not restored')
     single_mac, single_spark, shared = (parse_arm(root, name) for root, name in ((mac, 'mac'), (spark, 'spark'), (spark, 'shared')))
+    check_parity([single_mac['ids_sha256'], single_spark['ids_sha256'], shared['ids_sha256']])
+    check_llama_versions(
+        (mac / 'llama-version.txt').read_text(),
+        (spark / 'llama-version.txt').read_text(),
+    )
     single_mac['vulkan'] = agx(mac / 'gpu.tsv', window(mac, 'mac'))
     shared_window = window(spark, 'shared')
     shared['vulkan'] = agx(mac / 'gpu.tsv', shared_window)
