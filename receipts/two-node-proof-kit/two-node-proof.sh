@@ -59,7 +59,11 @@ run_checks() {
     fi
     if [[ ! -e $out ]]; then say 'output directory is fresh' ok; else say 'output directory is fresh' no; fi
     if [[ -x $llama ]]; then say 'llama-server executable' ok; else say 'llama-server executable' no; fi
-    if [[ -x $llama ]] && "$llama" --version 2>/dev/null | grep -Eq 'version: .*commit: [0-9a-f]+'; then
+    local probe
+    probe=$(mktemp -d)
+    # llama-server prints its version on stderr; check-proof.py owns the parser.
+    if [[ -x $llama ]] && { "$llama" --version > "$probe/version" 2>&1 || :; } &&
+        python3 "$base/check-proof.py" llama-build "$probe/version" >/dev/null 2>&1; then
         say 'llama-server version readable' ok
     else
         say 'llama-server version readable' no
@@ -68,8 +72,6 @@ run_checks() {
     local tool missing=''
     for tool in curl jq ss setsid pgrep git tar openssl python3; do command -v "$tool" >/dev/null || missing="$missing $tool"; done
     if [[ -z $missing ]]; then say 'required tools present' ok; else say "required tools present (missing:$missing)" no; fi
-    local probe
-    probe=$(mktemp -d)
     if python3 -m venv --system-site-packages "$probe/venv" >/dev/null 2>&1 && "$probe/venv/bin/python" -m pip --version >/dev/null 2>&1; then
         say 'python venv with pip' ok
     else
@@ -142,6 +144,7 @@ fi
 for p in "${ports[@]}"; do [[ -z $(ss -H -ltn "sport = :$p") ]] || fail "port $p is in use"; done
 mkdir -- "$out"
 "$llama" --version > "$out/llama-version.txt" 2>&1 || true
+python3 "$base/check-proof.py" llama-build "$out/llama-version.txt" > "$out/llama-build.json" || fail 'cannot read the llama-server version and commit'
 mkdir -- "$out/source" "$out/home"
 export HOME=$out/home
 unset XDG_STATE_HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME

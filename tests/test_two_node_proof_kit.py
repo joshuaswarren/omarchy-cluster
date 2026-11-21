@@ -2,9 +2,12 @@ import hashlib
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 KIT = Path(__file__).resolve().parents[1] / "receipts" / "two-node-proof-kit"
+# Real `llama-server --version` stderr from an upstream llama.cpp build at commit 19bc41d.
+REAL_LLAMA_VERSION = "version: 1.0.0-dev (build 1, commit 19bc41d)\nbuilt with GNU 12.2.0 for Linux x86_64\n"
 
 
 def load_verifier():
@@ -171,3 +174,45 @@ def test_check_reports_missing_parent_paths_instead_of_aborting(tmp_path):
     assert "FAIL model file present" in result.stdout
     assert "FAIL disk space" in result.stdout
     assert "CHECKS " in result.stdout
+
+
+def expect_value_error(call, *args, match):
+    try:
+        call(*args)
+    except ValueError as error:
+        assert match in str(error), str(error)
+    else:
+        raise AssertionError(f"expected ValueError containing {match!r}")
+
+
+def test_llama_build_reads_the_commit_from_real_llama_server_output():
+    verifier = load_verifier()
+    assert verifier.llama_build(REAL_LLAMA_VERSION) == {"version": "1.0.0-dev", "commit": "19bc41d"}
+    assert verifier.llama_build("version: 5123 (aaaaaaa)\nbuilt with cc for x86_64\n")["commit"] == "aaaaaaa"
+    expect_value_error(verifier.llama_build, "version: 1.0.0-dev\n", match="cannot read")
+
+
+def test_cross_host_llama_commit_mismatch_fails_loudly():
+    """Same version string, different commits: the old regex accepted this pair."""
+    verifier = load_verifier()
+    other = REAL_LLAMA_VERSION.replace("19bc41d", "deadbee")
+    assert verifier.check_llama_versions(REAL_LLAMA_VERSION, REAL_LLAMA_VERSION) is True
+    expect_value_error(verifier.check_llama_versions, REAL_LLAMA_VERSION, other, match="llama-server")
+    expect_value_error(verifier.check_llama_versions, "version: 5123 (aaaaaaa)\n", "version: 5123 (bbbbbbb)\n", match="llama-server")
+    expect_value_error(verifier.check_llama_versions, REAL_LLAMA_VERSION, "", match="cannot read")
+    # One clone can abbreviate the same commit with more hex digits than another.
+    assert verifier.check_llama_versions(REAL_LLAMA_VERSION, REAL_LLAMA_VERSION.replace("19bc41d", "19bc41db")) is True
+
+
+def test_check_reads_llama_server_version_from_stderr(tmp_path):
+    fake = tmp_path / "llama-server"
+    fake.write_text("#!/bin/sh\nprintf '%s' '" + REAL_LLAMA_VERSION + "' >&2\n")
+    fake.chmod(0o755)
+    tls = tmp_path / "tls"
+    tls.mkdir(mode=0o700)
+    result = subprocess.run(
+        ["bash", str(KIT / "two-node-proof.sh"), "--check", "spark", str(tmp_path / "src"), str(tmp_path / "m.gguf"),
+         str(tmp_path / "out"), str(fake), str(tls), "192.0.2.10"],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert "PASS llama-server version readable" in result.stdout, result.stdout + result.stderr

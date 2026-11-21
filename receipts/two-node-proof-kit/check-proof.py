@@ -40,17 +40,29 @@ def check_parity(digests):
     return True
 
 
-def check_llama_versions(mac_text, spark_text):
-    def fields(text):
-        version = re.search(r'version:\s*(\S+)', text)
-        commit = re.search(r'commit:\s*([0-9a-f]+)', text)
-        return (version.group(1) if version else None, commit.group(1) if commit else None)
+# Current builds print "version: 1.0.0-dev (build 1, commit 19bc41d)"; older ones "version: 5123 (19bc41d)".
+LLAMA_VERSION = re.compile(r'\bversion:\s*(\S+)')
+LLAMA_COMMIT = (
+    re.compile(r'\bcommit:?\s+([0-9a-f]{7,40})\b'),
+    re.compile(r'\bversion:\s*\S+\s+\(([0-9a-f]{7,40})\)'),
+)
 
-    mac, spark = fields(mac_text), fields(spark_text)
-    if mac != spark or mac == (None, None):
+
+def llama_build(text):
+    version = LLAMA_VERSION.search(text)
+    commit = next((match.group(1) for match in (pattern.search(text) for pattern in LLAMA_COMMIT) if match), None)
+    if version is None or commit is None:
+        raise ValueError(f'cannot read llama-server version and commit from {text.strip()[:200]!r}')
+    return {'version': version.group(1), 'commit': commit}
+
+
+def check_llama_versions(mac_text, spark_text):
+    mac, spark = llama_build(mac_text), llama_build(spark_text)
+    # The build number and abbreviation length depend on clone depth; the commit is the identity.
+    short, long = sorted((mac['commit'], spark['commit']), key=len)
+    if not long.startswith(short):
         raise ValueError(f'llama-server builds differ between hosts: mac {mac}, spark {spark}')
     return True
-
 
 
 def stamp(text):
@@ -146,10 +158,12 @@ def main():
     args = sys.argv[1:]
     if len(args) == 3 and args[0] == 'arm' and args[2] in ('mac', 'spark', 'shared'):
         result = parse_arm(Path(args[1]), args[2])
+    elif len(args) == 2 and args[0] == 'llama-build':
+        result = llama_build(Path(args[1]).read_text(errors='replace'))
     elif len(args) == 3 and args[0] == 'combine':
         result = verify(Path(args[1]), Path(args[2]))
     else:
-        raise SystemExit('usage: check-proof.py arm RUN {mac|spark|shared} | combine MAC_RUN SPARK_RUN')
+        raise SystemExit('usage: check-proof.py arm RUN {mac|spark|shared} | llama-build VERSION_FILE | combine MAC_RUN SPARK_RUN')
     print(json.dumps(result, indent=2))
 
 
