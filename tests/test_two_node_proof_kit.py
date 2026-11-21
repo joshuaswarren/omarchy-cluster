@@ -141,3 +141,33 @@ def test_check_reports_all_prerequisites_without_running_the_proof(tmp_path):
     assert "FAIL TLS material and modes" in result.stdout
     assert "CHECKS " in result.stdout
     assert not out.exists()
+
+
+def test_check_reports_missing_parent_paths_instead_of_aborting(tmp_path):
+    """--check must print FAIL lines, not crash, when a path parent does not exist."""
+    tls = tmp_path / "tls"
+    tls.mkdir(mode=0o700)
+    missing = tmp_path / "no-such-dir"
+    result = subprocess.run(
+        [
+            "bash",
+            str(KIT / "two-node-proof.sh"),
+            "--check",
+            "spark",
+            str(missing / "repo"),
+            str(missing / "model.gguf"),
+            str(missing / "out"),
+            str(missing / "llama-server"),
+            str(tls),
+            "192.0.2.10",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 2, result.stderr
+    assert "FAIL source commit present" in result.stdout
+    assert "FAIL model file present" in result.stdout
+    assert "FAIL disk space" in result.stdout
+    assert "CHECKS " in result.stdout

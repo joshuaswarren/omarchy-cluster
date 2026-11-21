@@ -32,14 +32,16 @@ check_only=0
 if [[ ${1:-} == --check ]]; then check_only=1; shift; fi
 case ${1:-}:$# in mac:9|spark:7) ;; *) usage >&2; exit 2 ;; esac
 mode=$1
-src=$(realpath "$2")
-model=$(realpath "$3")
-out=$(realpath -m "$4")
-llama=$(realpath "$5")
-tls=$(realpath "$6")
+# Portable: GNU realpath -m is missing on macOS, and --check must survive missing paths.
+abspath() { if [[ $1 == /* ]]; then printf '%s\n' "$1"; else printf '%s/%s\n' "$PWD" "$1"; fi; }
+src=$(abspath "$2")
+model=$(abspath "$3")
+out=$(abspath "$4")
+llama=$(abspath "$5")
+tls=$(abspath "$6")
 m2=$7
 peer=$mode
-if [[ $mode == mac ]]; then peer=m2; rpc=$(realpath "$8"); spark=$9; fi
+if [[ $mode == mac ]]; then peer=m2; rpc=$(abspath "$8"); spark=$9; fi
 base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 commit=10a47b69df53f60b1e9b3f67aa5092fdff2c4562
 socat=$(command -v "${SOCAT:-socat}" || true)
@@ -76,8 +78,12 @@ run_checks() {
     rm -rf "$probe"
     if [[ $(timedatectl show -p NTPSynchronized --value 2>/dev/null) == yes ]]; then say 'clock synchronized' ok; else say 'clock synchronized' no; fi
     local busy=''
-    for p in "${ports[@]}"; do [[ -z $(ss -H -ltn "sport = :$p") ]] || busy="$busy $p"; done
-    if [[ -z $busy ]]; then say 'ports free' ok; else say "ports free (in use:$busy)" no; fi
+    if command -v ss >/dev/null; then
+        for p in "${ports[@]}"; do [[ -z $(ss -H -ltn "sport = :$p" 2>/dev/null) ]] || busy="$busy $p"; done
+        if [[ -z $busy ]]; then say 'ports free' ok; else say "ports free (in use:$busy)" no; fi
+    else
+        say 'ports free (ss missing)' no
+    fi
     local tls_ok=ok
     [[ -d $tls && $(stat -c %a "$tls" 2>/dev/null) == 700 ]] || tls_ok=no
     [[ -f $tls/$peer.key && $(stat -c %a "$tls/$peer.key" 2>/dev/null) == 600 ]] || tls_ok=no
@@ -90,7 +96,7 @@ run_checks() {
     fi
     if sudo -n true 2>/dev/null; then say 'passwordless sudo' ok; else say 'passwordless sudo' no; fi
     local avail_kib
-    avail_kib=$(df -Pk "$(dirname "$out")" | awk 'NR==2 {print $4}')
+    avail_kib=$(df -Pk "$(dirname "$out")" 2>/dev/null | awk 'NR==2 {print $4}') || avail_kib=0
     if [[ ${avail_kib:-0} -ge 2097152 ]]; then say 'disk space' ok; else say "disk space (${avail_kib:-0} KiB free)" no; fi
     if [[ $mode == mac ]]; then
         if [[ -r /sys/class/drm/renderD128/device/agx_stats ]]; then say 'AGX busy counters readable' ok; else say 'AGX busy counters readable' no; fi
@@ -99,7 +105,7 @@ run_checks() {
     else
         if command -v nvidia-smi >/dev/null; then say 'nvidia-smi present' ok; else say 'nvidia-smi present' no; fi
         local free_kib
-        free_kib=$(awk '$1 == "MemFree:" && $2 ~ /^[0-9]+$/ {print $2}' /proc/meminfo)
+        free_kib=$(awk '$1 == "MemFree:" && $2 ~ /^[0-9]+$/ {print $2}' /proc/meminfo 2>/dev/null) || free_kib=0
         if [[ ${free_kib:-0} -ge 6291456 ]]; then say 'free memory above 6 GiB' ok; else say "free memory above 6 GiB (${free_kib:-0} KiB)" no; fi
     fi
     printf 'CHECKS %s\n' "$fails"
