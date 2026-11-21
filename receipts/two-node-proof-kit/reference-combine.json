@@ -1,0 +1,42 @@
+{
+  "exact_token_parity": true,
+  "firewall_restored": true,
+  "mac_only": {
+    "tokens": 64,
+    "ids_sha256": "284de5541d2d52e9678ae8f832eb0efcb5d6c72fe605e653b84ddfb4976bf682",
+    "decode_tokens_per_s": 67.4,
+    "vulkan": {
+      "busy_ns": 887989795,
+      "jobs": 619,
+      "samples": 7
+    }
+  },
+  "spark_only": {
+    "tokens": 64,
+    "ids_sha256": "284de5541d2d52e9678ae8f832eb0efcb5d6c72fe605e653b84ddfb4976bf682",
+    "decode_tokens_per_s": 26.86
+  },
+  "shared": {
+    "tokens": 64,
+    "ids_sha256": "284de5541d2d52e9678ae8f832eb0efcb5d6c72fe605e653b84ddfb4976bf682",
+    "decode_tokens_per_s": 9.41,
+    "vulkan": {
+      "busy_ns": 215945492,
+      "jobs": 587,
+      "samples": 34
+    },
+    "cuda": {
+      "model_buffer_mib": 399.89,
+      "pid_memory_mib": [
+        673,
+        673,
+        673,
+        673,
+        673,
+        673,
+        673
+      ]
+    },
+    "rpc_reply_bytes": 524864
+  }
+}
