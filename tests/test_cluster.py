@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from omarchy_cluster import facts, probe
+from omarchy_cluster import cli
 from omarchy_cluster.discover import merge_discovered, read_hostfile
 
 
@@ -252,3 +253,66 @@ def test_chip_names_follow_the_soc_codes():
     from omarchy_cluster import facts
     assert facts.CHIP_NAMES["t6000"] == "Apple M1 Pro"
     assert facts.CHIP_NAMES["t6002"].startswith("Apple M1 Ultra")
+
+
+def test_routes_carry_tb_and_pairs_carry_rdma_flags():
+    tb_a = dict(ifc("thunderbolt0", "10.10.4.1", speed=10000), tb=True)
+    tb_b = dict(ifc("bridge0", "10.10.4.2", speed=10000), tb=True)
+    plain = dict(ifc("eno1", "10.10.2.2"), tb=False)
+    assert probe.candidate_routes(node("a", [tb_a]), node("b", [tb_b]))[0]["tb"] is True
+    assert probe.candidate_routes(node("a", [ETH_A]), node("b", [plain]))[0]["tb"] is False
+    up = {"rdma_capable": True}
+    down = {"rdma_capable": False}
+    assert probe.rdma_pair(up, up) == {"capable": True, "a": True, "b": True}
+    assert probe.rdma_pair(up, down) == {"capable": False, "a": True, "b": False}
+    assert probe.rdma_pair({}, up) == {"capable": False, "a": False, "b": True}
+
+
+def test_linux_tb_interfaces_come_from_the_name_or_the_thunderbolt_bus(tmp_path, monkeypatch):
+    net = tmp_path / "net"
+    tb = tmp_path / "tb"
+    (tb / "0-1.network").mkdir(parents=True)
+    for name in ("thunderbolt0", "en5", "eth0"):
+        (net / name).mkdir(parents=True)
+    (net / "en5" / "device").symlink_to(tb / "0-1.network")  # udev-renamed xdomain netdev
+    (net / "thunderbolt0" / "speed").write_text("10000\n")
+    ip_json = json.dumps([{"ifname": n, "addr_info": [{"family": "inet", "local": ip, "prefixlen": 24}]}
+                          for n, ip in (("thunderbolt0", "10.10.4.1"), ("en5", "10.10.4.2"),
+                                        ("eth0", "10.10.2.2"))])
+    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: ip_json if cmd[:2] == ["ip", "-j"] else "")
+    got = {d["name"]: d["tb"] for d in facts._linux_interfaces(net_root=str(net), tb_root=str(tb))}
+    assert got == {"thunderbolt0": True, "en5": True, "eth0": False}
+
+
+def test_mac_interfaces_flag_the_thunderbolt_bridge(monkeypatch):
+    outputs = {
+        "networksetup": "Hardware Port: Thunderbolt Bridge\nDevice: bridge0\n"
+                        "Hardware Port: Wi-Fi\nDevice: en0\n",
+        "ifconfig": "bridge0: flags=8863<UP>\n\tinet 10.10.3.1 netmask 0xffffff00\n"
+                    "en0: flags=8863<UP>\n\tinet 10.10.1.1 netmask 0xffffff00\n",
+    }
+    monkeypatch.setattr(facts, "_run", lambda cmd, timeout=6: outputs.get(cmd[0], ""))
+    got = {d["name"]: d for d in facts._mac_interfaces()}
+    assert got["bridge0"]["tb"] is True
+    assert got["en0"]["tb"] is False
+
+
+def test_rdma_capable_reports_the_hardware_row(monkeypatch, tmp_path):
+    f = _mcdma_env(monkeypatch, "Darwin", {"rdma_ctl": "disabled\n"})
+    assert f.rdma_capable() is False
+    f = _mcdma_env(monkeypatch, "Darwin", {"rdma_ctl": "enabled\n"})
+    assert f.rdma_capable() is True
+    f = _mcdma_env(monkeypatch, "Linux", {}, ib_root=str(tmp_path / "ib"))
+    assert f.rdma_capable() is False
+    (tmp_path / "ib" / "rxe0").mkdir(parents=True)
+    assert f.rdma_capable() is True
+
+
+def test_links_table_shows_tb_and_rdma_annotations():
+    r = route(ETH_A, ETH_B, a2b=1.0, b2a=1.0)
+    links = {"pairs": [{"a": "a", "b": "b", "rdma": {"capable": True, "a": True, "b": True},
+                        "routes": [dict(r, tb=True)], "pinned": r}]}
+    out = cli.links_table(links)
+    assert "rdma yes" in out and " TB " in out
+    old = {"pairs": [{"a": "a", "b": "b", "routes": [r], "pinned": None}]}  # pre-#48 links.json
+    assert "rdma" not in cli.links_table(old) and " TB " not in cli.links_table(old)

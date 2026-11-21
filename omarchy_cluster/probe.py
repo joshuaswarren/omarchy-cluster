@@ -45,6 +45,7 @@ def candidate_routes(a, b):
                 "a_iface": ifa["name"], "a_ip": ipa,
                 "b_iface": ifb["name"], "b_ip": ipb,
                 "media": "tailscale" if ts else ("wifi" if wireless else "wired"),
+                "tb": bool(ifa.get("tb") or ifb.get("tb")),
                 "eligible_for_decode": not (wireless or ts),
                 "thunderbolt": bool(ifa.get("thunderbolt") and ifb.get("thunderbolt")),
                 "rdma_capable": bool(ifa.get("rdma") and ifb.get("rdma")),
@@ -238,6 +239,14 @@ def mcdma_pair(fa, fb):
     return out
 
 
+def rdma_pair(fa, fb):
+    """Whether this pair could use RDMA: both ends capable. Annotation like the mcdma
+    record; measured decode still chooses the route."""
+    a = bool((fa or {}).get("rdma_capable"))
+    b = bool((fb or {}).get("rdma_capable"))
+    return {"capable": a and b, "a": a, "b": b}
+
+
 def probe_all(nodes, seconds=3.0, names=None):
     """Probe every node pair; returns the links dict. Liveness for every route of every
     pair runs in parallel; bandwidth then runs one route at a time (parallel tests would
@@ -255,7 +264,7 @@ def probe_all(nodes, seconds=3.0, names=None):
                 continue
             routes = candidate_routes(fa, fb)
             pairs.append({"a": a, "b": b, "routes": routes, "pinned": None,
-                          "mcdma": mcdma_pair(fa, fb)})
+                          "mcdma": mcdma_pair(fa, fb), "rdma": rdma_pair(fa, fb)})
             todo += routes
 
     def live(r):

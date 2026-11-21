@@ -82,7 +82,11 @@ plain HTTP (issue 98).
 ### `probe [--seconds 3.0] [--out PATH]`
 Measures RTT and bandwidth for every node pair and every interface route, writes
 `links.json`, and pins the fastest decode-eligible route per pair. Wi-Fi and overlay
-routes (Tailscale CGNAT range) are probed but never used for decode. Records for each
+routes (Tailscale CGNAT range) are probed but never used for decode. Each route is
+annotated with whether either end's interface is a Thunderbolt bridge (Linux
+`thunderbolt%d` or a netdev under `/sys/bus/thunderbolt`; macOS the Thunderbolt
+Bridge port), and each pair with whether both ends are RDMA-capable (macOS
+`rdma_ctl enabled`; Linux any `/sys/class/infiniband` device). Records for each
 pair whether MCDMA (RDMA) could carry its traffic; routes stay TCP until MCDMA is
 measured. A software verbs device (Soft-RoCE `rxe`, `siw`) is flagged
 `soft_transport: true`; numbers over that device measure the kernel network stack.

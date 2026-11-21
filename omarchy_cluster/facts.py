@@ -200,12 +200,32 @@ def _linux_rdma_netdevs(ib_root=IB_ROOT):
     return names
 
 
-def _linux_interfaces():
+def _linux_tb_ifaces(net_root, tb_root):
+    """Thunderbolt bridge interfaces: the driver names them thunderbolt%d; a udev-renamed
+    one still counts when its sysfs device lives under the thunderbolt bus."""
+    names = set()
+    try:
+        listing = os.listdir(net_root)
+    except OSError:
+        return names
+    tb_root = os.path.realpath(tb_root)
+    for name in listing:
+        if name.startswith("thunderbolt"):
+            names.add(name)
+            continue
+        dev = os.path.join(net_root, name, "device")
+        if os.path.exists(dev) and os.path.realpath(dev).startswith(tb_root + os.sep):
+            names.add(name)
+    return names
+
+
+def _linux_interfaces(net_root="/sys/class/net", tb_root="/sys/bus/thunderbolt/devices"):
     out = _run(["ip", "-j", "addr"])
     try:
         data = json.loads(out)
     except ValueError:
         return []
+    tb = _linux_tb_ifaces(net_root, tb_root)
     result = []
     rdma = _linux_rdma_netdevs()
     for dev in data:
@@ -233,6 +253,7 @@ def _linux_interfaces():
             "wireless": os.path.isdir("/sys/class/net/%s/wireless" % name) or name.startswith("wl"),
             "thunderbolt": _linux_thunderbolt(name),
             "rdma": name in rdma,
+            "tb": name in tb,
         })
     return result
 
@@ -262,7 +283,8 @@ def _mac_interfaces():
             info = {"name": cur, "ips": [], "speed_mbps": None,
                     "wireless": ports.get(cur) in ("Wi-Fi", "AirPort"),
                     "thunderbolt": ports.get(cur, "").startswith("Thunderbolt"),
-                    "rdma": cur in rdma} if cur else None
+                    "rdma": cur in rdma,
+                    "tb": "thunderbolt" in (ports.get(cur) or "").lower()} if cur else None
             if cur == "lo0":
                 cur, info = None, None
             continue
@@ -328,6 +350,18 @@ def mcdma():
         return {"available": False, "reason": "no MCDMA peer tool at %s" % MCDMA_PEER, "devices": active,
                 "soft_transport": soft}
     return {"available": True, "reason": "ACTIVE port and peer tool", "devices": active, "soft_transport": soft}
+
+
+def rdma_capable(ib_root=None):
+    """Plain RDMA capability for the links table, the MCDMA peer-tool gate aside:
+    macOS rdma_ctl enabled (Harbor's 'RDMA: Not Enabled' row); Linux any
+    /sys/class/infiniband device, active or not."""
+    if platform.system() == "Darwin":
+        return "enabled" in _run(["rdma_ctl", "status"]).lower()
+    try:
+        return bool(os.listdir(ib_root or IB_ROOT))
+    except OSError:
+        return False
 
 
 _DATA_VOLUME_JXA = ('ObjC.import("Foundation"); var k = "NSURLVolumeAvailableCapacityForImportantUsageKey"; '
@@ -411,6 +445,7 @@ def collect_facts():
         "boot_id": boot_id(),
         "tools": {"iperf3": bool(shutil.which("iperf3"))},
         "transports": {"mcdma": mcdma()},
+        "rdma_capable": rdma_capable(),
     }
     if platform.system() == "Darwin":
         facts.update(macos_memory())

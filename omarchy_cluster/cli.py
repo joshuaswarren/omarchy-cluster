@@ -324,7 +324,9 @@ def cmd_probe(args):
 def links_table(links):
     lines = []
     for pair in links.get("pairs", []):
-        lines.append("%s <-> %s" % (pair["a"], pair["b"]))
+        rd = pair.get("rdma")
+        lines.append("%s <-> %s%s" % (pair["a"], pair["b"],
+                     "" if rd is None else "  rdma %s" % ("yes" if rd.get("capable") else "no")))
         if pair.get("error"):
             lines.append("  ERROR: %s" % pair["error"])
             continue
@@ -339,7 +341,7 @@ def links_table(links):
             g2 = "%.2f" % r["gbps_b2a"] if r.get("gbps_b2a") else "  --  "
             rtt = rtt_str(r)
             dec = "decode-ok" if r.get("eligible_for_decode") else "NO-DECODE"
-            tags = ("  TB" if r.get("thunderbolt") else "") + ("  RDMA" if r.get("rdma_capable") else "")
+            tags = ("  TB" if (r.get("thunderbolt") or r.get("tb")) else "") + ("  RDMA" if r.get("rdma_capable") else "")
             lines.append(" %s %-6s %s:%-15s -> %s:%-15s  %s/%s Gb/s  rtt %s  %s%s%s  %s" % (
                 mark, r["media"], r["a_iface"], r["a_ip"], r["b_iface"], r["b_ip"],
                 g1, g2, rtt, dec, tags,
