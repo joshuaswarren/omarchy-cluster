@@ -42,7 +42,7 @@ peer=$mode
 if [[ $mode == mac ]]; then peer=m2; rpc=$(realpath "$8"); spark=$9; fi
 base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 commit=10a47b69df53f60b1e9b3f67aa5092fdff2c4562
-socat=$(command -v "${SOCAT:-socat}")
+socat=$(command -v "${SOCAT:-socat}" || true)
 
 run_checks() {
     local fails=0
@@ -103,7 +103,8 @@ run_checks() {
         if [[ ${free_kib:-0} -ge 6291456 ]]; then say 'free memory above 6 GiB' ok; else say "free memory above 6 GiB (${free_kib:-0} KiB)" no; fi
     fi
     printf 'CHECKS %s\n' "$fails"
-    [[ $fails -eq 0 ]]
+    if [[ $fails -eq 0 ]]; then return 0; fi
+    return 2
 }
 
 if [[ $check_only == 1 ]]; then

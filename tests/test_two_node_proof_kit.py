@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 KIT = Path(__file__).resolve().parents[1] / "receipts" / "two-node-proof-kit"
@@ -105,3 +106,38 @@ def test_help_names_the_pinned_source_commit():
     text = (KIT / "two-node-proof.sh").read_text()
     assert "10a47b69df53f60b1e9b3f67aa5092fdff2c4562" in text.split("commit=")[1].split("\n")[0]
     assert "merged PR #117" not in text
+
+
+def test_check_reports_all_prerequisites_without_running_the_proof(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    model = tmp_path / "model.gguf"
+    model.write_bytes(b"not the pinned model")
+    tls = tmp_path / "tls"
+    tls.mkdir(mode=0o700)
+    out = tmp_path / "out"
+    result = subprocess.run(
+        [
+            "bash",
+            str(KIT / "two-node-proof.sh"),
+            "--check",
+            "spark",
+            str(source),
+            str(model),
+            str(out),
+            "/bin/false",
+            str(tls),
+            "192.0.2.10",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "FAIL source commit present" in result.stdout
+    assert "FAIL model sha256 matches" in result.stdout
+    assert "FAIL llama-server version readable" in result.stdout
+    assert "FAIL TLS material and modes" in result.stdout
+    assert "CHECKS " in result.stdout
+    assert not out.exists()
