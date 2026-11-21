@@ -273,8 +273,13 @@ def rank_start(req):
     # The placement planner budgets free RAM, so the heap must not be the lower limit. A request or the environment may still set it.
     if sys.platform == "linux":
         sysmem = str(facts_mod.memory_total_bytes())
-        env.setdefault("HK_SYSMEM", sysmem)
-        env.setdefault("BRL_SYSMEM", sysmem)
+        if "HK_SYSMEM" in env and "BRL_SYSMEM" not in env:
+            env["BRL_SYSMEM"] = env["HK_SYSMEM"]
+        elif "BRL_SYSMEM" in env and "HK_SYSMEM" not in env:
+            env["HK_SYSMEM"] = env["BRL_SYSMEM"]
+        else:
+            env.setdefault("HK_SYSMEM", sysmem)
+            env.setdefault("BRL_SYSMEM", sysmem)
     if req.get("pythonpath"):
         env["PYTHONPATH"] = ":".join(
             os.path.expanduser(p) for p in req["pythonpath"].split(":") if p)
