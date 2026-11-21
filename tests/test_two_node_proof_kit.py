@@ -333,13 +333,19 @@ def test_check_verifies_tls_certificates_not_only_their_modes(tmp_path):
 
 
 def test_check_requires_setuptools_and_wheel_in_the_venv(tmp_path):
-    """A venv without system site packages has pip but no wheel, so the install would fail."""
+    """pip install --no-build-isolation needs wheel; the shim hides it inside the probe venv."""
     shims = tmp_path / "shims"
     shims.mkdir()
     shim = shims / "python3"
     shim.write_text(
-        f"#!{sys.executable}\nimport os, sys\n"
-        "args = [a for a in sys.argv[1:] if a != '--system-site-packages']\n"
+        f"#!{sys.executable}\nimport glob, os, subprocess, sys\n"
+        "args = sys.argv[1:]\n"
+        "if args[:2] == ['-m', 'venv']:\n"
+        "    rc = subprocess.call([sys.executable] + args)\n"
+        "    for site in glob.glob(os.path.join(args[-1], 'lib', 'python*', 'site-packages')):\n"
+        "        with open(os.path.join(site, 'wheel.py'), 'w') as f:\n"
+        "            f.write('raise ImportError(\"hidden by test\")\\n')\n"
+        "    sys.exit(rc)\n"
         "os.execv(sys.executable, [sys.executable] + args)\n"
     )
     shim.chmod(0o755)
