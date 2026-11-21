@@ -98,8 +98,17 @@ def test_a_streaming_gateway_prints_each_piece_before_the_rate_line(gateway):
              "timings": {"tokens_per_s": 42.0}}
     replies += [[200, ["To", "ken", "ize", final]]]
     out = run(url, ["hi"])
-    assert out == ["To", "ken", "ize", "[42.0 tok/s]"]
+    assert out == ["To", "ken", "ize", "\n", "[42.0 tok/s]\n"]
     assert seen[0]["body"]["stream"] is True
+
+
+def test_streamed_pieces_join_into_one_line(gateway):
+    """Issue 121: a streamed reply lands on one line. The writer must not add a
+    newline per piece; one newline ends the reply."""
+    url, seen, replies = gateway
+    replies += [[200, ["Hel", "lo ", "world", {}]]]
+    out = run(url, ["hi"])
+    assert "".join(out) == "Hello world\n"
 
 
 def test_the_repl_sends_greedy_sampling_temperature_0(gateway):

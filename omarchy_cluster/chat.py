@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from datetime import datetime
 
 from . import client
@@ -40,7 +41,8 @@ def _reply(res):
 
 
 def repl(url=DEFAULT_GATEWAY, model="omarchy-cluster", max_tokens=256, system=None, token=None,
-         read=input, write=print, clock=datetime.now):
+         read=input, write=lambda s: (sys.stdout.write(s), sys.stdout.flush()),
+         clock=datetime.now):
     """Read a line, send the whole conversation, print the reply. /reset clears the
     history; /exit, /quit or end of input leaves. No history or memory files are kept;
     the session appends one journal line."""
@@ -67,14 +69,15 @@ def repl(url=DEFAULT_GATEWAY, model="omarchy-cluster", max_tokens=256, system=No
                 pieces.append(piece)
                 write(piece)  # tokens arrive one piece at a time; print as they land (issue 95)
             text = "".join(pieces)
+            write("\n")
         except RuntimeError as e:
-            write("error: %s" % e)
+            write("error: %s\n" % e)
             continue
         history += [{"role": "user", "content": line}, {"role": "assistant", "content": text}]
         timings = info.get("timings")
         tokps = _rate(timings.get("tokens_per_s") if isinstance(timings, dict) else None)
         if tokps is not None:
-            write("[%.1f tok/s]" % tokps)
+            write("[%.1f tok/s]\n" % tokps)
         turns += 1
     path = os.path.expanduser(JOURNAL)
     os.makedirs(os.path.dirname(path), exist_ok=True)
