@@ -35,6 +35,9 @@ def parse_arm(root, name):
 
 
 def check_parity(digests):
+    digests = list(digests)
+    if len(digests) != 3 or not all(isinstance(d, str) and re.fullmatch(r'[0-9a-f]{64}', d) for d in digests):
+        raise ValueError(f'expected three SHA-256 token digests (mac, spark, shared), got {digests!r}')
     if len(set(digests)) != 1:
         raise ValueError(f'token IDs differ between arms: {sorted(set(digests))}')
     return True

@@ -286,3 +286,31 @@ def test_verify_rejects_firewall_evidence_that_proves_nothing(tmp_path):
         expect_value_error(verifier.verify, mac, spark, match=message)
     (mac / "ufw-during.txt").unlink()
     expect_value_error(verifier.verify, mac, spark, match="missing ufw-during.txt")
+
+
+def test_check_parity_rejects_vacuous_digest_lists():
+    verifier = load_verifier()
+    digest = "a" * 64
+    for digests in ([digest], [digest, digest], ["", "", ""], [None, None, None], ["A" * 64] * 3, [digest] * 4):
+        expect_value_error(verifier.check_parity, digests, match="three SHA-256")
+
+
+def test_verify_rejects_cross_arm_token_mismatch(tmp_path):
+    verifier = load_verifier()
+    mac, spark = write_receipts(tmp_path)
+    write_arm(spark, "shared", [7] + list(range(1, 64)))
+    expect_value_error(verifier.verify, mac, spark, match="token IDs differ")
+
+
+def test_verify_rejects_cross_host_llama_commit_mismatch(tmp_path):
+    verifier = load_verifier()
+    mac, spark = write_receipts(tmp_path)
+    (spark / "llama-version.txt").write_text(REAL_LLAMA_VERSION.replace("19bc41d", "deadbee"))
+    expect_value_error(verifier.verify, mac, spark, match="llama-server builds differ")
+
+
+def test_verify_rejects_firewall_not_restored(tmp_path):
+    verifier = load_verifier()
+    mac, spark = write_receipts(tmp_path)
+    (mac / "ufw-after.txt").write_text(UFW_DURING)
+    expect_value_error(verifier.verify, mac, spark, match="firewall not restored")
