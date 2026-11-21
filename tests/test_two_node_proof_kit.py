@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -60,18 +61,12 @@ def write_arm(root, name, ids):
     )
 
 
-def test_parse_arm_accepts_token_ids_that_differ_from_the_reference():
+def test_parse_arm_accepts_token_ids_that_differ_from_the_reference(tmp_path):
     """An outside tester's tokens need not equal our reference digest."""
     verifier = load_verifier()
-    root = KIT / "tmp-parity-check"
-    ids = [1000 + index for index in range(64)]
-    write_arm(root, "mac", ids)
-    try:
-        arm = verifier.parse_arm(root, "mac")
-    finally:
-        for path in root.iterdir():
-            path.unlink()
-        root.rmdir()
+    root = tmp_path / "run"
+    write_arm(root, "mac", [1000 + index for index in range(64)])
+    arm = verifier.parse_arm(root, "mac")
     assert arm["ids_sha256"] != verifier.ID_SHA
     assert arm["matches_reference"] is False
 
@@ -106,9 +101,11 @@ def test_cross_host_llama_versions_must_match():
 
 def test_help_names_the_pinned_source_commit():
     """A stranger must be told which commit SOURCE must contain."""
-    text = (KIT / "two-node-proof.sh").read_text()
-    assert "10a47b69df53f60b1e9b3f67aa5092fdff2c4562" in text.split("commit=")[1].split("\n")[0]
-    assert "merged PR #117" not in text
+    result = subprocess.run(["bash", str(KIT / "two-node-proof.sh"), "--help"], capture_output=True, text=True, check=True)
+    assert "10a47b69df53f60b1e9b3f67aa5092fdff2c4562" in result.stdout
+    assert "merged PR #117" not in result.stdout
+    assert "--query-compute-apps" in result.stdout
+    assert "pmon" not in result.stdout
 
 
 def test_check_reports_all_prerequisites_without_running_the_proof(tmp_path):
@@ -314,3 +311,67 @@ def test_verify_rejects_firewall_not_restored(tmp_path):
     mac, spark = write_receipts(tmp_path)
     (mac / "ufw-after.txt").write_text(UFW_DURING)
     expect_value_error(verifier.verify, mac, spark, match="firewall not restored")
+
+
+def run_check_spark(tmp_path, tls, path=None):
+    env = None if path is None else {**os.environ, "PATH": path}
+    return subprocess.run(
+        ["bash", str(KIT / "two-node-proof.sh"), "--check", "spark", str(tmp_path / "src"), str(tmp_path / "m.gguf"),
+         str(tmp_path / "out"), "/bin/false", str(tls), "192.0.2.10"],
+        capture_output=True, text=True, timeout=120, check=False, env=env,
+    )
+
+
+def test_check_verifies_tls_certificates_not_only_their_modes(tmp_path):
+    tls = tmp_path / "tls"
+    tls.mkdir(mode=0o700)
+    for name in ("ca.crt", "spark.crt", "spark.key"):
+        (tls / name).write_text("not a real cert\n")
+    (tls / "spark.key").chmod(0o600)
+    result = run_check_spark(tmp_path, tls)
+    assert "FAIL TLS certificates verify" in result.stdout, result.stdout + result.stderr
+
+
+def test_check_requires_setuptools_and_wheel_in_the_venv(tmp_path):
+    """A venv without system site packages has pip but no wheel, so the install would fail."""
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    shim = shims / "python3"
+    shim.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        "args = [a for a in sys.argv[1:] if a != '--system-site-packages']\n"
+        "os.execv(sys.executable, [sys.executable] + args)\n"
+    )
+    shim.chmod(0o755)
+    tls = tmp_path / "tls"
+    tls.mkdir(mode=0o700)
+    result = run_check_spark(tmp_path, tls, path=f"{shims}{os.pathsep}{os.environ['PATH']}")
+    assert "FAIL python venv with pip, setuptools and wheel" in result.stdout, result.stdout + result.stderr
+
+
+def test_check_uses_available_memory_on_spark(tmp_path):
+    """MemFree is low on a host full of clean page cache; the run drops caches first."""
+    tls = tmp_path / "tls"
+    tls.mkdir(mode=0o700)
+    result = run_check_spark(tmp_path, tls)
+    assert "available memory above 6 GiB" in result.stdout, result.stdout + result.stderr
+    assert "free memory above" not in result.stdout
+
+
+def test_run_stops_before_any_change_when_socat_lacks_openssl(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "m.gguf").write_bytes(b"model")
+    fake = tmp_path / "llama-server"
+    fake.write_text("#!/bin/sh\nexit 0\n")
+    fake.chmod(0o755)
+    tls = tmp_path / "tls"
+    tls.mkdir(mode=0o700)
+    result = subprocess.run(
+        ["bash", str(KIT / "two-node-proof.sh"), "spark", str(tmp_path / "src"), str(tmp_path / "m.gguf"),
+         str(tmp_path / "out"), str(fake), str(tls), "192.0.2.10"],
+        capture_output=True, text=True, timeout=60, check=False,
+        env={**os.environ, "SOCAT": str(tmp_path / "no-such-socat")},
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "socat with OpenSSL" in result.stderr
+    assert not (tmp_path / "out").exists()

@@ -21,7 +21,7 @@ TLS: generate a NEW dedicated CA for each pair per the secure-RPC recipe (cluste
         The TLS directory must be mode 700 and the private key mode 600.
 On Mac wait for READY; then start Spark. After Spark finishes, signal Mac with Ctrl-C to retire early.
 Mac requires an exclusive GPU window, Vulkan0, AGX busy counters, and sudo -n UFW. Spark needs CUDA0
-and per-process nvidia-smi pmon. Both require synchronized clocks (timedatectl), Bash, Python with venv,
+and per-process nvidia-smi --query-compute-apps. Both require synchronized clocks (timedatectl), Bash, Python with venv,
 pip, system setuptools/wheel, socat (or set SOCAT), OpenSSL, curl, jq, ss, setsid, Git, tar, and pgrep.
 Reserve ports 24820, 24831-24832 and 24860-24864; do not change UFW concurrently.
 --check runs every prerequisite check and prints one PASS/FAIL line per item; it changes nothing.
@@ -46,6 +46,16 @@ base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 commit=10a47b69df53f60b1e9b3f67aa5092fdff2c4562
 socat=$(command -v "${SOCAT:-socat}" || true)
 
+socat_has_openssl() { [[ -n $socat ]] && "$socat" -V 2>&1 | grep WITH_OPENSSL >/dev/null; }
+verify_tls() {
+    if [[ $mode == mac ]]; then
+        openssl verify -CAfile "$tls/ca.crt" -purpose sslserver -verify_hostname cluster-m2-rpc "$tls/m2.crt" &&
+            openssl verify -CAfile "$tls/ca.crt" -purpose sslserver -verify_ip "$m2" "$tls/m2.crt"
+    else
+        openssl verify -CAfile "$tls/ca.crt" -purpose sslclient -verify_hostname cluster-spark-client "$tls/spark.crt"
+    fi
+}
+
 run_checks() {
     local fails=0
     say() { if [[ $2 == ok ]]; then printf 'PASS %s\n' "$1"; else printf 'FAIL %s\n' "$1"; fails=$((fails + 1)); fi; }
@@ -68,14 +78,17 @@ run_checks() {
     else
         say 'llama-server version readable' no
     fi
-    if [[ -n $socat ]] && "$socat" -V 2>&1 | grep -q WITH_OPENSSL; then say 'socat with OpenSSL' ok; else say 'socat with OpenSSL' no; fi
+    if socat_has_openssl; then say 'socat with OpenSSL' ok; else say 'socat with OpenSSL' no; fi
     local tool missing=''
     for tool in curl jq ss setsid pgrep git tar openssl python3; do command -v "$tool" >/dev/null || missing="$missing $tool"; done
     if [[ -z $missing ]]; then say 'required tools present' ok; else say "required tools present (missing:$missing)" no; fi
-    if python3 -m venv --system-site-packages "$probe/venv" >/dev/null 2>&1 && "$probe/venv/bin/python" -m pip --version >/dev/null 2>&1; then
-        say 'python venv with pip' ok
+    # The install runs pip with --no-build-isolation, so setuptools and wheel must import in the venv.
+    if python3 -m venv --system-site-packages "$probe/venv" >/dev/null 2>&1 &&
+        "$probe/venv/bin/python" -m pip --version >/dev/null 2>&1 &&
+        "$probe/venv/bin/python" -c 'import setuptools, wheel' >/dev/null 2>&1; then
+        say 'python venv with pip, setuptools and wheel' ok
     else
-        say 'python venv with pip' no
+        say 'python venv with pip, setuptools and wheel' no
     fi
     rm -rf "$probe"
     if [[ $(timedatectl show -p NTPSynchronized --value 2>/dev/null) == yes ]]; then say 'clock synchronized' ok; else say 'clock synchronized' no; fi
@@ -91,6 +104,7 @@ run_checks() {
     [[ -f $tls/$peer.key && $(stat -c %a "$tls/$peer.key" 2>/dev/null) == 600 ]] || tls_ok=no
     for f in ca.crt "$peer.crt" "$peer.key"; do [[ -f $tls/$f && ! -L $tls/$f ]] || tls_ok=no; done
     say 'TLS material and modes' "$tls_ok"
+    if command -v openssl >/dev/null && verify_tls >/dev/null 2>&1; then say 'TLS certificates verify' ok; else say 'TLS certificates verify' no; fi
     if python3 -c 'import ipaddress, sys; sys.exit(0 if all(not (a.is_loopback or a.is_unspecified or a.is_multicast) for a in map(ipaddress.IPv4Address, sys.argv[1:])) else 1)' "$m2" "${spark:-$m2}"; then
         say 'peer addresses routable' ok
     else
@@ -106,9 +120,14 @@ run_checks() {
         if sudo -n ufw status 2>/dev/null | grep -q '^Status: active$'; then say 'UFW active' ok; else say 'UFW active' no; fi
     else
         if command -v nvidia-smi >/dev/null; then say 'nvidia-smi present' ok; else say 'nvidia-smi present' no; fi
-        local free_kib
-        free_kib=$(awk '$1 == "MemFree:" && $2 ~ /^[0-9]+$/ {print $2}' /proc/meminfo 2>/dev/null) || free_kib=0
-        if [[ ${free_kib:-0} -ge 6291456 ]]; then say 'free memory above 6 GiB' ok; else say "free memory above 6 GiB (${free_kib:-0} KiB)" no; fi
+        # The run drops page caches before it reads MemFree, so MemAvailable is the right preflight value.
+        local avail_mem_kib
+        avail_mem_kib=$(awk '$1 == "MemAvailable:" && $2 ~ /^[0-9]+$/ {print $2}' /proc/meminfo 2>/dev/null) || avail_mem_kib=0
+        if [[ ${avail_mem_kib:-0} -ge 6291456 ]]; then
+            say 'available memory above 6 GiB' ok
+        else
+            say "available memory above 6 GiB (${avail_mem_kib:-0} KiB)" no
+        fi
     fi
     printf 'CHECKS %s\n' "$fails"
     if [[ $fails -eq 0 ]]; then return 0; fi
@@ -123,14 +142,10 @@ fi
 
 python3 -c 'import ipaddress, sys; sys.exit(0 if all(not (a.is_loopback or a.is_unspecified or a.is_multicast) for a in map(ipaddress.IPv4Address, sys.argv[1:])) else "expected non-loopback IPv4 peer addresses")' "$m2" "${spark:-$m2}"
 [[ -x $llama && -d $src && -f $model && ! -e $out && -f $base/check-proof.py ]] || fail 'invalid binary, input, or output path'
+socat_has_openssl || fail 'socat with OpenSSL support not found; install socat or set SOCAT'
 [[ $(stat -c %a "$tls") == 700 && $(stat -c %a "$tls/$peer.key") == 600 ]] || fail 'TLS directory and private key must have mode 700 and 600'
 for f in ca.crt "$peer.crt" "$peer.key"; do [[ -f $tls/$f && ! -L $tls/$f ]] || fail 'invalid TLS input'; done
-if [[ $mode == mac ]]; then
-    openssl verify -CAfile "$tls/ca.crt" -purpose sslserver -verify_hostname cluster-m2-rpc "$tls/m2.crt"
-    openssl verify -CAfile "$tls/ca.crt" -purpose sslserver -verify_ip "$m2" "$tls/m2.crt"
-else
-    openssl verify -CAfile "$tls/ca.crt" -purpose sslclient -verify_hostname cluster-spark-client "$tls/spark.crt"
-fi
+verify_tls || fail 'TLS certificate does not verify against ca.crt for this role'
 [[ $(timedatectl show -p NTPSynchronized --value) == yes ]] || fail 'clock is not NTP synchronized'
 printf '%s  %s\n' d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5 "$model" 14c3f0ad3a694f784aae16db3cbf845c7d9b6c608904243d7a64498e35e786e2 "$base/request.json" | sha256sum -c --strict
 if [[ $mode == mac ]]; then
