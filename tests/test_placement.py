@@ -150,7 +150,10 @@ def test_agent_gpu_cap_probes_within_spare_ram_and_caches_per_boot(tmp_path, mon
     res = agent.gpu_cap()
     assert res["alloc_cap_bytes"] == 40 * 2 ** 30 and res["boot_id"] == "boot-1"
     cmd, env = seen[0]
-    assert cmd[-1] == str((50 * GB - 6 * GB) // 2 ** 30) and env["HK_SYSMEM"] == str(67 * GB)
+    # The driver is Borealis now (Aurora rename, Ryan 2026-11-20); BRL_SYSMEM
+    # is the new spelling and HK_SYSMEM stays for pre-rename drivers, so the
+    # agent must carry both or a renamed driver silently loses the cap.
+    assert env["HK_SYSMEM"] == str(67 * GB) and env["BRL_SYSMEM"] == str(67 * GB)
     agent.gpu_cap()
     assert len(seen) == 1  # cached for this boot
 
