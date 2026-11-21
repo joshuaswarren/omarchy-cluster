@@ -602,3 +602,38 @@ def test_stream_over_a_json_only_engine_relays_an_engine_error(monkeypatch, http
               if line.startswith("data: ") and line != "data: [DONE]"]
     assert events[0]["error"] == "llama-server: out of slots"
     assert lines[-1] == "data: [DONE]"
+
+
+def test_stream_over_a_json_only_engine_names_the_client_error(monkeypatch, http_server):
+    """A client_error reply without an error string still names the engine and the
+    cause class instead of the generic 'engine error' (PR 129 follow-up)."""
+    engine = http_server(json_engine({"client_error": True}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    lines = _stream_lines(gateway)
+    events = [json.loads(line[6:]) for line in lines
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    assert events[0]["error"] == "%s: client error" % base_url(engine)
+
+
+def test_stream_over_a_json_only_engine_uses_a_client_error_string(monkeypatch, http_server):
+    """A string client_error is itself the useful message."""
+    engine = http_server(json_engine({"client_error": "prompt refused by policy"}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    lines = _stream_lines(gateway)
+    events = [json.loads(line[6:]) for line in lines
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    assert events[0]["error"] == "prompt refused by policy"
+
+
+def test_stream_over_a_json_only_engine_ignores_an_empty_error_string(monkeypatch, http_server):
+    """{"error": "", "client_error": true} must not yield an empty error: an empty
+    error string is no message at all, so client_error still applies (wAQ on #131)."""
+    engine = http_server(json_engine({"error": "", "client_error": True}))
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", base_url(engine))
+    lines = _stream_lines(gateway)
+    events = [json.loads(line[6:]) for line in lines
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    assert events[0]["error"] == "%s: client error" % base_url(engine)

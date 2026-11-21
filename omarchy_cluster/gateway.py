@@ -283,7 +283,7 @@ class Gateway(BaseHTTPRequestHandler):
                         # JSON-only engines (llama.cpp, sushi) ignore `stream`; replay
                         # their reply as a chunk + final event so callers still get the
                         # completion (issue 120).
-                        items = _json_reply_items(json.loads(r.read()))
+                        items = _json_reply_items(json.loads(r.read()), self.engine)
                     for item in items:
                         if "chunk" in item:
                             body = json.dumps({"id": "chatcmpl-omarchy-%d" % now, "created": now,
@@ -369,14 +369,21 @@ def _sse_items(response):
             yield json.loads(line[6:])
 
 
-def _json_reply_items(res):
+def _json_reply_items(res, engine="engine"):
     """Replay a non-SSE /generate reply as a chunk item plus a final item, so
-    JSON-only engines (llama.cpp, sushi) still satisfy the stream contract."""
+    JSON-only engines (llama.cpp, sushi) still satisfy the stream contract.
+    A client_error without an error string names the engine instead of the
+    generic text; a string client_error is itself the message."""
     if not isinstance(res, dict):
         yield {"error": "engine: malformed reply"}
         return
     if res.get("error") or res.get("client_error"):
-        yield {"error": res.get("error") or "engine error"}
+        err = res.get("error")
+        if not err:
+            client_error = res.get("client_error")
+            err = client_error if isinstance(client_error, str) \
+                else "%s: client error" % engine
+        yield {"error": err}
         return
     yield {"chunk": res.get("text") or ""}
     yield res
