@@ -71,6 +71,8 @@ def repl(url=DEFAULT_GATEWAY, model="omarchy-cluster", max_tokens=256, system=No
             text = "".join(pieces)
             write("\n")
         except RuntimeError as e:
+            if pieces:
+                write("\n")
             write("error: %s\n" % e)
             continue
         history += [{"role": "user", "content": line}, {"role": "assistant", "content": text}]

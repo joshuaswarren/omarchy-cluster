@@ -111,6 +111,35 @@ def test_streamed_pieces_join_into_one_line(gateway):
     assert "".join(out) == "Hello world\n"
 
 
+def test_streamed_pieces_print_as_one_line_with_the_default_writer(gateway, capsys):
+    """Issue 121: with the real default writer (stdout), the streamed reply
+    prints as one line — this fails if the default goes back to print."""
+    url, seen, replies = gateway
+    replies += [[200, ["Hel", "lo ", "world", {}]]]
+    feed = iter(["hi"])
+
+    def read(prompt):
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    chat.repl(url, read=read)
+    assert capsys.readouterr().out == "Hello world\n"
+
+
+def test_a_mid_stream_error_terminates_the_partial_reply_line(monkeypatch):
+    """Issue 121: a RuntimeError after partial output must not glue the error
+    onto the reply line — the partial line gets a newline first."""
+    def broken_stream(*args, **kwargs):
+        yield "partial"
+        raise RuntimeError("engine: died")
+
+    monkeypatch.setattr(chat.client, "chat_stream", broken_stream)
+    out = run("http://127.0.0.1:1", ["hi"])
+    assert out == ["partial", "\n", "error: engine: died\n"]
+
+
 def test_the_repl_sends_greedy_sampling_temperature_0(gateway):
     url, seen, replies = gateway
     replies.append(answer("x"))
