@@ -1,0 +1,47 @@
+# llama.cpp server + RPC worker for the DGX Spark GB10.
+# Built for sm_121 (GB10) with CUDA and the RPC backend both on: this is the
+# binary the two-node proof kit requires on the Spark side (GGML_CUDA=ON,
+# GGML_RPC=ON), from one pinned upstream tag.
+
+pkgname=llamacpp-cuda-rpc
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='llama.cpp server and RPC worker, CUDA build for DGX Spark (GB10, sm_121)'
+arch=('aarch64')
+url='https://github.com/ggml-org/llama.cpp'
+license=('MIT')
+depends=('cuda-spark' 'curl' 'gcc-libs')
+makedepends=('cmake' 'ninja' 'git')
+conflicts=('llama.cpp' 'llama.cpp-cuda')
+provides=("llama.cpp=${pkgver}")
+options=('!lto')
+
+source=("https://github.com/ggml-org/llama.cpp/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('3f5f750e36326aea4d65c7623e7d597a33e395d65f4d76e5e0532171f252532b')
+
+build() {
+  cmake -S "${srcdir}/llama.cpp-${pkgver}" -B "${srcdir}/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DGGML_CUDA=ON \
+    -DGGML_RPC=ON \
+    -DCMAKE_CUDA_ARCHITECTURES='121' \
+    -DLLAMA_BUILD_TESTS=OFF \
+    -DGGML_NATIVE=OFF \
+    -DGGML_LTO=ON
+  cmake --build "${srcdir}/build"
+}
+
+check() {
+  # The RPC worker must exist; the proof kit uses it by name.
+  test -x "${srcdir}/build/bin/llama-server"
+  test -x "${srcdir}/build/bin/rpc-server"
+}
+
+package() {
+  DESTDIR="${pkgdir}" cmake --install "${srcdir}/build"
+  # The proof kit's older notes call the RPC worker ggml-rpc-server; alias it.
+  ln -sf rpc-server "${pkgdir}/usr/bin/ggml-rpc-server"
+  install -Dm644 "${srcdir}/llama.cpp-${pkgver}/LICENSE" \
+                 "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

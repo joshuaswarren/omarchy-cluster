@@ -1,0 +1,92 @@
+# NVIDIA userland for the DGX Spark GB10, headless subset.
+# Same 580.178.04 pin as the kernel module and the DGX OS baseline.
+# Installs only what a compute node needs: libcuda, nvidia-ml, nvidia-smi,
+# nvidia-persistenced, OpenCL ICD, GSP firmware path notes. No X, no Wayland,
+# no display stack.
+
+pkgname=nvidia-spark-utils
+pkgver=580.178.04
+pkgrel=1
+pkgdesc='NVIDIA userland libraries and tools for DGX Spark (GB10), 580 branch'
+arch=('aarch64')
+url='https://www.nvidia.com/'
+license=('custom:NVIDIA')
+depends=('zlib' 'gcc-libs')
+conflicts=('nvidia-utils' 'nvidia-580xx-utils' 'opencl-nvidia')
+provides=("nvidia-utils=${pkgver}" "opencl-nvidia=${pkgver}")
+options=('!strip')
+install=nvidia-spark-utils.install
+
+_pkg="NVIDIA-Linux-aarch64-${pkgver}"
+source=("https://us.download.nvidia.com/tesla/${pkgver}/${_pkg}.run"
+        'nvidia-spark.sysusers')
+sha256sums=('ef59ec5d24850e12d6f7550ec1f7cf84db53a84ce9c63eb3ba55ef5ed0c4f049'
+            '46fd30181bce1a01eddb2751d2228b8d9cee6d06854b4aaed6e4d99251025575')
+
+prepare() {
+  sh "${srcdir}/${_pkg}.run" --extract-only --target "${srcdir}/${_pkg}"
+}
+
+package() {
+  local _p="${srcdir}/${_pkg}"
+
+  cd "${_p}"
+
+  # Core driver userspace.
+  install -Dm755 libcuda.so.${pkgver}        "${pkgdir}/usr/lib/libcuda.so.${pkgver}"
+  install -Dm755 libnvidia-ml.so.${pkgver}   "${pkgdir}/usr/lib/libnvidia-ml.so.${pkgver}"
+  install -Dm755 nvidia-cuda-mps-control     "${pkgdir}/usr/bin/nvidia-cuda-mps-control"
+  install -Dm755 nvidia-cuda-mps-server      "${pkgdir}/usr/bin/nvidia-cuda-mps-server"
+  install -Dm755 nvidia-debugdump            "${pkgdir}/usr/bin/nvidia-debugdump"
+  install -Dm755 nvidia-persistenced         "${pkgdir}/usr/bin/nvidia-persistenced"
+  install -Dm755 nvidia-smi                  "${pkgdir}/usr/bin/nvidia-smi"
+  install -Dm755 libnvidia-cfg.so.${pkgver}  "${pkgdir}/usr/lib/libnvidia-cfg.so.${pkgver}"
+
+  # OpenCL ICD (llama.cpp and other compute stacks probe it).
+  install -Dm755 libnvidia-opencl.so.${pkgver} "${pkgdir}/usr/lib/libnvidia-opencl.so.${pkgver}"
+  install -Dm644 nvidia.icd "${pkgdir}/etc/OpenCL/vendors/nvidia.icd"
+
+  # Soname links so ldconfig and dlopen both resolve the bare names.
+  local _lib
+  for _lib in cuda nvidia-ml nvidia-cfg nvidia-opencl; do
+    ln -s "lib${_lib}.so.${pkgver}" "${pkgdir}/usr/lib/lib${_lib}.so.1"
+    ln -s "lib${_lib}.so.1"          "${pkgdir}/usr/lib/lib${_lib}.so"
+  done
+
+  # GSP firmware for GB10 ships with linux-firmware under nvidia/gb10x/;
+  # copy the runfile's own blob too so the module finds it regardless.
+  install -dm755 "${pkgdir}/usr/lib/firmware/nvidia/${pkgver}"
+  local _fw
+  for _fw in firmware/gsp*.bin; do
+    [[ -e "$_fw" ]] && install -Dm644 "$_fw" "${pkgdir}/usr/lib/firmware/nvidia/${pkgver}/$(basename "$_fw")"
+  done
+
+  # nvidia-persistenced runs as its own user and keeps persistence mode on so
+  # short-lived inference workers do not pay the GPU init cost per request.
+  install -Dm644 "${srcdir}/nvidia-spark.sysusers" \
+                 "${pkgdir}/usr/lib/sysusers.d/nvidia-spark.conf"
+  install -Dm644 /dev/stdin "${pkgdir}/usr/lib/systemd/system/nvidia-persistenced.service" <<'UNIT'
+[Unit]
+Description=NVIDIA Persistence Daemon
+Wants=syslog.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/nvidia-persistenced/nvidia-persistenced.pid
+Restart=always
+ExecStart=/usr/bin/nvidia-persistenced --user nvidia-persistenced --persistence-mode --verbose
+ExecStopPost=/bin/rm -rf /var/run/nvidia-persistenced
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  # Udev: the GB10 GPU is a platform device, not a PCI function, so the
+  # stock nvidia rules miss it. Tag the DRM and nvidia misc nodes.
+  install -Dm644 /dev/stdin "${pkgdir}/usr/lib/udev/rules.d/90-nvidia-spark.rules" <<'RULES'
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", GROUP="video", MODE="0660"
+SUBSYSTEM=="misc", KERNEL=="nvidia*", GROUP="video", MODE="0660"
+RULES
+
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE" 2>/dev/null || true
+}

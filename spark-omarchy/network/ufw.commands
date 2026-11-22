@@ -1,0 +1,23 @@
+# shellcheck shell=bash
+# UFW rules for the Omarchy Spark node. Apply with: ufw --force reset? No —
+# apply these with `ufw` commands, do not paste the file into ufw's config.
+# Default policy: deny incoming, allow outgoing (ufw default deny incoming).
+
+# SSH — the only always-open inbound service.
+ufw allow ssh
+
+# mDNS (avahi) — node discovery on the LAN.
+ufw allow in proto udp to 224.0.0.251 port 5353
+ufw allow in proto udp from 224.0.0.251 port 5353
+
+# Remnic core + reranker — LAN only (the :8095/:8098 services the migration
+# restores). Scope to the LAN prefix at install time:
+#   ufw allow from <LAN_PREFIX> to any port 8095 proto tcp
+#   ufw allow from <LAN_PREFIX> to any port 8098 proto tcp
+
+# Cluster RPC — the raw llama.cpp RPC port is never opened directly. The
+# two-node proof kit opens one scoped, labelled rule for the TLS relay port
+# on the peer side only and removes it when the run ends. Do not add a
+# permanent rule for RPC; see docs/secure-rpc.md.
+
+ufw enable
