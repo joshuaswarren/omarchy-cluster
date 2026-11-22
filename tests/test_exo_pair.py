@@ -338,3 +338,61 @@ def test_host_power_probe_provenance_honest_for_nvidia_smi_and_missing_probe() -
     assert record2["metrics"]["energy_j"] is None
     assert record2["metrics"]["power_avg_w"] is None
     assert details2["exo_node_system_power"]["sample_count"] >= 1
+
+
+def test_wrong_token_id_digest_fails_pair_run(tmp_path: Path) -> None:
+    """CLX-3: a wrong strict token-ID digest fails the pair run; the right one
+    passes, and the passing digest hex is identical across two runs."""
+    canonical = exo_pair.compute_token_digest(list(range(500, 532)))
+    right = tmp_path / "right_ids.py"
+    right.write_text(
+        "import json, sys\nwords = sys.stdin.read().split()\n"
+        "print(json.dumps(list(range(500, 500 + len(words)))))\n",
+        encoding="utf-8",
+    )
+    wrong = tmp_path / "wrong_ids.py"
+    wrong.write_text(
+        "import json, sys\nwords = sys.stdin.read().split()\n"
+        "print(json.dumps(list(range(900, 900 + len(words)))))\n",
+        encoding="utf-8",
+    )
+
+    def run(cmd: Path):
+        with exo_pair.MockExoServer(prompt_tokens=8192, emit_token_ids=False) as mock:
+            record, _details = exo_pair.run_exo_pair(
+                base_url=mock.base_url,
+                model_key="Llama-3.1-8B-Q4",
+                token_id_cmd=f"{sys.executable} {cmd}",
+                dry_run=False,
+            )
+        return record
+
+    bad = run(wrong)
+    good = run(right)
+    good_again = run(right)
+
+    assert bad["metrics"]["token_digest"] != canonical
+    assert good["metrics"]["token_digest"] == canonical
+    assert (
+        good_again["metrics"]["token_digest"] == good["metrics"]["token_digest"]
+    )
+    for record in (bad, good, good_again):
+        assert record["metrics"]["errors"] == []
+        assert record["metrics"]["generated_tokens"] == 32
+
+
+def test_malformed_token_id_cmd_fails_pair_run(tmp_path: Path) -> None:
+    """CLX-3: a token-id-cmd that does not emit an int array fails the run:
+    errors recorded, empty digest, no text substitution."""
+    broken = tmp_path / "broken_ids.py"
+    broken.write_text("print('not json')\n", encoding="utf-8")
+    with exo_pair.MockExoServer(prompt_tokens=8192, emit_token_ids=False) as mock:
+        record, details = exo_pair.run_exo_pair(
+            base_url=mock.base_url,
+            model_key="Llama-3.1-8B-Q4",
+            token_id_cmd=f"{sys.executable} {broken}",
+            dry_run=False,
+        )
+    assert record["metrics"]["errors"]
+    assert record["metrics"]["token_digest"] == ""
+    assert details["token_digest_basis"] == "unavailable"
