@@ -55,7 +55,8 @@ def kv_file_path(name, base=None):
 
 def kv_put(path, rfile, nbytes):
     """Write nbytes from rfile to path via a temp file + rename, so a reader
-    never sees a half-written slot file."""
+    never sees a half-written slot file. A short body raises instead of
+    publishing a truncated file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".kv-")
     n = 0
@@ -67,6 +68,8 @@ def kv_put(path, rfile, nbytes):
                     break
                 f.write(chunk)
                 n += len(chunk)
+        if n != nbytes:
+            raise ValueError("short body: %d of %d bytes" % (n, nbytes))
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -586,6 +589,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "empty body"})
             try:
                 return self._json(200, {"bytes": kv_put(path, self.rfile, n)})
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
             except OSError as e:
                 return self._json(500, {"error": str(e)})
         if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start", "/v1/gpu-cap"):

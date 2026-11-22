@@ -67,11 +67,29 @@ def test_kv_put_streams_and_renames(tmp_path):
     assert [f for f in os.listdir(str(tmp_path)) if f.startswith(".kv-")] == []
 
 
-def test_kv_put_cleans_the_temp_file_on_short_body(tmp_path):
+def test_kv_put_refuses_a_short_body(tmp_path):
+    """A body shorter than Content-Length must not publish a truncated slot file."""
     path = os.path.join(str(tmp_path), "slot.bin")
-    assert agent.kv_put(path, io.BytesIO(b"short"), 100) == 5
-    assert open(path, "rb").read() == b"short"
+    with pytest.raises(ValueError):
+        agent.kv_put(path, io.BytesIO(b"short"), 100)
+    assert not os.path.exists(path)
     assert [f for f in os.listdir(str(tmp_path)) if f.startswith(".kv-")] == []
+
+
+def test_kv_post_short_body_gets_400_and_writes_nothing(kv_agent):
+    """End to end: a dropped connection mid-body is a 400, not a 200 + short file."""
+    import socket
+    url, kvdir = kv_agent
+    with socket.create_connection(("127.0.0.1", int(url.rpartition(":")[2]))) as s:
+        s.sendall(b"POST /v1/kv?name=x.bin HTTP/1.1\r\nHost: x\r\n"
+                  b"X-Cluster-Token: " + TOKEN.encode() +
+                  b"\r\nContent-Length: 100\r\nContent-Type: application/octet-stream\r\n\r\nshort")
+        s.shutdown(socket.SHUT_WR)
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            resp += s.recv(4096)
+    assert b" 400 " in resp.split(b"\r\n", 1)[0]
+    assert os.listdir(kvdir) == []
 
 
 def test_kv_post_then_get_roundtrip(kv_agent):
@@ -113,3 +131,47 @@ def test_kv_needs_the_token(kv_agent, method):
     code, _ = _req(url, method, "/v1/kv?name=slot.bin", b"x" if method == "POST" else None, token="wrong")
     assert code == 403
     assert os.listdir(kvdir) == []
+
+
+def test_agent_push_refuses_a_short_write_reply(monkeypatch, tmp_path):
+    """The engine must not report a full transfer when the agent wrote less."""
+    from omarchy_cluster import joint_engine as je
+    src = tmp_path / "s.bin"
+    src.write_bytes(b"12345")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"bytes": 3}).encode()
+
+    monkeypatch.setattr(je.client, "urlopen", lambda req, timeout, pin=None: _Resp())
+    monkeypatch.setattr(je.client, "agent_url", lambda *a, **k: "https://x/v1/kv")
+    monkeypatch.setattr(je.client, "_headers", lambda extra=None, token=None: {})
+    with pytest.raises(je.JointError):
+        je._agent_push("10.0.0.9", 8025, "s.bin", str(src))
+
+
+def test_agent_push_accepts_a_matching_byte_count(monkeypatch, tmp_path):
+    from omarchy_cluster import joint_engine as je
+    src = tmp_path / "s.bin"
+    src.write_bytes(b"12345")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"bytes": 5}).encode()
+
+    monkeypatch.setattr(je.client, "urlopen", lambda req, timeout, pin=None: _Resp())
+    monkeypatch.setattr(je.client, "agent_url", lambda *a, **k: "https://x/v1/kv")
+    monkeypatch.setattr(je.client, "_headers", lambda extra=None, token=None: {})
+    assert je._agent_push("10.0.0.9", 8025, "s.bin", str(src)) == 5

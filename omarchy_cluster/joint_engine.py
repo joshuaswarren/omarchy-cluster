@@ -109,7 +109,10 @@ def _agent_push(ip, port, name, src, timeout=600):
                                          "Content-Type": "application/octet-stream",
                                          "Content-Length": str(size)}))
         with client.urlopen(req, timeout) as r:
-            json.loads(r.read())
+            reply = json.loads(r.read())
+    if reply.get("bytes") != size:
+        raise JointError("transport", "agent wrote %s of %d bytes for %s"
+                         % (reply.get("bytes"), size, name))
     return size
 
 
