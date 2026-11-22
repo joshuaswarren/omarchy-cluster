@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -9,6 +10,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from omarchy_cluster import chat
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
@@ -126,6 +130,48 @@ def test_streamed_pieces_print_as_one_line_with_the_default_writer(gateway, caps
 
     chat.repl(url, read=read)
     assert capsys.readouterr().out == "Hello world\n"
+
+
+def test_streamed_reply_renders_one_line_byte_identical_to_golden(capsys):
+    """Issue 121 / commit 8430d81 regression: over a canned SSE stream — the real
+    chat_stream wire path, not a stubbed iterator — the default writer renders
+    exactly one line per reply, byte-identical across runs against the golden."""
+    body = (FIXTURES / "streamed_reply.sse").read_bytes()
+    golden = (FIXTURES / "streamed_reply.golden").read_bytes()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = "http://127.0.0.1:%d" % server.server_port
+        renders = []
+        for _ in range(2):
+            feed = iter(["hi"])
+
+            def read(prompt):
+                try:
+                    return next(feed)
+                except StopIteration:
+                    raise EOFError from None
+
+            chat.repl(url, read=read)
+            renders.append(capsys.readouterr().out.encode())
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert renders[0] == renders[1] == golden
+    assert renders[0].count(b"\n") == 1
 
 
 def test_a_mid_stream_error_terminates_the_partial_reply_line(monkeypatch):
