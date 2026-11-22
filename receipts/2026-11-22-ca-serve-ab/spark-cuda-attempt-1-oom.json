@@ -1,0 +1,14 @@
+{
+  "attempt": 1,
+  "utc": "2026-11-22T08:40:36Z",
+  "label": "spark-cuda-shared-with-remnic",
+  "command": "python3 -m omarchy_cluster.serve_ab --label spark-cuda-shared-with-remnic --device cuda --llama-server ~/scratch/llama.cpp/build-cuda/bin/llama-server --port 8134 --out ~/scratch/serve-ab/spark-cuda.json",
+  "llama_server_sha16": "see build-cuda/bin/llama-server (sm_120, CUDA 13.0.88, source cb44fdb)",
+  "gguf_sha256": "8cdb57cbb880d313736a9bc4e3d3d2485f145b5e19cf33783746e753e82641fc",
+  "failure": "cudaSetDevice(physical_id) returned CUDA error out of memory at ggml-cuda.cu:394 during ggml_cuda_init - before any model load; llama-server exited status -6 (ggml_abort backtrace); serve_ab RuntimeError health-wait status -6",
+  "memory_at_failure": {"unified_gb_total": 121, "cpu_used_gb": 98, "cpu_free_gb": 0, "available_gb": 23, "note": "available is page cache only; GPU unified pool fully held by co-tenants"},
+  "cotenants": ["llama-server port 8095 remnic-core cos401-flash-next-jwcore4b Q4_K_M 256K ctx parallel 8 kv-unified q8 KV", "llama-server port 8098 qwen3-reranker-0.6b q8 ngl 99"],
+  "ruling_context": "Main 02:38 ordered run-alongside-remnic with per-round overlap discard; arm cannot init a CUDA context in 0 GB free; escalated to Main 08:43Z",
+  "evidence": "~/scratch/serve-ab/spark-cuda-run.log",
+  "sampler": "~/scratch/serve-ab/remnic-samples.log"
+}
