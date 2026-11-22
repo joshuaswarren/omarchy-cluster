@@ -8,9 +8,9 @@ Use synchronized clocks, matching RPC-enabled llama.cpp builds, and the exact `Q
 
 **Budget disk and RAM.** The model file is 1.3 GB; keep it on a filesystem with at least 2 GB free. On the Mac, `/tmp` is a tmpfs, so the model there costs RAM.
 
-Both hosts need **socat with OpenSSL support** on `PATH`. On Debian/Ubuntu (including DGX Spark): `sudo apt install socat`. On Omarchy/Arch: `sudo pacman -S socat`. Run `socat -V | grep WITH_OPENSSL` on both. See `bash two-node-proof.sh --help` for other tools; the Spark sampler uses `nvidia-smi --query-compute-apps`, not `pmon`. Verify the three kit files with `sha256sum -c --strict kit.sha256`.
+Both hosts need **socat with OpenSSL support** on `PATH`. On Debian/Ubuntu (including DGX Spark): `sudo apt install socat`. On Omarchy/Arch: `sudo pacman -S socat`. Run `socat -V | grep WITH_OPENSSL` on both. See `bash two-node-proof.sh --help` for other tools; the Spark sampler uses `nvidia-smi --query-compute-apps`, not `pmon`. Verify the four kit files with `sha256sum -c --strict kit.sha256`.
 
-**Run the preflight first.** `two-node-proof.sh --check` takes the same arguments as the run and prints one PASS/FAIL line per prerequisite (source commit, model hash, fresh OUT, llama-server build, socat with OpenSSL, required tools, a venv that has pip, setuptools and wheel, clock sync, free ports, TLS material, modes and certificate verification, routable peer addresses, passwordless sudo, disk space, AGX counters and UFW on the Mac, `nvidia-smi` and `MemAvailable` on the Spark). It changes nothing. The run itself stops at the first missing prerequisite, so a stranger otherwise finds them one at a time.
+**One command runs preflight and then the arm.** `./two-node-proof mac …` prints every PASS/FAIL prerequisite line and only starts the proof when preflight reports `CHECKS 0`. Use `./two-node-proof --check …` when you want the same preflight without launching.
 
 Follow only **Make short-lived certificates** in [the secure RPC recipe](../../docs/secure-rpc.md). For the Mac certificate, use `san=DNS:cluster-m2-rpc,IP:$M2_ADDR` so it verifies by both name and address. Let the kit set up and tear down the relay and scoped firewall rule. Do not open the raw RPC port or share the CA key. The TLS directory must be mode `700` and the private key mode `600`, and each host gets only its own role's files (`ca.crt`, `m2.crt`, `m2.key` on the Mac; `ca.crt`, `spark.crt`, `spark.key` on the Spark). `OUT` must not exist; `TLS` is disposable. The script takes every path as a positional argument (apart from the optional `SOCAT` override, nothing is read from the environment): `SOURCE`, `GGUF`, `OUT`, `LLAMA_SERVER`, `TLS`, `M2_ADDR`, `RPC_SERVER` (Mac only) and `SPARK_ADDR` (Mac only). Reserve ports `24820`, `24831`, `24832`, `24860`, `24861` (Mac) and `24864` (Spark).
 
@@ -19,7 +19,7 @@ The Mac arm needs an exclusive GPU window: the kit stops an `omarchy-cluster` se
 Mac first:
 
 ```bash
-bash two-node-proof.sh mac "$SOURCE" "$GGUF" "$OUT" "$LLAMA_SERVER" "$TLS" "$M2_ADDR" "$RPC_SERVER" "$SPARK_ADDR"
+./two-node-proof mac "$SOURCE" "$GGUF" "$OUT" "$LLAMA_SERVER" "$TLS" "$M2_ADDR" "$RPC_SERVER" "$SPARK_ADDR"
 ```
 
 On Spark, use an operator-approved window for the host-wide cache drop. Each CUDA launch runs `sync` and `sudo -n sysctl -q vm.drop_caches=3`, records `MemFree`, `MemAvailable`, `Cached`, and resident GPU allocations, and refuses if `MemFree` is below 6 GiB. The cache drop can temporarily slow other workloads; it does not stop them.
@@ -27,7 +27,7 @@ On Spark, use an operator-approved window for the host-wide cache drop. Each CUD
 After the Mac prints `READY`, run on Spark (the Mac waits up to four minutes):
 
 ```bash
-bash two-node-proof.sh spark "$SOURCE" "$GGUF" "$OUT" "$LLAMA_SERVER" "$TLS" "$M2_ADDR"
+./two-node-proof spark "$SOURCE" "$GGUF" "$OUT" "$LLAMA_SERVER" "$TLS" "$M2_ADDR"
 ```
 
 After Spark exits, stop the Mac command with Ctrl-C so it can tear down. Copy both output directories to one host and verify them together:
