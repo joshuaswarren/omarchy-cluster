@@ -17,9 +17,9 @@ from omarchy_cluster import token as cluster_token
 TOKEN = "t0k3n-for-the-test"
 ACTIONS = ("rank_start", "rank_stop", "rpc_start", "gpu_cap", "tcp_rtt", "udp_rtt", "blast", "sink_serve",
            "iperf_server", "iperf_client")
-GET_ROUTES = ["/v1/health", "/v1/facts", "/v1/nothing"]
+GET_ROUTES = ["/v1/health", "/v1/facts", "/v1/kv?name=x.bin", "/v1/nothing"]
 POST_ROUTES = ["/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start", "/v1/gpu-cap", "/v1/rtt", "/v1/blast",
-               "/v1/sink-serve", "/v1/iperf-server", "/v1/iperf-client", "/v1/nothing"]
+               "/v1/sink-serve", "/v1/iperf-server", "/v1/iperf-client", "/v1/kv?name=x.bin", "/v1/nothing"]
 
 
 @pytest.fixture

@@ -4,7 +4,8 @@
 
 - Logs live in `~/.local/share/omarchy-cluster/`: `gateway.log` on the gateway
   machine, `rank0.log` / `rank1.log` / ... on each node, `agent.log` for the agent,
-  `llamacpp-engine.log` for the llama.cpp engine.
+  `llamacpp-engine.log` for the llama.cpp engine, `joint-engine.log` and
+  `joint-decode-llama.log` for the joint engine.
 - `omarchy-cluster stop` stops the gateway and every rank and sweeps the ports.
 - `omarchy-cluster guard` polls memory and stops the run when a Linux node has
   under 2 GB available, a Mac has under 15 percent memory pressure-free or
@@ -75,6 +76,21 @@ delete `~/.local/state/omarchy-cluster/layer-ms.json` and restart `serve`.
   limit. Treat long restatements as a soft loop and force the answer channel.
 - llama-server warm-up reads every expert of a mixture-of-experts model; the
   receipt runs pass `--llama-arg=--no-warmup`. Remember `=` in `--llama-arg=`.
+
+## Joint engine (`--engine joint`)
+
+- `... needs --slot-save-path for slot save/restore`: the prefill or decode
+  llama-server was started without `--slot-save-path`; `/slots/N?action=save`
+  answers 400 then. On the decode side `serve` passes it itself. On the
+  prefill host point it at that node's agent kv dir
+  (`~/.local/state/omarchy-cluster/kv`) so `/v1/kv` can reach the file.
+- A `transport` error naming the agent means the pinned-TLS fetch to
+  `--prefill-kv HOST:PORT` failed — check the pin (`pin` / `bootstrap`), not
+  the llama-server. A missing file answers 404.
+- Both servers must load the same GGUF and `-c`; `serve` warns on a `/props`
+  model-name mismatch but cannot see the remote context size.
+- Requests serialize on one slot file. If decode stalls, look for another
+  client on the same slot or a stale `joint-kv.bin`.
 
 ## Loading
 

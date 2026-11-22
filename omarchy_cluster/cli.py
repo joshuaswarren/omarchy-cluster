@@ -552,6 +552,8 @@ def cmd_serve(args):
         return _serve_llamacpp(args)
     if args.engine == "sushi":
         return _serve_sushi(args)
+    if args.engine == "joint":
+        return _serve_joint(args)
     explicit = bool(args.split and getattr(args, "nodes", None))
     plan = _explicit_plan(args) if explicit else cmd_place(args)
     if plan["mode"] == "none":
@@ -625,13 +627,13 @@ def _write_state(state):
         json.dump(state, f, indent=2)
 
 
-def _spawn(cmd, log_name):
+def _spawn(cmd, log_name, env=None):
     """Start a local child in its own process group, logging to log_name."""
     log = os.path.expanduser("~/.local/share/omarchy-cluster/" + log_name)
     os.makedirs(os.path.dirname(log), exist_ok=True)
     with open(log, "w") as lf:
         child = subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
-                                 stdout=lf, stderr=subprocess.STDOUT)
+                                 stdout=lf, stderr=subprocess.STDOUT, env=env)
     return child, log
 
 
@@ -751,6 +753,71 @@ def _serve_sushi(args):
     except (TimeoutError, RuntimeError) as e:
         sys.exit("sushi engine failed (log: %s): %s" % (log, e))
     print("sushi engine pid %s (log: %s)" % (engine.pid, log))
+    _start_gateway(state, args.port, engine_url, args.max_concurrent)
+
+
+def _serve_joint(args):
+    """Phase-separated serving (CL08): a llama-server on another host — a CUDA
+    box, a big CPU node — evaluates each prompt once and saves its slot KV;
+    the file hops through the node agents and this host's decode llama-server
+    generates every token from it. The joint engine fronts both and answers
+    the gateway's /generate contract."""
+    from . import facts, joint_engine, llamacpp_engine
+    if not args.prefill_url:
+        sys.exit("--engine joint needs --prefill-url http://HOST:PORT of the prefill "
+                 "llama-server (start it with --slot-save-path DIR)")
+    if not args.prefill_kv:
+        sys.exit("--engine joint needs --prefill-kv ENDPOINT naming where the prefill "
+                 "server's --slot-save-path dir is reachable: local[=DIR] on this host, "
+                 "or HOST:PORT of that node's agent (its kv dir is %s)" % joint_engine.KV_DIR)
+    try:
+        info = llamacpp_engine.gguf_info(args.model)
+    except (OSError, ValueError) as e:
+        sys.exit("cannot read GGUF %s: %s" % (args.model, e))
+    try:
+        with urllib.request.urlopen(args.prefill_url.rstrip("/") + "/props", timeout=5) as r:
+            props = json.loads(r.read())
+    except (OSError, ValueError) as e:
+        sys.exit("prefill llama-server at %s does not answer /props: %s" % (args.prefill_url, e))
+    remote = os.path.basename(props.get("model_path") or "")
+    if remote and remote != os.path.basename(args.model):
+        print("warning: prefill loads %s but decode loads %s — slot restore needs "
+              "the same model" % (remote, os.path.basename(args.model)))
+    kv_dir = os.path.expanduser(args.kv_dir)
+    os.makedirs(kv_dir, exist_ok=True)
+    os.makedirs(os.path.expanduser("~/.local/state/omarchy-cluster"), exist_ok=True)
+    state = {"engine": "joint", "stages": [], "local_pids": [], "gateway_port": args.port,
+             "engine_port": args.engine_port}
+    decode_port = args.engine_port + 1
+    # raw llama-server (not the llamacpp engine wrapper): it keeps its own GPU
+    # backend and the joint engine drives it on /completion + /slots directly.
+    cmd = [args.llama_server, "-m", args.model, "--host", "127.0.0.1", "--port", str(decode_port),
+           "-c", str(args.ctx), "-t", str(facts.perf_cores()),
+           "--slot-save-path", kv_dir] + list(args.llama_arg)
+    server, log = _spawn(cmd, "joint-decode-llama.log", env=llamacpp_engine.server_env())
+    state["local_pids"].append(server.pid)
+    _write_state(state)
+    decode_url = "http://127.0.0.1:%d" % decode_port
+    try:
+        llamacpp_engine.wait_http(decode_url + "/health", deadline_s=3600.0, proc=server)
+    except (TimeoutError, RuntimeError) as e:
+        sys.exit("decode llama-server failed (log: %s): %s" % (log, e))
+    print("decode llama-server pid %s on :%d (log: %s)" % (server.pid, decode_port, log))
+    engine, log = _spawn([sys.executable, "-m", "omarchy_cluster.joint_engine",
+                          "--prefill-url", args.prefill_url, "--decode-url", decode_url,
+                          "--prefill-kv", args.prefill_kv, "--decode-kv", "local=" + kv_dir,
+                          "--kv-dir", kv_dir, "--slot", str(args.joint_slot),
+                          "--kv-name", args.joint_kv_name,
+                          "--port", str(args.engine_port), "--model", os.path.basename(args.model)],
+                         "joint-engine.log")
+    state["local_pids"].append(engine.pid)
+    _write_state(state)
+    engine_url = "http://127.0.0.1:%d" % args.engine_port
+    try:
+        llamacpp_engine.wait_http(engine_url + "/health", proc=engine)
+    except (TimeoutError, RuntimeError) as e:
+        sys.exit("joint engine failed (log: %s): %s" % (log, e))
+    print("joint engine pid %s (log: %s)" % (engine.pid, log))
     _start_gateway(state, args.port, engine_url, args.max_concurrent)
 
 
@@ -1196,9 +1263,11 @@ def main(argv=None):
     p = sub.add_parser("serve", help="plan, launch ranks, serve OpenAI on :8020")
     p.add_argument("model", help="MLX model (HF id or path), or a .gguf file with --engine llamacpp; "
                                  "with --engine sushi it is a label only (the pack is --sushi-model)")
-    p.add_argument("--engine", choices=("mlx", "llamacpp", "sushi"), default="mlx",
+    p.add_argument("--engine", choices=("mlx", "llamacpp", "sushi", "joint"), default="mlx",
                    help="mlx: pipeline ranks across nodes; llamacpp: llama-server on this "
-                        "host, plus a USB iPhone RPC device when the model does not fit here")
+                        "host, plus a USB iPhone RPC device when the model does not fit here; "
+                        "joint: a remote llama-server prefills, this host's llama-server "
+                        "decodes from its saved slot KV")
     p.add_argument("--llama-server", default="llama-server", help="llama-server binary (llamacpp)")
     p.add_argument("--sushi", default="sushi", help="sushi binary (sushi)")
     p.add_argument("--sushi-model", default=None,
@@ -1243,6 +1312,20 @@ def main(argv=None):
                    help="llamacpp with --rpc-node: keep exactly the first N layers on this host's CPU "
                         "(mmapped from the GGUF) and the nodes in the given order. Default: choose the "
                         "order and N that page the fewest host bytes from disk, then use the fewest nodes")
+    p.add_argument("--prefill-url", default=None, metavar="URL",
+                   help="joint: base URL of the prefill llama-server, started there with "
+                        "--slot-save-path DIR (same model and -c as here)")
+    p.add_argument("--prefill-kv", default=None, metavar="ENDPOINT",
+                   help="joint: where the prefill server's slot dir is reachable — "
+                        "local[=DIR] or HOST:PORT of that node's agent")
+    p.add_argument("--kv-dir", default="~/.local/state/omarchy-cluster/kv",
+                   help="joint: this host's slot-save dir for the decode llama-server and "
+                        "'local' kv endpoints (default %(default)s)")
+    p.add_argument("--joint-slot", type=int, default=0,
+                   help="joint: the llama-server slot used on both ends (default %(default)s); "
+                        "keep other clients off it")
+    p.add_argument("--joint-kv-name", default="joint-kv.bin",
+                   help="joint: the slot file name inside the kv dirs (default %(default)s)")
     p.add_argument("--ctx", type=int, default=2048)
     p.add_argument("--links", default=None)
     p.add_argument("--no-decode", action="append", default=[])

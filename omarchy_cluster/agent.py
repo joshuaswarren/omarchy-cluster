@@ -5,12 +5,15 @@ import argparse
 import hmac
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -35,6 +38,40 @@ def default_rank_python():
         if p and os.access(os.path.expanduser(p), os.X_OK):
             return os.path.expanduser(p)
     return sys.executable
+
+
+# llama-server slot files (joint-engine KV handoff) live flat under this dir;
+# /v1/kv serves only names that match the basename charset below.
+KV_DIR = os.path.expanduser("~/.local/state/omarchy-cluster/kv")
+_KV_NAME = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
+
+
+def kv_file_path(name, base=None):
+    """Resolve a kv basename under the kv dir; a name may not leave it."""
+    if not _KV_NAME.match(name) or name in (".", "..") or os.path.basename(name) != name:
+        raise ValueError("bad kv name %r" % name)
+    return os.path.join(base or KV_DIR, name)
+
+
+def kv_put(path, rfile, nbytes):
+    """Write nbytes from rfile to path via a temp file + rename, so a reader
+    never sees a half-written slot file."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".kv-")
+    n = 0
+    try:
+        with os.fdopen(fd, "wb") as f:
+            while n < nbytes:
+                chunk = rfile.read(min(1 << 20, nbytes - n))
+                if not chunk:
+                    break
+                f.write(chunk)
+                n += len(chunk)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return n
 
 
 def median(xs):
@@ -514,11 +551,43 @@ class Handler(BaseHTTPRequestHandler):
             f["heartbeat_seq"] = self.agent.hb.seq
             f["heartbeat_age_s"] = round(self.agent.hb.age(), 3)
             return self._json(200, f)
+        if self.path.startswith("/v1/kv"):
+            try:
+                path = kv_file_path(urllib.parse.parse_qs(
+                    urllib.parse.urlparse(self.path).query).get("name", [""])[0])
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
+            try:
+                st = os.stat(path)
+                if not os.path.isfile(path):
+                    raise FileNotFoundError(path)
+            except OSError:
+                return self._json(404, {"error": "not found"})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(st.st_size))
+            self.end_headers()
+            with open(path, "rb") as f:
+                shutil.copyfileobj(f, self.wfile, 1 << 20)
+            return
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
         if not self._authed():
             return
+        if self.path.startswith("/v1/kv"):
+            try:
+                path = kv_file_path(urllib.parse.parse_qs(
+                    urllib.parse.urlparse(self.path).query).get("name", [""])[0])
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
+            n = int(self.headers.get("Content-Length") or 0)
+            if n <= 0:
+                return self._json(400, {"error": "empty body"})
+            try:
+                return self._json(200, {"bytes": kv_put(path, self.rfile, n)})
+            except OSError as e:
+                return self._json(500, {"error": str(e)})
         if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start", "/v1/gpu-cap"):
             try:
                 req = self._body()
