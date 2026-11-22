@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 TOKEN = re.compile(r'n_gen = (\d+), n_remaining = -?\d+, next token:\s+(\d+)')
-ID_SHA = '284de5541d2d52e9678ae8f832eb0efcb5d6c72fe605e653b84ddfb4976bf682'
+REFERENCE_ID_SHA = '284de5541d2d52e9678ae8f832eb0efcb5d6c72fe605e653b84ddfb4976bf682'
+ID_SHA = REFERENCE_ID_SHA  # kept for callers that pin our reference digest
 
 
 def parse_arm(root, name):
@@ -20,12 +21,51 @@ def parse_arm(root, name):
         raise ValueError(f'{name}: incomplete or duplicate decode log')
     ids = [token for _, token in pairs]
     digest = hashlib.sha256(json.dumps(ids, separators=(',', ':')).encode()).hexdigest()
-    if digest != ID_SHA:
-        raise ValueError(f'{name}: token IDs do not match the pinned reference (got {digest})')
     rate = response['timings']['tokens_per_s']
     if not math.isfinite(rate) or rate <= 0:
         raise ValueError(f'{name}: invalid decode rate')
-    return {'tokens': len(ids), 'ids_sha256': digest, 'decode_tokens_per_s': rate}
+    # The reference digest is our run, not a requirement: an outside tester's
+    # tokens may differ. Parity across the three arms is what the proof needs.
+    return {
+        'tokens': len(ids),
+        'ids_sha256': digest,
+        'matches_reference': digest == REFERENCE_ID_SHA,
+        'decode_tokens_per_s': rate,
+    }
+
+
+def check_parity(digests):
+    digests = list(digests)
+    if len(digests) != 3 or not all(isinstance(d, str) and re.fullmatch(r'[0-9a-f]{64}', d) for d in digests):
+        raise ValueError(f'expected three SHA-256 token digests (mac, spark, shared), got {digests!r}')
+    if len(set(digests)) != 1:
+        raise ValueError(f'token IDs differ between arms: {sorted(set(digests))}')
+    return True
+
+
+# Current builds print "version: 1.0.0-dev (build 1, commit 19bc41d)"; older ones "version: 5123 (19bc41d)".
+LLAMA_VERSION = re.compile(r'\bversion:\s*(\S+)')
+LLAMA_COMMIT = (
+    re.compile(r'\bcommit:?\s+([0-9a-f]{7,40})\b'),
+    re.compile(r'\bversion:\s*\S+\s+\(([0-9a-f]{7,40})\)'),
+)
+
+
+def llama_build(text):
+    version = LLAMA_VERSION.search(text)
+    commit = next((match.group(1) for match in (pattern.search(text) for pattern in LLAMA_COMMIT) if match), None)
+    if version is None or commit is None:
+        raise ValueError(f'cannot read llama-server version and commit from {text.strip()[:200]!r}')
+    return {'version': version.group(1), 'commit': commit}
+
+
+def check_llama_versions(mac_text, spark_text):
+    mac, spark = llama_build(mac_text), llama_build(spark_text)
+    # The build number and abbreviation length depend on clone depth; the commit is the identity.
+    short, long = sorted((mac['commit'], spark['commit']), key=len)
+    if not long.startswith(short):
+        raise ValueError(f'llama-server builds differ between hosts: mac {mac}, spark {spark}')
+    return True
 
 
 def stamp(text):
@@ -92,15 +132,42 @@ def rpc_received(path):
         raise ValueError('expected one active test RPC connection with byte counters')
     return int(counts[0])
 
+UFW_ACTIVE = re.compile(r'(?m)^Status: active$')
+PROOF_RULE = re.compile(r'(?m)^\[ *\d+\] 24861/tcp +ALLOW IN +\d{1,3}(?:\.\d{1,3}){3} +# cluster-proof-[0-9a-f]{16}$')
+
+
+def check_firewall(mac):
+    snapshots = {}
+    for stage in ('before', 'during', 'after'):
+        path = mac / f'ufw-{stage}.txt'
+        if not path.is_file():
+            raise ValueError(f'firewall: missing ufw-{stage}.txt')
+        snapshots[stage] = path.read_bytes().decode(errors='replace')
+    before, during, after = snapshots['before'], snapshots['during'], snapshots['after']
+    if not UFW_ACTIVE.search(before):
+        raise ValueError('firewall: UFW was not active before the run')
+    if re.search(r'\b24861\b', before):
+        raise ValueError('firewall: a rule for port 24861 existed before the run')
+    if not UFW_ACTIVE.search(during) or not PROOF_RULE.search(during):
+        raise ValueError('firewall: the scoped 24861/tcp proof rule was not active during the run')
+    if after != before:
+        raise ValueError('firewall not restored')
+    return True
+
+
 def verify(mac, spark):
     if any((root / 'exit-code').read_text().strip() != '0' for root in (mac, spark)):
         raise ValueError('proof or teardown failed on at least one host')
     run_ids = [(root / 'run-ca.sha256').read_text().strip() for root in (mac, spark)]
     if run_ids[0] != run_ids[1] or not re.fullmatch(r'[0-9a-f]{64}', run_ids[0]):
         raise ValueError('run receipts use different test CAs')
-    if (mac / 'ufw-before.txt').read_bytes() != (mac / 'ufw-after.txt').read_bytes():
-        raise ValueError('firewall not restored')
+    check_firewall(mac)
     single_mac, single_spark, shared = (parse_arm(root, name) for root, name in ((mac, 'mac'), (spark, 'spark'), (spark, 'shared')))
+    check_parity([single_mac['ids_sha256'], single_spark['ids_sha256'], shared['ids_sha256']])
+    check_llama_versions(
+        (mac / 'llama-version.txt').read_text(),
+        (spark / 'llama-version.txt').read_text(),
+    )
     single_mac['vulkan'] = agx(mac / 'gpu.tsv', window(mac, 'mac'))
     shared_window = window(spark, 'shared')
     shared['vulkan'] = agx(mac / 'gpu.tsv', shared_window)
@@ -116,10 +183,12 @@ def main():
     args = sys.argv[1:]
     if len(args) == 3 and args[0] == 'arm' and args[2] in ('mac', 'spark', 'shared'):
         result = parse_arm(Path(args[1]), args[2])
+    elif len(args) == 2 and args[0] == 'llama-build':
+        result = llama_build(Path(args[1]).read_text(errors='replace'))
     elif len(args) == 3 and args[0] == 'combine':
         result = verify(Path(args[1]), Path(args[2]))
     else:
-        raise SystemExit('usage: check-proof.py arm RUN {mac|spark|shared} | combine MAC_RUN SPARK_RUN')
+        raise SystemExit('usage: check-proof.py arm RUN {mac|spark|shared} | llama-build VERSION_FILE | combine MAC_RUN SPARK_RUN')
     print(json.dumps(result, indent=2))
 
 

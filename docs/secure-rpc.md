@@ -23,7 +23,7 @@ openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 1 \
   -addext 'keyUsage=critical,keyCertSign,cRLSign' -keyout ca.key -out ca.crt
 for peer in m2 spark; do
   case $peer in
-    m2) cn=cluster-m2-rpc; purpose=serverAuth; san=IP:$M2_ADDR ;;
+    m2) cn=cluster-m2-rpc; purpose=serverAuth; san=DNS:cluster-m2-rpc,IP:$M2_ADDR ;;
     spark) cn=cluster-spark-client; purpose=clientAuth; san=DNS:$cn ;;
   esac
   openssl req -new -newkey rsa:2048 -nodes -subj "/CN=$cn" \
@@ -34,6 +34,7 @@ for peer in m2 spark; do
   cp ca.crt "$peer/ca.crt"
 done
 openssl verify -CAfile ca.crt -purpose sslserver -verify_ip "$M2_ADDR" m2/m2.crt
+openssl verify -CAfile ca.crt -purpose sslserver -verify_hostname cluster-m2-rpc m2/m2.crt
 openssl verify -CAfile ca.crt -purpose sslclient spark/spark.crt
 rm -- ca.key m2/m2.csr spark/spark.csr
 ```
