@@ -49,6 +49,20 @@ def test_run_digest_is_order_sensitive():
     assert len(combined) == 64
 
 
+def test_server_command_pins_device_when_given():
+    base = serve_ab.server_command("/bin/llama-server", serve_ab.Path("/m.gguf"), 8129, 8, 4096, None)
+    assert "-dev" not in base
+    pinned = serve_ab.server_command("/bin/llama-server", serve_ab.Path("/m.gguf"), 8129, 8, 4096, "Vulkan0")
+    assert pinned[-2:] == ["-dev", "Vulkan0"]
+    assert "-ngl" in pinned and "99" in pinned
+
+
+def test_device_names_extract_tokens():
+    assert serve_ab.device_names([
+        "Vulkan0: Intel(R) Arc(tm) Pro B60 Graphics (BMG G21)",
+        "Vulkan1: NVIDIA GeForce RTX 5060 Ti"]) == ["Vulkan0", "Vulkan1"]
+
+
 def test_machine_info_has_uname():
     info = serve_ab.machine_info()
     assert "uname" in info and isinstance(info["uname"], str)

@@ -51,14 +51,19 @@ internal card only.
 
 ```sh
 python -m omarchy_cluster.serve_ab --label <arm> --device <cuda|vulkan> \
-    --llama-server <path to the host's GPU llama-server> \
+    --llama-server <path to the host's GPU llama-server> --dev <Vulkan0\|CUDA0> \
     --out <receipt.json> [--port 8129] [--gguf ~/scratch/serve-ab/<file>]
 ```
 
 The runner starts its own llama-server on 127.0.0.1:PORT with `-ngl 99`, waits
 for `/health`, runs the rounds, terminates the server, and writes the receipt
-JSON plus one `Card row:` summary line. The four receipts then feed the unified
-medians receipt committed under `receipts/`.
+JSON plus one `Card row:` summary line. On a host that exposes more than one
+GPU device, pass `--dev <name>`: without the pin llama-server may spread layers
+across every visible device, which is a split serve rather than one arm. The
+runner refuses a `--dev` name its llama-server does not list. The first C-a
+B60 attempt ran without the pin on a three-device host and is superseded; its
+receipt stays on file as the audit record. The four receipts then feed the
+unified medians receipt committed under `receipts/`.
 
 ## Shared host notes
 

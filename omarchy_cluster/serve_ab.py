@@ -144,11 +144,27 @@ def medians(runs: list[dict]) -> dict:
     return out
 
 
+def server_command(llama_server: str, gguf: Path, port: int, threads: int, ctx: int, dev: str | None) -> list[str]:
+    """llama-server argv for one arm. `-dev <name>` pins the GPU: a host that
+    exposes several Vulkan devices would otherwise let llama-server spread
+    layers across all of them, which is a split serve, not one arm."""
+    cmd = [llama_server, "-m", str(gguf), "--host", "127.0.0.1",
+           "--port", str(port), "-c", str(ctx), "-t", str(threads), "-ngl", "99"]
+    if dev:
+        cmd += ["-dev", dev]
+    return cmd
+
+
+def device_names(devices: list[str]) -> list[str]:
+    return [line.split(":", 1)[0].strip() for line in devices if ":" in line]
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--label", required=True, help="arm label recorded in the receipt, e.g. m2max-apple-vulkan")
     p.add_argument("--device", required=True, choices=["cuda", "vulkan"], help="backend family of the llama.cpp build")
     p.add_argument("--llama-server", required=True, help="path to the host's GPU llama-server binary")
+    p.add_argument("--dev", default=None, help="device name to pin, e.g. Vulkan0 or CUDA0; required on multi-GPU hosts")
     p.add_argument("--gguf", type=Path, default=Path.home() / "scratch/serve-ab" / SPEC["file"])
     p.add_argument("--out", type=Path, required=True, help="receipt JSON path")
     p.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
@@ -162,13 +178,15 @@ def main(argv: list[str] | None = None) -> int:
         print("NO-GPU-DEVICE: %s lists no GPU backend; provision a CUDA or Vulkan "
               "llama.cpp build first" % args.llama_server, file=sys.stderr)
         return 3
+    if args.dev and args.dev not in device_names(devices):
+        print("NO-SUCH-DEVICE: %s does not list %s; seen: %s" % (
+            args.llama_server, args.dev, ", ".join(device_names(devices))), file=sys.stderr)
+        return 3
     ensure_gguf(args.gguf)
     version = llama_version(args.llama_server)
     binary_sha = sha256_file(Path(args.llama_server))
 
-    cmd = [args.llama_server, "-m", str(args.gguf), "--host", "127.0.0.1",
-           "--port", str(args.port), "-c", str(args.ctx), "-t", str(args.threads),
-           "-ngl", "99"]
+    cmd = server_command(args.llama_server, args.gguf, args.port, args.threads, args.ctx, args.dev)
     print("llama-server: %s" % " ".join(cmd), flush=True)
     server = subprocess.Popen(cmd, env=server_env(), stdin=subprocess.DEVNULL)
     server_url = "http://127.0.0.1:%d" % args.port
@@ -192,7 +210,8 @@ def main(argv: list[str] | None = None) -> int:
         "schema": SCHEMA, "card": CARD, "label": args.label, "device": args.device,
         "utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "spec": SPEC, "llama_server": {"path": str(args.llama_server), "sha256": binary_sha,
-                                       "version": version, "devices": devices},
+                                       "version": version, "devices": devices,
+                                       "pinned_dev": args.dev},
         "gguf": {"path": str(args.gguf), "sha256": SPEC["sha256"]},
         "settings": {"rounds": args.rounds, "prompts": [pid for pid, _ in PROMPTS],
                      "n_predict": N_PREDICT, "ctx": args.ctx, "threads": args.threads,
