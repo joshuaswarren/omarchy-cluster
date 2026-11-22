@@ -381,3 +381,51 @@ def test_run_stops_before_any_change_when_socat_lacks_openssl(tmp_path):
     assert result.returncode == 2, result.stdout + result.stderr
     assert "socat with OpenSSL" in result.stderr
     assert not (tmp_path / "out").exists()
+
+
+def make_wrapper_probe(tmp_path, check_rc=0):
+    """Copy the wrapper beside a fake launcher so only sequencing is under test."""
+    probe = tmp_path / "kit"
+    probe.mkdir()
+    wrapper = probe / "two-node-proof"
+    wrapper.write_text((KIT / "two-node-proof").read_text())
+    wrapper.chmod(0o755)
+    launcher = probe / "two-node-proof.sh"
+    launcher.write_text(
+        "#!/bin/sh\n"
+        "calls=${0%/*}/calls\n"
+        "printf '%s\\n' \"$*\" >> \"$calls\"\n"
+        "if [ \"$1\" = --help ]; then echo HELP; exit 0; fi\n"
+        "if [ \"$1\" = --check ]; then echo CHECK; exit " + str(check_rc) + "; fi\n"
+        "echo LAUNCH\n"
+    )
+    launcher.chmod(0o755)
+    return wrapper
+
+
+def test_wrapper_delegates_help_to_the_launcher(tmp_path):
+    result = subprocess.run([str(make_wrapper_probe(tmp_path)), "--help"], capture_output=True, text=True, timeout=30, check=True)
+    assert result.stdout == "HELP\n"
+    assert (tmp_path / "kit" / "calls").read_text() == "--help\n"
+
+
+def test_wrapper_runs_preflight_then_launches_once(tmp_path):
+    wrapper = make_wrapper_probe(tmp_path)
+    result = subprocess.run([str(wrapper), "spark", "argument"], capture_output=True, text=True, timeout=30, check=True)
+    assert result.stdout == "== two-node-proof preflight ==\nCHECK\n== preflight passed; starting the proof ==\nLAUNCH\n"
+    assert (tmp_path / "kit" / "calls").read_text() == "--check spark argument\nspark argument\n"
+
+
+def test_wrapper_keeps_explicit_check_preflight_only(tmp_path):
+    wrapper = make_wrapper_probe(tmp_path)
+    result = subprocess.run([str(wrapper), "--check", "spark", "argument"], capture_output=True, text=True, timeout=30, check=True)
+    assert result.stdout == "CHECK\n"
+    assert (tmp_path / "kit" / "calls").read_text() == "--check spark argument\n"
+
+
+def test_wrapper_does_not_launch_after_failed_preflight(tmp_path):
+    wrapper = make_wrapper_probe(tmp_path, check_rc=2)
+    result = subprocess.run([str(wrapper), "spark", "argument"], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 2
+    assert result.stdout == "== two-node-proof preflight ==\nCHECK\n"
+    assert (tmp_path / "kit" / "calls").read_text() == "--check spark argument\n"

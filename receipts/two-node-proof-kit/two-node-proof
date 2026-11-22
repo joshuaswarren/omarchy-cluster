@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# One-command preflight + launcher: check every prerequisite, then start the same arm.
+set -euo pipefail
+base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+launcher="$base/two-node-proof.sh"
+
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+    exec bash "$launcher" --help
+fi
+
+# Keep explicit preflight-only behavior for diagnosing a host without starting a run.
+if [[ ${1:-} == --check ]]; then
+    exec bash "$launcher" "$@"
+fi
+
+printf '%s\n' '== two-node-proof preflight =='
+bash "$launcher" --check "$@"
+printf '%s\n' '== preflight passed; starting the proof =='
+exec bash "$launcher" "$@"
