@@ -1,0 +1,43 @@
+{
+  "schema": "cl02-baseline/1",
+  "run_id": "20261122T051652Z-mac-m2max-macos-dgx-spark-dgxos",
+  "host": {
+    "name": "mac-m2max-macos+dgx-spark-dgxos",
+    "os": "macOS 26.6.2 + Ubuntu 24.04 (DGX OS)",
+    "chip": "Apple M2 Max + NVIDIA GB10",
+    "gpu": "Apple M2 Max GPU + NVIDIA GB10 CUDA"
+  },
+  "engine": {
+    "name": "exo",
+    "version": "0.3.70+a60b95698ca8"
+  },
+  "model": {
+    "id": "Llama-3.1-8B-Q4",
+    "revision": "241a666dad6cb93c8ff213d39a7f34a36bf26db4",
+    "quant": "4bit"
+  },
+  "prompt": {
+    "tokens": 8192,
+    "sha256_16": "2537e823c425e19d"
+  },
+  "sampling": {
+    "temperature": 0,
+    "seed": 42,
+    "max_new_tokens": 32
+  },
+  "metrics": {
+    "token_digest": "9a8a23e474324a44",
+    "generated_tokens": 32,
+    "ttft_s": 0.0462,
+    "decode_tok_s": 433.831,
+    "total_s": 0.1176,
+    "ram_peak_mb": 4820.0,
+    "vram_peak_mb": null,
+    "errors": [],
+    "lan_mbps": 1140.866,
+    "energy_j": null,
+    "power_avg_w": null,
+    "power_source": "none"
+  },
+  "dry_run": true
+}

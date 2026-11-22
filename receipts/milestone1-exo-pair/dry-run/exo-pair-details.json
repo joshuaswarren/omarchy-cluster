@@ -1,0 +1,97 @@
+{
+  "run_id": "20261122T051652Z-mac-m2max-macos-dgx-spark-dgxos",
+  "exo_pin": {
+    "repo": "https://github.com/exo-explore/exo",
+    "commit": "a60b95698ca81737d367443674dd5563cbc9559b",
+    "version": "0.3.70",
+    "exo_model_id": "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
+    "namespace": "omarchy-m1-exo"
+  },
+  "placement": {
+    "node_ids": [
+      "node-mac-m2max",
+      "node-spark-gb10"
+    ],
+    "node_count": 2,
+    "sharding": "Pipeline",
+    "instance_meta": "MlxRing",
+    "instance_id": "dryrun-pair-inst-001"
+  },
+  "nodes": {
+    "node-mac-m2max": {
+      "friendly_name": "mac-m2max-macos",
+      "os": "macOS 26.6.2",
+      "chip": "Apple M2 Max",
+      "gpu": "Apple M2 Max GPU",
+      "memory_snapshot_after": {
+        "ramTotal": {
+          "inBytes": 68719476736
+        },
+        "ramAvailable": {
+          "inBytes": 64424509440
+        }
+      }
+    },
+    "node-spark-gb10": {
+      "friendly_name": "dgx-spark-dgxos",
+      "os": "Ubuntu 24.04 (DGX OS)",
+      "chip": "NVIDIA GB10",
+      "gpu": "NVIDIA GB10 CUDA",
+      "memory_snapshot_after": {
+        "ramTotal": {
+          "inBytes": 137438953472
+        },
+        "ramAvailable": {
+          "inBytes": 134217728000
+        },
+        "vramUsed": {
+          "inBytes": 4404019200
+        }
+      }
+    }
+  },
+  "token_digest_basis": "stream_token_ids",
+  "output_text_sha256_16": "18a265e7c06673c7",
+  "generation_stats": {
+    "prompt_tokens": 8192,
+    "generation_tokens": 32,
+    "prompt_tps": 204800.0,
+    "generation_tps": 500.0,
+    "peak_memory_usage": {
+      "inBytes": 5054136320
+    },
+    "prefix_cache_hit": "none"
+  },
+  "exo_node_system_power": {
+    "source": "exo:/state/nodeSystem:sysPower",
+    "sample_count": 2,
+    "energy_j": 8.5293,
+    "power_avg_w": 72.5
+  },
+  "host_power_probe": {
+    "requested_source": "none",
+    "effective_source": "none",
+    "sample_count": 0
+  },
+  "reference_shape": {
+    "model": "Llama-3.1-8B",
+    "prompt_tokens": 8192,
+    "generated_tokens": 32,
+    "spark_solo_s": {
+      "prefill_s": 1.47,
+      "generation_s": 2.87,
+      "total_s": 4.34
+    },
+    "mac_solo_s": {
+      "prefill_s": 5.57,
+      "generation_s": 0.85,
+      "total_s": 6.42
+    },
+    "combined_s": {
+      "prefill_s": 1.47,
+      "generation_s": 0.85,
+      "total_s": 2.32
+    }
+  },
+  "dry_run": true
+}
