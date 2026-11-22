@@ -1,14 +1,17 @@
-"""Node-loss drill: a real worker process, a real SIGKILL mid-request, a real
-restart — all on localhost, so no cluster hardware is needed."""
+"""Node-loss drill: a real HTTP worker, a real mid-request socket reset, a real
+restart — all in-process on localhost, so no cluster hardware and no spawned
+processes are needed (CI runners may refuse listeners in spawned children)."""
 import json
 import os
+import signal
 import socket
-import subprocess
+import struct
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -16,27 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from omarchy_cluster import agent, drill
 
-# The stand-in for the RPC worker: an HTTP server that answers after a delay.
-# SIGKILL mid-request drops the socket, exactly like a crashed ggml-rpc-server.
-STUB = """
-import json, sys, time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-class H(BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
-    def do_POST(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        self.rfile.read(n)
-        time.sleep(float(sys.argv[2]))
-        body = json.dumps({"reply": "stable-answer"}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
-"""
-
-SLOW_S = 4.0  # request work time inside the stub, long enough to kill mid-flight
+SLOW_S = 3.0  # request work time inside the stub, long enough to kill mid-flight
 
 
 def _free_port():
@@ -47,7 +30,7 @@ def _free_port():
     return port
 
 
-def _tcp_up(port, timeout=5.0):
+def _tcp_up(port, timeout=0.5):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -58,27 +41,61 @@ def _tcp_up(port, timeout=5.0):
     return False
 
 
-class StubWorker:
-    """A real process listening on a real port; kill() is SIGKILL."""
+class Worker:
+    """The stand-in for the RPC worker: an HTTP server that answers after a
+    delay. kill() stops the listener and RSTs every in-flight connection —
+    on the wire that is exactly what a SIGKILLed process looks like."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            w = self.server.worker
+            n = int(self.headers.get("Content-Length") or 0)
+            self.rfile.read(n)
+            w.connections.append(self.connection)
+            time.sleep(w.delay)
+            body = json.dumps({"reply": "stable-answer"}).encode()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except OSError:
+                pass  # the client side was already RST by kill()
 
     def __init__(self, delay=SLOW_S):
-        self.port = _free_port()
         self.delay = delay
-        self.proc = None
+        self.connections = []
+        self.server = None
+        self.port = None
 
     def start(self):
-        self.proc = subprocess.Popen(
-            [sys.executable, "-c", STUB, str(self.port), str(self.delay)],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, start_new_session=True)
-        assert _tcp_up(self.port), "stub worker did not listen on %d" % self.port
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Worker.Handler)
+        srv.daemon_threads = True
+        srv.worker = self
+        self.server = srv
+        self.port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     def kill(self):
-        self.proc.kill()
-        self.proc.wait(5)
+        self.server.shutdown()
+        self.server.server_close()
+        for conn in self.connections:
+            try:
+                # socket.close() defers to the rfile/wfile io refs and leaves
+                # the fd open, so detach the fd and close it with LINGER=0:
+                # that sends RST — the wire signature of a killed process.
+                conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                struct.pack("ii", 1, 0))
+                os.close(conn.detach())
+            except OSError:
+                pass
 
     def wait_ready(self, _remaining_s):
-        return _tcp_up(self.port, timeout=0.5)
+        return _tcp_up(self.port)
 
     def request(self):
         req = urllib.request.Request("http://127.0.0.1:%d/v1/completions" % self.port,
@@ -89,16 +106,14 @@ class StubWorker:
 
 @pytest.fixture
 def worker():
-    w = StubWorker()
+    w = Worker()
     w.start()
+    yield w
     try:
-        yield w
-    finally:
-        try:
-            w.proc.kill()
-            w.proc.wait(5)
-        except (ProcessLookupError, OSError):
-            pass
+        w.server.shutdown()
+        w.server.server_close()
+    except (AttributeError, OSError):
+        pass
 
 
 def test_drill_passes_on_kill_and_restart(worker):
@@ -165,25 +180,25 @@ def test_drill_fails_when_restart_never_readies():
     assert receipt["step"] == "restart"
 
 
-def test_rpc_stop_kills_the_listener():
-    port = _free_port()
-    proc = subprocess.Popen(
-        [sys.executable, "-c", STUB, str(port), "60"],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True)
-    try:
-        assert _tcp_up(port)
-        res = agent.rpc_stop({"port": port})
-        assert proc.pid in res["killed"]
-        assert res["still_listening"] == []
-        proc.wait(5)
-        assert proc.returncode == -9  # SIGKILL, not a graceful close
-    finally:
-        try:
-            proc.kill()
-            proc.wait(5)
-        except (ProcessLookupError, OSError):
-            pass
+def test_rpc_stop_signals_every_listener(monkeypatch):
+    """A real socket LISTENing in this process: listener_pids must find this
+    pid, _signal_all must get SIGKILL, and the port must go quiet afterwards."""
+    lsock = socket.socket()
+    lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    lsock.bind(("127.0.0.1", 0))
+    lsock.listen()
+    port = lsock.getsockname()[1]
+    signaled = []
+
+    def fake_signal_all(pids, sig):
+        signaled.append((sorted(pids), sig))
+        lsock.close()  # the "death": the listener goes away, as after SIGKILL
+
+    monkeypatch.setattr(agent, "_signal_all", fake_signal_all)
+    res = agent.rpc_stop({"port": port})
+    assert signaled == [([os.getpid()], signal.SIGKILL)]
+    assert res == {"killed": [os.getpid()], "still_listening": []}
+    assert not _tcp_up(port)
 
 
 def test_rpc_stop_no_listener_is_a_noop():
