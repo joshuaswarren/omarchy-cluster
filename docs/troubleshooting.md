@@ -110,6 +110,22 @@ Two switches help on a loaded ring (see [cli.md](cli.md#environment-switches)):
 `POST /score` on the engine port returns rank 0's per-token negative
 log-likelihood for one forward, a teacher-forced check that needs no generation.
 
+## Two-node proof kit
+
+The two-machine split proof lives in
+[receipts/two-node-proof-kit](../receipts/two-node-proof-kit); its README is the
+run recipe. These are the first-run blockers an outside tester hit (2026-11-21,
+#128) and how the kit now behaves:
+
+- Verify the kit before anything else: `cd receipts/two-node-proof-kit && sha256sum -c --strict kit.sha256` prints one `OK` line for each of the four kit files, and the preflight form above exits 2 with `CHECKS <n>` on a bare host — re-run outputs are recorded in [troubleshooting-receipt-20261122.md](../receipts/two-node-proof-kit/troubleshooting-receipt-20261122.md).
+- The verifier checks that the three arms agree with each other, not that they reproduce our reference token digest. An outside tester whose hardware produces different tokens still passes; `combine.json` reports `matches_reference` per arm so a run that also matches ours stays visible.
+- The two hosts must run llama.cpp builds from the same upstream commit. The kit records each host's `llama-server --version` into `llama-version.txt` and the verifier fails when they differ — a mismatched pair used to fail deep inside the run.
+- Run the preflight before a real arm: `./two-node-proof.sh --check mac SOURCE GGUF OUT LLAMA_SERVER TLS M2_IP RPC_SERVER SPARK_IP` prints one PASS/FAIL line per prerequisite and exits 2 with `CHECKS <n>` when items fail, 0 when clean, and creates no run directory. All arguments are positional; nothing is read from the environment except the optional `SOCAT` override.
+- The Mac certificate needs both SANs, `san=DNS:cluster-m2-rpc,IP:$M2_ADDR`: a cert with only the IP SAN stops the first arm at hostname mismatch ([secure RPC](secure-rpc.md)).
+- Both hosts need socat with OpenSSL: `socat -V | grep WITH_OPENSSL`. A missing socat used to exit the preflight silently.
+- macOS has no GNU `realpath -m`; the script resolves paths in Bash, so plain `realpath` calls must not come back.
+- The model is the exact `Qwen3-1.7B-Q4_K_M.gguf` (1.3 GB, keep 2 GB free); the Mac's `/tmp` is a tmpfs, so the model there costs RAM. Reserve ports 24820, 24831-24832 and 24860-24864.
+
 ## Trust model
 
 Plain HTTP with one shared token on your LAN: a homelab trust model, no TLS, no
