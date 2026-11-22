@@ -637,3 +637,47 @@ def test_stream_over_a_json_only_engine_ignores_an_empty_error_string(monkeypatc
     events = [json.loads(line[6:]) for line in lines
               if line.startswith("data: ") and line != "data: [DONE]"]
     assert events[0]["error"] == "%s: client error" % base_url(engine)
+
+
+GOLDEN_CLIENT_ERROR_STREAM = (
+    b'data: {"error": "http://engine.invalid:9: client error"}\n\n'
+    b'data: [DONE]\n\n'
+)
+
+
+def test_stream_client_error_reply_body_is_byte_exact(monkeypatch, http_server):
+    """Golden: the whole streamed reply for {"client_error": true} is pinned
+    byte-for-byte — one error event naming the engine URL, then [DONE]
+    (commit 08a5346). The engine is stubbed at urlopen so the URL inside the
+    body is a constant; the test's own request to the gateway falls through
+    to the real urlopen."""
+    engine_url = "http://engine.invalid:9"
+    real_urlopen = urllib.request.urlopen
+
+    class JsonReply:
+        headers = {"Content-Type": "application/json"}
+
+        def read(self):
+            return b'{"client_error": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def stubbed_urlopen(req, *args, **kwargs):
+        url = getattr(req, "full_url", req)
+        return JsonReply() if str(url).startswith(engine_url) \
+            else real_urlopen(req, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", stubbed_urlopen)
+    gateway = http_server(Gateway)
+    monkeypatch.setattr(Gateway, "engine", engine_url)
+    request = urllib.request.Request(
+        base_url(gateway) + "/v1/chat/completions",
+        data=json.dumps({"messages": [{"role": "user", "content": "hi"}],
+                         "stream": True}).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=2) as r:
+        assert r.read() == GOLDEN_CLIENT_ERROR_STREAM
