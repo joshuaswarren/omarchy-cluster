@@ -1,6 +1,6 @@
 {
   "schema": "cl02-baseline/1",
-  "run_id": "20261122T043133Z-mac-m2max-macos-dgx-spark-dgxos",
+  "run_id": "20261122T051652Z-mac-m2max-macos-dgx-spark-dgxos",
   "host": {
     "name": "mac-m2max-macos+dgx-spark-dgxos",
     "os": "macOS 26.6.2 + Ubuntu 24.04 (DGX OS)",
@@ -28,13 +28,13 @@
   "metrics": {
     "token_digest": "9a8a23e474324a44",
     "generated_tokens": 32,
-    "ttft_s": 0.0448,
-    "decode_tok_s": 466.106,
-    "total_s": 0.1113,
-    "ram_peak_mb": 7168.0,
-    "vram_peak_mb": 4200.0,
+    "ttft_s": 0.0462,
+    "decode_tok_s": 433.831,
+    "total_s": 0.1176,
+    "ram_peak_mb": 4820.0,
+    "vram_peak_mb": null,
     "errors": [],
-    "lan_mbps": 1206.096,
+    "lan_mbps": 1140.866,
     "energy_j": null,
     "power_avg_w": null,
     "power_source": "none"

@@ -16,11 +16,12 @@ import http.client
 import json
 import math
 import re
+import shlex
 import socket
 import subprocess
 import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -317,8 +318,14 @@ def validate_cl02_record(record: Mapping[str, Any]) -> list[str]:
         digest = metrics.get("token_digest")
         if not isinstance(digest, str):
             errors.append("metrics.token_digest must be a string")
-        elif (gen_tokens > 0 or not run_errors) and not HEX16_RE.fullmatch(digest):
-            errors.append("metrics.token_digest must be 16 lowercase hex chars")
+        elif not run_errors:
+            # Clean runs must carry a valid 16-hex token-ID digest and positive generated_tokens.
+            if gen_tokens <= 0:
+                errors.append("metrics.generated_tokens must be > 0 when metrics.errors is empty")
+            if not HEX16_RE.fullmatch(digest):
+                errors.append("metrics.token_digest must be 16 lowercase hex chars")
+        elif digest != "" and not HEX16_RE.fullmatch(digest):
+            errors.append("metrics.token_digest must be empty or 16 lowercase hex chars")
 
         for k in ("ttft_s", "decode_tok_s", "total_s", "ram_peak_mb"):
             v = metrics.get(k)
@@ -330,10 +337,15 @@ def validate_cl02_record(record: Mapping[str, Any]) -> list[str]:
             if v is not None and (not _is_real_number(v) or float(v) < 0.0):
                 errors.append(f"metrics.{k} must be null or a non-negative finite number")
 
-        if metrics.get("power_source") not in ALLOWED_POWER_SOURCES:
+        power_source = metrics.get("power_source")
+        if power_source not in ALLOWED_POWER_SOURCES:
             errors.append(
                 f"metrics.power_source must be one of {sorted(ALLOWED_POWER_SOURCES)}"
             )
+        elif power_source == "none" and (
+            metrics.get("energy_j") is not None or metrics.get("power_avg_w") is not None
+        ):
+            errors.append("metrics.energy_j and power_avg_w must be null when power_source is none")
 
     return errors
 
@@ -352,14 +364,44 @@ def build_deterministic_prompt(target_tokens: int, seed: int = 42) -> tuple[str,
         text = " ".join(words) + "\n" + _PROMPT_SUFFIX
     else:
         text = " ".join(words[:target_tokens])
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(text.encode()).hexdigest()[:16]
     return text, digest
 
 
-def compute_token_digest(tokens: Sequence[Any]) -> str:
-    """Compute first 16 hex chars of SHA-256 over the ordered generated tokens."""
-    payload = json.dumps(list(tokens), separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+def compute_token_digest(token_ids: Sequence[int]) -> str:
+    """Compute first 16 hex chars of SHA-256 over ordered integer token IDs."""
+    ids: list[int] = []
+    for item in token_ids:
+        if not _is_int(item):
+            raise TypeError(f"token_ids must contain integers, got {type(item).__name__}")
+        ids.append(item)
+    payload = json.dumps(ids, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def resolve_token_ids_via_cmd(cmd: str, generated_text: str) -> list[int]:
+    """Run an operator-supplied tokenizer command converting stdin text -> JSON ``list[int]``."""
+    argv = shlex.split(cmd)
+    if not argv:
+        raise ExoRunnerError("Empty --token-id-cmd")
+    proc = subprocess.run(
+        argv,
+        input=generated_text,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise ExoRunnerError(
+            f"--token-id-cmd failed (exit {proc.returncode}): {proc.stderr.strip()[:200]}"
+        )
+    try:
+        parsed = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise ExoRunnerError(f"--token-id-cmd did not output valid JSON: {exc}") from exc
+    if not isinstance(parsed, list) or not all(_is_int(x) for x in parsed):
+        raise ExoRunnerError("--token-id-cmd must output a JSON array of integer token IDs")
+    return list(parsed)
 
 
 def verify_exo_checkout(
@@ -398,7 +440,8 @@ def verify_exo_checkout(
             raise ExoRunnerError(f"git status failed in {repo_dir}: {status.stderr.strip()}")
         if status.stdout.strip():
             raise ExoRunnerError(
-                f"EXO checkout in {repo_dir} has uncommitted changes; pass --allow-dirty-exo to override"
+                f"EXO checkout in {repo_dir} has uncommitted changes; "
+                "pass --allow-dirty-exo to override"
             )
     return actual
 
@@ -414,7 +457,6 @@ def read_iface_bytes(iface: str) -> int | None:
         except (OSError, ValueError):
             return None
 
-    # macOS fallback: netstat -ibn
     proc = subprocess.run(
         ["netstat", "-ibn"],
         capture_output=True,
@@ -459,7 +501,6 @@ def integrate_power_samples(
         return None, None
     window = sorted((t, w) for t, w in samples if t0 <= t <= t1 and w >= 0.0)
     if not window:
-        # Use nearest sample if polling interval slightly straddled a very short run.
         nearest = min(samples, key=lambda pair: min(abs(pair[0] - t0), abs(pair[0] - t1)))
         if nearest[1] < 0.0:
             return None, None
@@ -471,7 +512,6 @@ def integrate_power_samples(
         return round(watts * elapsed, 4), round(watts, 3)
 
     joules = 0.0
-    # Hold edge values to cover [t0, window[0].t] and [window[-1].t, t1].
     if window[0][0] > t0:
         joules += window[0][1] * (window[0][0] - t0)
     for idx in range(1, len(window)):
@@ -482,6 +522,130 @@ def integrate_power_samples(
         joules += window[-1][1] * (t1 - window[-1][0])
     avg_w = joules / elapsed
     return round(joules, 4), round(avg_w, 3)
+
+
+def _sample_nvidia_smi_once() -> tuple[float | None, float | None]:
+    """Sample local ``nvidia-smi`` for ``(power_watts, vram_used_mib)``."""
+    proc = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=power.draw,memory.used",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None, None
+    total_w = 0.0
+    total_mib = 0.0
+    saw_w = False
+    saw_mib = False
+    for line in proc.stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        try:
+            w = float(parts[0])
+            if math.isfinite(w) and w >= 0.0:
+                total_w += w
+                saw_w = True
+        except ValueError:
+            pass
+        try:
+            mib = float(parts[1])
+            if math.isfinite(mib) and mib >= 0.0:
+                total_mib += mib
+                saw_mib = True
+        except ValueError:
+            pass
+    return (total_w if saw_w else None), (total_mib if saw_mib else None)
+
+
+def _sample_powermetrics_once(sample_ms: int = 200) -> float | None:
+    """Sample macOS ``powermetrics --samplers cpu_power,gpu_power`` once for combined watts."""
+    proc = subprocess.run(
+        [
+            "powermetrics",
+            "--samplers",
+            "cpu_power,gpu_power",
+            "-i",
+            str(sample_ms),
+            "-n",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"Combined Power \(CPU \+ GPU \+ ANE\):\s*(\d+(?:\.\d+)?)\s*mW", proc.stdout)
+    if match:
+        return float(match.group(1)) / 1000.0
+    gpu = re.search(r"GPU Power:\s*(\d+(?:\.\d+)?)\s*mW", proc.stdout)
+    cpu = re.search(r"CPU Power:\s*(\d+(?:\.\d+)?)\s*mW", proc.stdout)
+    if gpu or cpu:
+        total_mw = (float(gpu.group(1)) if gpu else 0.0) + (float(cpu.group(1)) if cpu else 0.0)
+        return total_mw / 1000.0
+    return None
+
+
+class _HardwareProbeSampler:
+    """Polls a real host probe (``nvidia-smi`` or ``powermetrics``) during the request window."""
+
+    def __init__(
+        self,
+        source: str,
+        interval_s: float = 0.25,
+        *,
+        nvidia_probe: Callable[[], tuple[float | None, float | None]] = _sample_nvidia_smi_once,
+        powermetrics_probe: Callable[[], float | None] = _sample_powermetrics_once,
+    ) -> None:
+        self.source = source
+        self._interval_s = interval_s
+        self._nvidia_probe = nvidia_probe
+        self._powermetrics_probe = powermetrics_probe
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.power_samples: list[tuple[float, float]] = []
+        self.vram_peak_mib: float | None = None
+        self._probe_errors = 0
+
+    def start(self) -> None:
+        if self.source == "none":
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=3.0)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            ts = time.perf_counter()
+            try:
+                if self.source == "nvidia-smi":
+                    watts, vram_mib = self._nvidia_probe()
+                    if watts is not None and watts >= 0.0:
+                        self.power_samples.append((ts, watts))
+                    if (
+                        vram_mib is not None
+                        and vram_mib >= 0.0
+                        and (self.vram_peak_mib is None or vram_mib > self.vram_peak_mib)
+                    ):
+                        self.vram_peak_mib = round(vram_mib, 2)
+                elif self.source == "powermetrics":
+                    watts = self._powermetrics_probe()
+                    if watts is not None and watts >= 0.0:
+                        self.power_samples.append((ts, watts))
+            except (OSError, ValueError):
+                self._probe_errors += 1
+            self._stop.wait(self._interval_s)
 
 
 class ExoApiClient:
@@ -522,9 +686,11 @@ class ExoApiClient:
             headers = {"Accept": "application/json"}
             payload: bytes | None = None
             if body is not None:
-                payload = json.dumps(body).encode("utf-8")
+                payload = json.dumps(body).encode()
                 headers["Content-Type"] = "application/json"
-            conn.request(method.upper(), self._full_path(path, params), body=payload, headers=headers)
+            conn.request(
+                method.upper(), self._full_path(path, params), body=payload, headers=headers
+            )
             resp = conn.getresponse()
             raw = resp.read().decode("utf-8", errors="replace")
             if resp.status >= 400:
@@ -598,7 +764,7 @@ class ExoApiClient:
     def stream_bench_chat_completions(self, payload: Mapping[str, Any]) -> Iterator[str]:
         body = dict(payload)
         body["stream"] = True
-        encoded = json.dumps(body).encode("utf-8")
+        encoded = json.dumps(body).encode()
         conn = self._connect()
         try:
             conn.request(
@@ -623,7 +789,6 @@ class ExoApiClient:
 def _extract_instance_node_ids(instance: Mapping[str, Any]) -> list[str]:
     """Extract participating node IDs from an EXO Instance object."""
     inner = instance
-    # EXO sometimes wraps tagged union instances like {"MlxRingInstance": {...}}
     if len(instance) == 1:
         sole_val = next(iter(instance.values()))
         if isinstance(sole_val, Mapping):
@@ -692,8 +857,8 @@ def select_pair_placement(
     return chosen, node_ids, chosen_sharding, chosen_meta
 
 
-class _ClusterPowerSampler:
-    """Polls EXO ``/state/nodeSystem`` during inference to integrate cluster energy."""
+class _ExoNodeSystemSampler:
+    """Polls EXO ``/state/nodeSystem`` for auxiliary cluster telemetry in details JSON."""
 
     def __init__(self, client: ExoApiClient, node_ids: Sequence[str], interval_s: float = 0.25):
         self._client = client
@@ -770,7 +935,7 @@ def _summarize_cluster_nodes(
             "os": os_ver,
             "chip": chip,
             "gpu": str(gpu) if gpu else None,
-            "memory": dict(mem) if isinstance(mem, Mapping) else {},
+            "memory_snapshot_after": dict(mem) if isinstance(mem, Mapping) else {},
         }
 
     host_obj = {
@@ -784,11 +949,19 @@ def _summarize_cluster_nodes(
 
 def _extract_memory_peaks_mb(
     gen_stats: Mapping[str, Any] | None,
-    nodes_detail: Mapping[str, Mapping[str, Any]],
+    *,
+    sampled_vram_peak_mb: float | None = None,
 ) -> tuple[float, float | None]:
-    """Return ``(ram_peak_mb, vram_peak_mb)`` in MiB from EXO stats & node memory."""
+    """Return serving-workload ``(ram_peak_mb, vram_peak_mb)`` in MiB.
+
+    ``ram_peak_mb`` comes strictly from ``generation_stats.peak_memory_usage``
+    (never mixed with post-run host-wide OS ``nodeMemory`` usage).
+    ``vram_peak_mb`` comes strictly from in-request peak device sampling or
+    ``generation_stats.peak_vram_usage`` (``None`` if not measured as a peak).
+    """
     mib = 1024.0 * 1024.0
     ram_bytes = 0.0
+    vram_mb: float | None = None
 
     if isinstance(gen_stats, Mapping):
         peak = gen_stats.get("peak_memory_usage")
@@ -797,36 +970,16 @@ def _extract_memory_peaks_mb(
             if _is_real_number(raw) and float(raw) > ram_bytes:
                 ram_bytes = float(raw)
 
-    node_ram_sum = 0.0
-    node_vram_sum = 0.0
-    saw_vram = False
-    for detail in nodes_detail.values():
-        mem = detail.get("memory")
-        if not isinstance(mem, Mapping):
-            continue
-        ram_total = mem.get("ramTotal") or mem.get("ram_total")
-        ram_avail = mem.get("ramAvailable") or mem.get("ram_available")
-        ram_used = mem.get("ramUsed") or mem.get("ram_used")
-        if isinstance(ram_used, Mapping):
-            ram_used = ram_used.get("inBytes") or ram_used.get("in_bytes")
-        if _is_real_number(ram_used):
-            node_ram_sum += float(ram_used)
-        elif isinstance(ram_total, Mapping) and isinstance(ram_avail, Mapping):
-            tot = ram_total.get("inBytes") or ram_total.get("in_bytes")
-            avl = ram_avail.get("inBytes") or ram_avail.get("in_bytes")
-            if _is_real_number(tot) and _is_real_number(avl) and float(tot) >= float(avl):
-                node_ram_sum += float(tot) - float(avl)
+        vram_peak = gen_stats.get("peak_vram_usage")
+        if isinstance(vram_peak, Mapping):
+            raw_v = vram_peak.get("inBytes") or vram_peak.get("in_bytes")
+            if _is_real_number(raw_v) and float(raw_v) > 0.0:
+                vram_mb = round(float(raw_v) / mib, 2)
 
-        vram_used = mem.get("vramUsed") or mem.get("vram_used")
-        if isinstance(vram_used, Mapping):
-            vram_used = vram_used.get("inBytes") or vram_used.get("in_bytes")
-        if _is_real_number(vram_used) and float(vram_used) > 0.0:
-            node_vram_sum += float(vram_used)
-            saw_vram = True
+    if sampled_vram_peak_mb is not None and (vram_mb is None or sampled_vram_peak_mb > vram_mb):
+        vram_mb = round(sampled_vram_peak_mb, 2)
 
-    effective_ram_mb = round(max(ram_bytes, node_ram_sum) / mib, 2)
-    effective_vram_mb = round(node_vram_sum / mib, 2) if saw_vram else None
-    return effective_ram_mb, effective_vram_mb
+    return round(ram_bytes / mib, 2), vram_mb
 
 
 def run_exo_pair(
@@ -848,6 +1001,9 @@ def run_exo_pair(
     request_timeout_s: float = 600.0,
     mock_lan_bytes: int | None = None,
     reuse_existing_instance: bool = False,
+    token_id_cmd: str | None = None,
+    nvidia_probe: Callable[[], tuple[float | None, float | None]] = _sample_nvidia_smi_once,
+    powermetrics_probe: Callable[[], float | None] = _sample_powermetrics_once,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run one Milestone 1 EXO pair measurement and return ``(cl02_record, pair_details)``."""
     if model_key not in PINNED_MODELS:
@@ -872,6 +1028,7 @@ def run_exo_pair(
     state_before = client.get_state()
 
     created_instance_id: str | None = None
+    instance_created = False
     chosen_sharding = sharding
     chosen_meta = instance_meta or ""
     node_ids: list[str] = []
@@ -888,20 +1045,6 @@ def run_exo_pair(
                         chosen_meta = "existing"
                         break
 
-    if not node_ids:
-        previews = client.get_instance_previews(pin.exo_model_id)
-        chosen_instance, node_ids, chosen_sharding, chosen_meta = select_pair_placement(
-            previews,
-            min_nodes=min_nodes,
-            sharding=sharding,
-            instance_meta=instance_meta,
-        )
-        created_instance_id = _extract_instance_id(chosen_instance)
-        client.create_instance(chosen_instance)
-        ready_event = client.await_instance(pin.exo_model_id, timeout_s=await_timeout_s)
-        if created_instance_id is None and isinstance(ready_event.get("instance"), Mapping):
-            created_instance_id = _extract_instance_id(ready_event["instance"])
-
     errors: list[str] = []
     token_ids: list[int] = []
     token_texts: list[str] = []
@@ -909,12 +1052,45 @@ def run_exo_pair(
     t_start = 0.0
     t_first: float | None = None
     t_end = 0.0
-    bytes_before = read_iface_bytes(iface) if iface else None
+    bytes_before: int | None = None
     bytes_after: int | None = None
+    state_after: dict[str, Any] = state_before
+    exo_sampler: _ExoNodeSystemSampler | None = None
+    hw_sampler: _HardwareProbeSampler | None = None
 
-    sampler = _ClusterPowerSampler(client, node_ids, interval_s=0.1 if dry_run else 0.25)
-    sampler.start()
+    # Cover creation, readiness await, sampling, and inference in one try/finally
+    # so any failure after create_instance still deletes the created instance.
     try:
+        if not node_ids:
+            previews = client.get_instance_previews(pin.exo_model_id)
+            chosen_instance, node_ids, chosen_sharding, chosen_meta = select_pair_placement(
+                previews,
+                min_nodes=min_nodes,
+                sharding=sharding,
+                instance_meta=instance_meta,
+            )
+            created_instance_id = _extract_instance_id(chosen_instance)
+            create_resp = client.create_instance(chosen_instance)
+            instance_created = True
+            if created_instance_id is None and isinstance(create_resp, Mapping):
+                resp_id = create_resp.get("instance_id") or create_resp.get("instanceId")
+                if resp_id is not None:
+                    created_instance_id = str(resp_id)
+            ready_event = client.await_instance(pin.exo_model_id, timeout_s=await_timeout_s)
+            if created_instance_id is None and isinstance(ready_event.get("instance"), Mapping):
+                created_instance_id = _extract_instance_id(ready_event["instance"])
+
+        exo_sampler = _ExoNodeSystemSampler(client, node_ids, interval_s=0.1 if dry_run else 0.25)
+        hw_sampler = _HardwareProbeSampler(
+            power_source,
+            interval_s=0.1 if dry_run else 0.25,
+            nvidia_probe=nvidia_probe,
+            powermetrics_probe=powermetrics_probe,
+        )
+        exo_sampler.start()
+        hw_sampler.start()
+
+        bytes_before = read_iface_bytes(iface) if iface else None
         payload = {
             "model": pin.exo_model_id,
             "messages": [{"role": "user", "content": prompt_text}],
@@ -975,8 +1151,11 @@ def run_exo_pair(
             bytes_after = read_iface_bytes(iface)
         state_after = client.get_state()
     finally:
-        sampler.stop()
-        if created_instance_id is not None:
+        if hw_sampler is not None:
+            hw_sampler.stop()
+        if exo_sampler is not None:
+            exo_sampler.stop()
+        if instance_created and created_instance_id is not None:
             try:
                 client.delete_instance(created_instance_id)
             except (ExoRunnerError, OSError, http.client.HTTPException, ValueError) as exc:
@@ -986,14 +1165,42 @@ def run_exo_pair(
     total_s = max(0.0, t_end - t_start)
     ttft_s = max(0.0, (t_first - t_start) if t_first is not None else total_s)
 
+    joined_text = "".join(token_texts)
+    output_text_sha256_16 = (
+        hashlib.sha256(joined_text.encode()).hexdigest()[:16] if joined_text else None
+    )
+
+    # Strictly enforce integer token-ID basis for metrics.token_digest; never substitute text.
     if token_ids:
         generated_tokens = len(token_ids)
         token_digest = compute_token_digest(token_ids)
-        digest_basis = "token_ids"
+        digest_basis = "stream_token_ids"
+    elif token_texts and token_id_cmd:
+        try:
+            resolved_ids = resolve_token_ids_via_cmd(token_id_cmd, joined_text)
+        except ExoRunnerError as exc:
+            generated_tokens = len(token_texts)
+            token_digest = ""
+            digest_basis = "unavailable"
+            errors.append(str(exc))
+        else:
+            if resolved_ids:
+                generated_tokens = len(resolved_ids)
+                token_digest = compute_token_digest(resolved_ids)
+                digest_basis = "token_id_cmd"
+            else:
+                generated_tokens = len(token_texts)
+                token_digest = ""
+                digest_basis = "unavailable"
+                errors.append("--token-id-cmd returned an empty token ID list")
     elif token_texts:
         generated_tokens = len(token_texts)
-        token_digest = compute_token_digest(token_texts)
-        digest_basis = "token_text_chunks"
+        token_digest = ""
+        digest_basis = "unavailable"
+        errors.append(
+            "EXO /bench/chat/completions omitted integer token_id; refusing to substitute "
+            "text chunks for token-ID token_digest (pass --token-id-cmd or patch EXO)"
+        )
     else:
         generated_tokens = 0
         token_digest = ""
@@ -1013,15 +1220,29 @@ def run_exo_pair(
     if isinstance(gen_stats, Mapping) and _is_int(gen_stats.get("prompt_tokens")):
         reported_prompt_tokens = int(gen_stats["prompt_tokens"])
 
-    ram_peak_mb, vram_peak_mb = _extract_memory_peaks_mb(gen_stats, nodes_detail)
+    sampled_vram_peak = hw_sampler.vram_peak_mib if hw_sampler is not None else None
+    ram_peak_mb, vram_peak_mb = _extract_memory_peaks_mb(
+        gen_stats, sampled_vram_peak_mb=sampled_vram_peak
+    )
 
     if mock_lan_bytes is not None:
         lan_mbps = compute_lan_mbps(0, mock_lan_bytes, total_s)
     else:
         lan_mbps = compute_lan_mbps(bytes_before, bytes_after, total_s)
 
-    energy_j, power_avg_w = integrate_power_samples(sampler.samples, t_start, t_end)
-    effective_power_source = power_source if energy_j is not None else "none"
+    # Power telemetry in cl02-baseline/1 comes strictly from the actually invoked host probe
+    # (nvidia-smi or powermetrics); EXO /state/nodeSystem readings stay in details JSON only.
+    hw_samples = hw_sampler.power_samples if hw_sampler is not None else []
+    energy_j, power_avg_w = integrate_power_samples(hw_samples, t_start, t_end)
+    if energy_j is not None and power_source in ("nvidia-smi", "powermetrics"):
+        effective_power_source = power_source
+    else:
+        energy_j = None
+        power_avg_w = None
+        effective_power_source = "none"
+
+    exo_sys_samples = exo_sampler.samples if exo_sampler is not None else []
+    exo_sys_energy_j, exo_sys_avg_w = integrate_power_samples(exo_sys_samples, t_start, t_end)
 
     now_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     host_slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", host_obj["name"]).strip("-") or "exo-pair"
@@ -1091,8 +1312,19 @@ def run_exo_pair(
         },
         "nodes": nodes_detail,
         "token_digest_basis": digest_basis,
+        "output_text_sha256_16": output_text_sha256_16,
         "generation_stats": gen_stats,
-        "power_sample_count": len(sampler.samples),
+        "exo_node_system_power": {
+            "source": "exo:/state/nodeSystem:sysPower",
+            "sample_count": len(exo_sys_samples),
+            "energy_j": exo_sys_energy_j,
+            "power_avg_w": exo_sys_avg_w,
+        },
+        "host_power_probe": {
+            "requested_source": power_source,
+            "effective_source": effective_power_source,
+            "sample_count": len(hw_samples),
+        },
         "reference_shape": EXO_REFERENCE_SHAPE,
         "dry_run": dry_run,
     }
@@ -1108,10 +1340,14 @@ class MockExoServer:
         prompt_tokens: int = 8192,
         prefill_delay_s: float = 0.04,
         token_delay_s: float = 0.002,
+        emit_token_ids: bool = True,
+        await_behavior: str = "ready",
     ) -> None:
         self.prompt_tokens = prompt_tokens
         self.prefill_delay_s = prefill_delay_s
         self.token_delay_s = token_delay_s
+        self.emit_token_ids = emit_token_ids
+        self.await_behavior = await_behavior
         self.created_instances: dict[str, dict[str, Any]] = {}
         self.deleted_instances: list[str] = []
         self.last_request: dict[str, Any] | None = None
@@ -1128,7 +1364,7 @@ class MockExoServer:
                 return
 
             def _send_json(self, status: int, body: Any) -> None:
-                raw = json.dumps(body).encode("utf-8")
+                raw = json.dumps(body).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw)))
@@ -1211,12 +1447,18 @@ class MockExoServer:
                     )
                     return
                 if parsed.path == "/instance/await":
+                    if mock.await_behavior == "http_error":
+                        self._send_json(503, {"detail": "simulated await failure"})
+                        return
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
                     self.end_headers()
-                    with mock._lock:
-                        inst = next(iter(mock.created_instances.values()), {})
-                    event = json.dumps({"type": "ready", "instance": inst})
+                    if mock.await_behavior == "timeout":
+                        event = json.dumps({"type": "timeout", "message": "simulated timeout"})
+                    else:
+                        with mock._lock:
+                            inst = next(iter(mock.created_instances.values()), {})
+                        event = json.dumps({"type": "ready", "instance": inst})
                     self.wfile.write(f"data: {event}\n\n".encode())
                     self.wfile.flush()
                     return
@@ -1242,9 +1484,11 @@ class MockExoServer:
                     self.end_headers()
                     time.sleep(mock.prefill_delay_s)
                     for i in range(max_tokens):
-                        tok_id = 1000 + i
                         word = _PROMPT_VOCAB[i % len(_PROMPT_VOCAB)]
                         piece = word if i == 0 else " " + word
+                        delta: dict[str, Any] = {"content": piece}
+                        if mock.emit_token_ids:
+                            delta["token_id"] = 1000 + i
                         chunk = {
                             "id": "dryrun-cmpl-001",
                             "object": "chat.completion.chunk",
@@ -1253,7 +1497,7 @@ class MockExoServer:
                             "choices": [
                                 {
                                     "index": 0,
-                                    "delta": {"content": piece, "token_id": tok_id},
+                                    "delta": delta,
                                     "finish_reason": None,
                                 }
                             ],
@@ -1265,16 +1509,16 @@ class MockExoServer:
                     stats = {
                         "prompt_tokens": mock.prompt_tokens,
                         "generation_tokens": max_tokens,
-                        "prompt_tps": round(mock.prompt_tokens / max(mock.prefill_delay_s, 1e-4), 2),
+                        "prompt_tps": round(
+                            mock.prompt_tokens / max(mock.prefill_delay_s, 1e-4), 2
+                        ),
                         "generation_tps": round(
                             max_tokens / max(max_tokens * mock.token_delay_s, 1e-4), 2
                         ),
-                        "peak_memory_usage": {"inBytes": (4820 * 1024 * 1024)},
+                        "peak_memory_usage": {"inBytes": 4820 * 1024 * 1024},
                         "prefix_cache_hit": "none",
                     }
-                    self.wfile.write(
-                        f": generation_stats {json.dumps(stats)}\n\n".encode()
-                    )
+                    self.wfile.write(f": generation_stats {json.dumps(stats)}\n\n".encode())
                     self.wfile.write(b"data: [DONE]\n\n")
                     self.wfile.flush()
                     return
@@ -1323,12 +1567,16 @@ def format_setup_instructions() -> str:
    uv run exo --namespace {EXO_DEFAULT_NAMESPACE} --api-port {EXO_DEFAULT_PORT}
 
 3. Run Milestone 1 EXO pair baseline (8,192-token Llama-3.1-8B-Q4 greedy, 32 tokens):
+   # Stock EXO at {EXO_PINNED_COMMIT[:12]} does not emit integer token_id on
+   # /bench/chat/completions SSE chunks; pass --token-id-cmd backed by the pinned
+   # model tokenizer (or patch EXO to emit token_id) so token_digest uses real IDs.
    python3 -m omarchy_cluster.exo_pair \\
      --exo-url http://<coordinator-ip>:{EXO_DEFAULT_PORT} \\
      --exo-repo ~/src/exo \\
      --model Llama-3.1-8B-Q4 \\
      --iface <lan-iface> \\
-     --power-source powermetrics \\
+     --power-source nvidia-smi \\
+     --token-id-cmd '<tokenizer-cmd>' \\
      --out-dir receipts/milestone1-exo-pair/live-$(date -u +%Y%m%dT%H%M%SZ)
 """
 
@@ -1409,7 +1657,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--power-source",
         default="none",
         choices=sorted(ALLOWED_POWER_SOURCES),
-        help="Power telemetry source label for cl02-baseline/1 (default: none).",
+        help="Host power probe to invoke (nvidia-smi | powermetrics | none; default: none).",
+    )
+    parser.add_argument(
+        "--token-id-cmd",
+        default=None,
+        help=(
+            "Command reading generated text on stdin and writing a JSON array of integer "
+            "token IDs to stdout (required when EXO stream omits integer token_id)."
+        ),
     )
     parser.add_argument(
         "--reuse-instance",
@@ -1463,11 +1719,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if not mock.deleted_instances:
                 raise ExoRunnerError("Dry-run teardown failed: mock instance was not deleted")
-            # In dry-run, force energy/power null when power_source is none so
-            # no synthetic hardware power claim leaks into cl02-baseline/1.
-            record["metrics"]["energy_j"] = None
-            record["metrics"]["power_avg_w"] = None
-            record["metrics"]["power_source"] = "none"
     else:
         record, details = run_exo_pair(
             base_url=args.exo_url,
@@ -1483,6 +1734,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             exo_commit=exo_commit,
             dry_run=False,
             reuse_existing_instance=args.reuse_instance,
+            token_id_cmd=args.token_id_cmd,
         )
 
     validation_errors = validate_cl02_record(record)

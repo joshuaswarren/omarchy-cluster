@@ -1,5 +1,5 @@
 {
-  "run_id": "20261122T043133Z-mac-m2max-macos-dgx-spark-dgxos",
+  "run_id": "20261122T051652Z-mac-m2max-macos-dgx-spark-dgxos",
   "exo_pin": {
     "repo": "https://github.com/exo-explore/exo",
     "commit": "a60b95698ca81737d367443674dd5563cbc9559b",
@@ -23,7 +23,7 @@
       "os": "macOS 26.6.2",
       "chip": "Apple M2 Max",
       "gpu": "Apple M2 Max GPU",
-      "memory": {
+      "memory_snapshot_after": {
         "ramTotal": {
           "inBytes": 68719476736
         },
@@ -37,7 +37,7 @@
       "os": "Ubuntu 24.04 (DGX OS)",
       "chip": "NVIDIA GB10",
       "gpu": "NVIDIA GB10 CUDA",
-      "memory": {
+      "memory_snapshot_after": {
         "ramTotal": {
           "inBytes": 137438953472
         },
@@ -50,7 +50,8 @@
       }
     }
   },
-  "token_digest_basis": "token_ids",
+  "token_digest_basis": "stream_token_ids",
+  "output_text_sha256_16": "18a265e7c06673c7",
   "generation_stats": {
     "prompt_tokens": 8192,
     "generation_tokens": 32,
@@ -61,7 +62,17 @@
     },
     "prefix_cache_hit": "none"
   },
-  "power_sample_count": 2,
+  "exo_node_system_power": {
+    "source": "exo:/state/nodeSystem:sysPower",
+    "sample_count": 2,
+    "energy_j": 8.5293,
+    "power_avg_w": 72.5
+  },
+  "host_power_probe": {
+    "requested_source": "none",
+    "effective_source": "none",
+    "sample_count": 0
+  },
   "reference_shape": {
     "model": "Llama-3.1-8B",
     "prompt_tokens": 8192,
