@@ -1,0 +1,46 @@
+# CUDA 13 toolkit for the DGX Spark GB10, headless subset.
+# Toolkit only (nvcc, headers, cudart, cublas, nvrtc): enough to build
+# llama.cpp and CUDA workloads. The driver comes from nvidia-spark-utils +
+# nvidia-open-spark-dkms, not from this installer.
+# Same 13.4.2 SBSA payload as the omarchy cuda recipe.
+
+pkgname=cuda-spark
+pkgver=13.4.2
+pkgrel=1
+pkgdesc='NVIDIA CUDA 13 toolkit for DGX Spark (GB10), build-time subset'
+arch=('aarch64')
+url='https://developer.nvidia.com/cuda-zone'
+license=('LicenseRef-NVIDIA-CUDA')
+depends=('gcc' 'nvidia-spark-utils')
+provides=("cuda=${pkgver}")
+conflicts=('cuda')
+options=('!strip' 'staticlibs')
+
+source=("https://developer.download.nvidia.com/compute/cuda/${pkgver}/local_installers/cuda_${pkgver}_linux_sbsa.run"
+        'cuda-spark.sh')
+sha512sums=('f308228d84a6a2e4dff7b4c65ff66b671c55229d3653c51912ea54e12c4850089a6a78ce480e89666a230e4e0d1fdc26b66acca4a01d4ea5819e4f42d9b99752'
+            '200027d508704e5bdbec9e5ba2dc5d8fa30d40a573efde40064a594eb8d5880c193e8858655443dd049826b66af8310d3ca88394bef5ac132710a990edbe4ac2')
+
+prepare() {
+  sh "cuda_${pkgver}_linux_sbsa.run" --target "${srcdir}/extract" --noexec
+}
+
+package() {
+  local _b="${srcdir}/extract/builds"
+
+  install -dm755 "${pkgdir}/opt/cuda"
+
+  # Toolkit payloads a build host needs. The driver, demo and doc payloads
+  # in the runfile are skipped on purpose.
+  for _d in cuda_cudart cuda_nvcc cuda_cccl cuda_cudart_dev \
+            cuda_cublas cuda_cublas_dev cuda_nvrtc cuda_nvrtc_dev \
+            cuda_cufft cuda_cufft_dev cuda_curand cuda_curand_dev \
+            cuda_cusolver cuda_cusolver_dev cuda_cusparse cuda_cusparse_dev \
+            cuda_nvtx cuda_profiler_api cuda_opencl cuda_nvml_dev; do
+    [[ -d "${_b}/${_d}" ]] && cp -a "${_b}/${_d}/." "${pkgdir}/opt/cuda/"
+  done
+
+  install -Dm755 "${srcdir}/cuda-spark.sh" "${pkgdir}/etc/profile.d/cuda-spark.sh"
+  install -Dm644 "${srcdir}/extract/builds/cuda_documentation/EULA.txt" \
+                 "${pkgdir}/usr/share/licenses/${pkgname}/EULA.txt" 2>/dev/null || true
+}

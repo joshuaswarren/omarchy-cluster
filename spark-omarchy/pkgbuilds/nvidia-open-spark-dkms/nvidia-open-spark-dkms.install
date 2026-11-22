@@ -1,0 +1,19 @@
+# shellcheck shell=bash
+post_install() {
+  dkms add "nvidia/580.178.04" || true
+  # Rebuild for every installed kernel so a kernel update does not strand
+  # the module (the GB10 kernel and any fallback get the same treatment).
+  dkms autoinstall || true
+}
+
+pre_upgrade() {
+  dkms remove "nvidia/580.178.04" --all || true
+}
+
+post_upgrade() {
+  post_install
+}
+
+pre_remove() {
+  dkms remove "nvidia/580.178.04" --all || true
+}

@@ -1,0 +1,37 @@
+# NVIDIA open kernel modules for the DGX Spark GB10.
+# Pinned to the DGX OS 7.6.0 driver so the Omarchy install runs the same
+# kernel-module build as the vendor-OS baseline it is compared against.
+
+pkgname=nvidia-open-spark-dkms
+pkgver=580.178.04
+pkgrel=1
+pkgdesc='NVIDIA open kernel modules for DGX Spark (GB10), 580 branch'
+arch=('aarch64')
+url='https://github.com/NVIDIA/open-gpu-kernel-modules'
+license=('MIT' 'GPL-2.0-only WITH Linux-syscall-note')
+depends=('dkms' 'libelf' "nvidia-spark-utils=${pkgver}")
+conflicts=('nvidia-open-dkms' 'nvidia-open' 'nvidia' 'nvidia-dkms')
+provides=("nvidia-open=${pkgver}")
+options=('!strip')
+install=nvidia-open-spark-dkms.install
+
+source=("https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${pkgver}.tar.gz"
+        'dkms.conf')
+sha256sums=('f30d4c20feda9f570a69084573a72423067e1e2d46c50ca58c391664872a9e01'
+            'ff3d3cea64b8f1613e4cb9300e3821ff0eadfe71081a1ab25c052a7c58156c81')
+
+package() {
+  local _src="${srcdir}/open-gpu-kernel-modules-${pkgver}/kernel-open"
+
+  install -dm755 "${pkgdir}/usr/src/nvidia-${pkgver}"
+  cp -a "${_src}/." "${pkgdir}/usr/src/nvidia-${pkgver}/"
+  install -Dm644 "${srcdir}/dkms.conf" "${pkgdir}/usr/src/nvidia-${pkgver}/dkms.conf"
+
+  # GB10 is an integrated Blackwell GPU behind a non-enumerated host bridge;
+  # GSP firmware comes from linux-firmware (nvidia/gb10x). The open module
+  # needs modeset enabled for GSP bring-up on this chip.
+  install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modprobe.d/nvidia-spark.conf" <<'CONF'
+options nvidia NVreg_EnableGpuFirmware=1
+options nvidia-drm modeset=1
+CONF
+}
