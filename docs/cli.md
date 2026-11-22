@@ -154,6 +154,7 @@ Engine selection:
 | `--engine mlx` (default) | pipeline the MLX model across ranks |
 | `--engine llamacpp` | GGUF through llama-server on the gateway, layers spread over llama.cpp RPC servers |
 | `--engine sushi` | single-host Sushi-format model (`EXL3` experts); fronts a stand-alone `sushi serve` with `--sushi`, `--sushi-model`, `--sushi-url`, `--sushi-port`, `--sushi-arg` |
+| `--engine joint` | phase separation: a llama-server on another host runs prefill, its slot KV hops through the node agents, and this host's llama-server runs every decode token |
 
 MLX pipeline flags:
 
@@ -184,6 +185,27 @@ llama.cpp flags (`--engine llamacpp`):
 | `--host-layers N` | keep exactly N layers on the gateway machine, nodes in the order given |
 | `--llama-arg=ARG` | extra llama-server argument (repeat). Write the `=`: an argument starting with `-` is otherwise read as a `serve` option. Example: `--llama-arg=--no-warmup --llama-arg=-fa --llama-arg=on` |
 | `--max-concurrent N` | requests the gateway passes to the engine at once (default 4); more wait up to 10 minutes, then get HTTP 503 with `Retry-After`. k above 1 runs only while the gateway's measured completion throughput (tokens per wall second) stays above the floor (154.63 tok/s, `receipts/2026-11-12-concurrent-serving`); below it the gate switches off and requests queue one at a time. llama.cpp batches them in its slots; the MLX ring runs one at a time |
+
+Joint flags (`--engine joint`, phase separation):
+
+|| Flag | Meaning |
+|---|---|
+| `--prefill-url URL` | base URL of the prefill llama-server (required). Start it on the prefill host with `--slot-save-path DIR`, the same model and the same `-c` |
+| `--prefill-kv ENDPOINT` | where the prefill server's slot dir is reachable (required): `local[=DIR]` when both servers share this host, or `HOST:PORT` of that node's agent |
+| `--kv-dir DIR` | this host's slot dir; the decode llama-server gets it as `--slot-save-path` (default `~/.local/state/omarchy-cluster/kv`) |
+| `--joint-slot N` | the slot used on both servers (default 0). Keep other clients off it |
+| `--joint-kv-name NAME` | the slot file name inside the kv dirs (default `joint-kv.bin`) |
+
+A remote prefill server's `--slot-save-path` must be the node agent's kv
+directory (`~/.local/state/omarchy-cluster/kv` on that node); the engine moves
+the file with `GET`/`POST /v1/kv` over the agent's pinned TLS + cluster token.
+`serve` starts the decode llama-server itself on `engine-port + 1`, keeps its
+own GPU backend (no `-dev none`), and warns when the prefill server's `/props`
+names a different model. Each `/generate` reply carries a `telemetry` object:
+the SHA-256 of the decoded token ids, TTFT, decode tok/s, total time, per-node
+memory facts, errors, the KV hop's throughput (`lan_mbps`, `null` on a loopback
+copy), and power (`null` — no agent power probe exists yet). The engine runs
+one joint request at a time; the slot file is shared state.
 
 iPhone node flags: `--ios-bundle`, `--pm3`, `--phone-cap-gb`, `--rpc-layers`,
 `--rpc-port`. See [ios/README.md](../ios/README.md).
