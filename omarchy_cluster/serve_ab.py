@@ -125,6 +125,17 @@ def run_one(server_url: str, prompt: str) -> dict:
     return res
 
 
+def scrub(value: str) -> str:
+    """Public-receipt scrub: drop the home prefix and never carry a hostname."""
+    home = os.path.expanduser("~")
+    return value.replace(home + "/", "~/") if value.startswith(home) else value
+
+
+def uname_string() -> str:
+    u = os.uname()
+    return " ".join([u.sysname, u.release, u.version, u.machine])
+
+
 def machine_info() -> dict:
     compat_path = Path("/proc/device-tree/compatible")
     model = chip = None
@@ -132,7 +143,7 @@ def machine_info() -> dict:
         compat = compat_path.read_bytes().decode(errors="replace").split("\0")
         model = next((x for x in compat if re.fullmatch(r"apple,j\w+", x)), None)
         chip = next((x for x in compat if re.fullmatch(r"apple,t\d+", x)), None)
-    return {"uname": " ".join(os.uname()), "model": model, "chip": chip}
+    return {"uname": uname_string(), "model": model, "chip": chip}
 
 
 def medians(runs: list[dict]) -> dict:
@@ -209,10 +220,10 @@ def main(argv: list[str] | None = None) -> int:
     receipt = {
         "schema": SCHEMA, "card": CARD, "label": args.label, "device": args.device,
         "utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "spec": SPEC, "llama_server": {"path": str(args.llama_server), "sha256": binary_sha,
+        "spec": SPEC, "llama_server": {"path": scrub(str(args.llama_server)), "sha256": binary_sha,
                                        "version": version, "devices": devices,
                                        "pinned_dev": args.dev},
-        "gguf": {"path": str(args.gguf), "sha256": SPEC["sha256"]},
+        "gguf": {"path": scrub(str(args.gguf)), "sha256": SPEC["sha256"]},
         "settings": {"rounds": args.rounds, "prompts": [pid for pid, _ in PROMPTS],
                      "n_predict": N_PREDICT, "ctx": args.ctx, "threads": args.threads,
                      "sampling": "greedy", "cache_prompt": False},

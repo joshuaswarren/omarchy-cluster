@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 from omarchy_cluster import serve_ab
 
@@ -61,6 +62,18 @@ def test_device_names_extract_tokens():
     assert serve_ab.device_names([
         "Vulkan0: Intel(R) Arc(tm) Pro B60 Graphics (BMG G21)",
         "Vulkan1: NVIDIA GeForce RTX 5060 Ti"]) == ["Vulkan0", "Vulkan1"]
+
+
+def test_scrub_drops_home_prefix_and_keeps_other_paths():
+    import os
+    home = os.path.expanduser("~")
+    assert serve_ab.scrub(home + "/scratch/serve-ab/m.gguf") == "~/scratch/serve-ab/m.gguf"
+    assert serve_ab.scrub("/usr/bin/llama-server") == "/usr/bin/llama-server"
+
+
+def test_uname_string_carries_no_nodename():
+    assert os.uname().nodename not in serve_ab.uname_string()
+    assert serve_ab.uname_string().startswith(os.uname().sysname)
 
 
 def test_machine_info_has_uname():
