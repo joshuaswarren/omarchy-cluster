@@ -399,6 +399,22 @@ def rpc_start(req):
     return {"pid": pid, "log": log, "cmd": cmd, "env": sorted(extra)}
 
 
+def rpc_stop(req):
+    """SIGKILL every RPC server LISTENing on `port` (default 50060). Hard kill on
+    purpose: the node-loss drill needs the abrupt failure a crash produces — a
+    graceful close could let the engine unwind cleanly instead of surfacing the
+    real failure mode."""
+    import signal
+    port = int(req.get("port", 50060))
+    killed = listener_pids(port)
+    _signal_all(killed, signal.SIGKILL)
+    for _ in range(50):  # a killed process can hold the socket briefly
+        if not listener_pids(port):
+            break
+        time.sleep(0.1)
+    return {"killed": killed, "still_listening": listener_pids(port)}
+
+
 def gpu_cap(req=None):
     """Bytes one process can allocate on this node's Vulkan GPU (vkprobe), cached per
     boot. Run with HK_SYSMEM/BRL_SYSMEM at the machine's RAM so the address space, not the heap
@@ -593,7 +609,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": str(e)})
             except OSError as e:
                 return self._json(500, {"error": str(e)})
-        if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start", "/v1/gpu-cap"):
+        if self.path in ("/v1/rank/start", "/v1/rank/stop", "/v1/rpc/start", "/v1/rpc/stop", "/v1/gpu-cap"):
             try:
                 req = self._body()
             except ValueError:
@@ -603,6 +619,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, rank_start(req))
                 if self.path == "/v1/rpc/start":
                     return self._json(200, rpc_start(req))
+                if self.path == "/v1/rpc/stop":
+                    return self._json(200, rpc_stop(req))
                 if self.path == "/v1/gpu-cap":
                     return self._json(200, gpu_cap(req))
                 return self._json(200, rank_stop(req))
