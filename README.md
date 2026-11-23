@@ -22,8 +22,7 @@ macOS, Macs on Omarchy M+ Linux, even an iPhone. The machines measure each other
 decide which node runs which layers, and serve the cluster as one
 OpenAI-compatible endpoint on :8020. Memory stays per node: each machine holds
 its own layers and KV cache in its own (unified) memory, and the cluster does
-not pool memory across machines - see
-[docs/adr-unified-memory.md](docs/adr-unified-memory.md).
+not pool memory across machines.
 
 Use a split when a model does not fit on any one machine you own. In the
 measured runs, a split added capacity at a cost in speed. When one machine
@@ -222,7 +221,6 @@ RPC servers have no authentication. Keep raw RPC on loopback and use the
 - [Placement](docs/placement.md): layer allocation, KV cache and ring addresses.
 - [Troubleshooting](docs/troubleshooting.md): logs, memory limits and prompts.
 - [Measured results](docs/benchmarks.md): benchmark tables and supporting records.
-- [Mac and DGX Spark proof](docs/mac-spark-proof.md): tested install, shared request, and manual recovery.
 
 ## Contributing
 

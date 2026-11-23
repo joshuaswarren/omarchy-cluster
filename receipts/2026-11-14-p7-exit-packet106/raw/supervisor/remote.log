@@ -1,6 +1,0 @@
-Running as unit: p106-ctl-ab2982ba.service
-          Finished with result: success
-Main processes terminated with: code=exited, status=0/SUCCESS
-               Service runtime: 2min 11.597s
-             CPU time consumed: 2.758s
-                   Memory peak: 149.2M (swap: 33.8M)
