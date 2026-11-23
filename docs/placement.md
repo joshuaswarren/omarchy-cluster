@@ -13,7 +13,7 @@ the llama.cpp engine.
 1. Every unified-memory node is a candidate rank; only the final rank must be
    decode-eligible (`--no-decode` excludes a node from the tail). "Unified
    memory" here is one node's own UMA; the cluster never pools memory across
-   nodes (docs/adr-unified-memory.md).
+   nodes; the cluster never pools memory across machines.
 2. The planner tries one stage first (the whole model on the one node with the
    most memory), then more stages, and stops at the first feasible plan; `place`
    prints "whole on NODE" or "split across N nodes" on its first line. `--stages N`
