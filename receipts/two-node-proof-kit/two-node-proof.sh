@@ -12,7 +12,7 @@ Usage (fresh OUT and disposable TLS directories; run once on each host):
   two-node-proof.sh --check spark SOURCE GGUF OUT LLAMA_SERVER TLS M2_IP
 SOURCE: git checkout containing commit 10a47b69df53f60b1e9b3f67aa5092fdff2c4562
         (git clone https://github.com/joshuaswarren/omarchy-cluster; git fetch origin 10a47b69df53f60b1e9b3f67aa5092fdff2c4562).
-GGUF: exact Qwen3-1.7B-Q4_K_M.gguf, sha256 d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5.
+GGUF: bartowski Qwen_Qwen3-1.7B-Q4_K_M.gguf from https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf, sha256 72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb.
 LLAMA_SERVER and RPC_SERVER: llama.cpp builds from the SAME upstream commit on both hosts,
         built with GGML_RPC=ON (Mac also GGML_VULKAN=ON, Spark also GGML_CUDA=ON). The kit records
         each host's llama-server version; the verifier fails when the two differ.
@@ -62,7 +62,7 @@ run_checks() {
     local label
     if [[ -d $src ]] && git -C "$src" cat-file -e "$commit" 2>/dev/null; then say 'source commit present' ok; else say 'source commit present' no; fi
     if [[ -f $model ]]; then say 'model file present' ok; else say 'model file present' no; fi
-    if [[ -f $model ]] && printf '%s  %s\n' d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5 "$model" | sha256sum -c --status; then
+    if [[ -f $model ]] && printf '%s  %s\n' 72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb "$model" | sha256sum -c --status; then
         say 'model sha256 matches' ok
     else
         say 'model sha256 matches' no
@@ -147,7 +147,7 @@ socat_has_openssl || fail 'socat with OpenSSL support not found; install socat o
 for f in ca.crt "$peer.crt" "$peer.key"; do [[ -f $tls/$f && ! -L $tls/$f ]] || fail 'invalid TLS input'; done
 verify_tls || fail 'TLS certificate does not verify against ca.crt for this role'
 [[ $(timedatectl show -p NTPSynchronized --value) == yes ]] || fail 'clock is not NTP synchronized'
-printf '%s  %s\n' d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5 "$model" 14c3f0ad3a694f784aae16db3cbf845c7d9b6c608904243d7a64498e35e786e2 "$base/request.json" | sha256sum -c --strict
+printf '%s  %s\n' 72c5c3cb38fa32d5256e2fe30d03e7a64c6c79e668ad84057e3bd66e250b24fb "$model" 14c3f0ad3a694f784aae16db3cbf845c7d9b6c608904243d7a64498e35e786e2 "$base/request.json" | sha256sum -c --strict
 if [[ $mode == mac ]]; then
     ports=(24820 24831 24832 24860 24861)
     stats=/sys/class/drm/renderD128/device/agx_stats
