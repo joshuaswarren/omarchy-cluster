@@ -99,6 +99,14 @@ To repeat the other two runs in each direction, use `-P 16` in place of `-P 8`. 
 
 Each rate comes from the receiver. Each retransmit count comes from the sender of that run. All three pings came back in each direction. The 100 Gb/s Ethernet link rate is not the TCP rate through the Thunderbolt tunnel. The fastest run to the Mac had 13,817 retransmits. We measured TCP, not RDMA or distributed inference.
 
+## Why this test used TCP
+
+[Apple's RDMA over Thunderbolt](https://developer.apple.com/documentation/technotes/tn3205-low-latency-communication-with-rdma-over-thunderbolt) links Thunderbolt 5 Macs. It does not provide RoCE on this card.
+
+We checked the M1 Ultra's running arm64e boot image and the `kernelcache.release.mac13j` image in [Apple's 25G83 restore](https://updates.cdn-apple.com/2026SummerFCS/fullrestores/140-75212/A2A24B94-1FC1-45A3-93F7-C51B02AF1F4D/UniversalMac_26.6.2_25G83_Restore.ipsw). Neither contained `IORDMAFamily`. The M3 Ultra image from the same restore, `kernelcache.release.mac15j`, did. Apple's `26A428` restore still omits the family on the M1 Ultra.
+
+The [MCDMA kext](https://github.com/ashhart/MCDMA/blob/c07ca4e28ed129f56c26ae25233b5063495b59f3/docs/install.md) needs that kernel family. An allowlist change will not make it work on those M1 Ultra builds. A DriverKit driver with its own verbs library can work without that family.
+
 ## Remove the test settings
 
 Stop the server with Ctrl-C. The addresses do not survive a reboot. To remove them now, undo only the alias and profile you added:
