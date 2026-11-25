@@ -221,6 +221,7 @@ RPC servers have no authentication. Keep raw RPC on loopback and use the
 - [Placement](docs/placement.md): layer allocation, KV cache and ring addresses.
 - [Troubleshooting](docs/troubleshooting.md): logs, memory limits and prompts.
 - [Measured results](docs/benchmarks.md): benchmark tables and supporting records.
+- [Wire a Mac Studio to a DGX Spark](docs/mac-studio-spark-connectx.md): set up the link and test TCP speed.
 
 ## Contributing
 
