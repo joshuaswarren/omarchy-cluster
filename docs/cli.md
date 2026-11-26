@@ -119,6 +119,21 @@ Linux node drops under 2 GB available, a Mac's memory pressure falls under 15 pe
 free or its Data volume under 20 GB, or a node stops answering. Run it on the gateway
 machine. See [troubleshooting.md](troubleshooting.md#logs-and-stopping).
 
+### `drill --node IP[:PORT] [options]`
+Runs the node-loss and restart drill against a running RPC cluster (also runnable as
+`python3 -m omarchy_cluster.drill`). Sends a greedy baseline completion to `--gateway`
+(default `http://127.0.0.1:8020`, with `Authorization: Bearer <cluster token>`), starts a
+second request and SIGKILLs the worker on `--node` (agent default port `8025`) via
+`POST /v1/rpc/stop` after `--kill-after` seconds, requires the in-flight request and a
+dead-worker probe to fail within `--error-deadline` seconds (not hang or return a bogus
+200), restarts the worker via `POST /v1/rpc/start` (body from `--rpc-body`, default
+`{"port": rpc-port}`), waits for the RPC TCP port and gateway `/health` (running
+`--restart-gateway-cmd` in between when the gateway/engine must reload RPC layers), and
+replays the prompt requiring matching deterministic output (ignoring per-request `id`,
+`created` and `timings`). Pass `--no-restart` to verify only the clean error path, and
+`--out PATH` to also save the receipt JSON. Prints the receipt JSON and exits 1 unless
+every step passes.
+
 ## Model commands
 
 ### `models list`
