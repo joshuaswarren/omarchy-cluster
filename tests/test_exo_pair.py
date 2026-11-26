@@ -342,8 +342,9 @@ def test_host_power_probe_provenance_honest_for_nvidia_smi_and_missing_probe() -
 
 def test_wrong_token_id_digest_fails_pair_run(tmp_path: Path) -> None:
     """CLX-3: a wrong strict token-ID digest fails the pair run; the right one
-    passes, and the passing digest hex is identical across two runs."""
+    passes, and pass/fail verdicts plus digest hex are identical across two runs."""
     canonical = exo_pair.compute_token_digest(list(range(500, 532)))
+    wrong_canonical = exo_pair.compute_token_digest(list(range(900, 932)))
     right = tmp_path / "right_ids.py"
     right.write_text(
         "import json, sys\nwords = sys.stdin.read().split()\n"
@@ -357,33 +358,121 @@ def test_wrong_token_id_digest_fails_pair_run(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    def run(cmd: Path):
+    def run(cmd: Path) -> tuple[dict, dict]:
         with exo_pair.MockExoServer(prompt_tokens=8192, emit_token_ids=False) as mock:
-            record, _details = exo_pair.run_exo_pair(
+            return exo_pair.run_exo_pair(
                 base_url=mock.base_url,
                 model_key="Llama-3.1-8B-Q4",
                 token_id_cmd=f"{sys.executable} {cmd}",
+                expected_token_digest=canonical,
                 dry_run=False,
             )
-        return record
 
-    bad = run(wrong)
-    good = run(right)
-    good_again = run(right)
+    bad_1, bad_details_1 = run(wrong)
+    bad_2, bad_details_2 = run(wrong)
+    good_1, good_details_1 = run(right)
+    good_2, good_details_2 = run(right)
 
-    assert bad["metrics"]["token_digest"] != canonical
-    assert good["metrics"]["token_digest"] == canonical
-    assert (
-        good_again["metrics"]["token_digest"] == good["metrics"]["token_digest"]
-    )
-    for record in (bad, good, good_again):
-        assert record["metrics"]["errors"] == []
+    expected_err = f"token_digest mismatch: expected {canonical}, got {wrong_canonical}"
+    for record, details in ((bad_1, bad_details_1), (bad_2, bad_details_2)):
+        assert exo_pair.validate_cl02_record(record) == []
         assert record["metrics"]["generated_tokens"] == 32
+        assert record["metrics"]["token_digest"] == wrong_canonical
+        assert record["metrics"]["token_digest"] != canonical
+        assert record["metrics"]["errors"] == [expected_err]
+        assert details["token_digest_basis"] == "token_id_cmd"
+        assert details["expected_token_digest"] == canonical
+        assert details["token_digest_match"] is False
+
+    for record, details in ((good_1, good_details_1), (good_2, good_details_2)):
+        assert exo_pair.validate_cl02_record(record) == []
+        assert record["metrics"]["generated_tokens"] == 32
+        assert record["metrics"]["token_digest"] == canonical
+        assert record["metrics"]["errors"] == []
+        assert details["token_digest_basis"] == "token_id_cmd"
+        assert details["expected_token_digest"] == canonical
+        assert details["token_digest_match"] is True
+
+    assert (bad_1["metrics"]["errors"], bad_1["metrics"]["token_digest"]) == (
+        bad_2["metrics"]["errors"],
+        bad_2["metrics"]["token_digest"],
+    )
+    assert (good_1["metrics"]["errors"], good_1["metrics"]["token_digest"]) == (
+        good_2["metrics"]["errors"],
+        good_2["metrics"]["token_digest"],
+    )
+
+
+def test_expected_token_digest_cli_pass_and_fail_verdicts(tmp_path: Path) -> None:
+    """CLX-3: CLI --expected-token-digest returns 1 on mismatch, 0 on match,
+    identically across two runs on the canned loopback fixture."""
+    canonical = exo_pair.compute_token_digest(list(range(1000, 1032)))
+    wrong_expected = "0" * 16
+
+    def invoke(expected: str, name: str) -> tuple[int, dict, dict]:
+        out_dir = tmp_path / name
+        rc = exo_pair.main(
+            [
+                "--dry-run",
+                "--model",
+                "Llama-3.1-8B-Q4",
+                "--expected-token-digest",
+                expected,
+                "--out-dir",
+                str(out_dir),
+            ]
+        )
+        run_json = json.loads((out_dir / "run.json").read_text(encoding="utf-8"))
+        details_json = json.loads((out_dir / "exo-pair-details.json").read_text(encoding="utf-8"))
+        return rc, run_json, details_json
+
+    fail_1 = invoke(wrong_expected, "fail-1")
+    fail_2 = invoke(wrong_expected, "fail-2")
+    pass_1 = invoke(canonical, "pass-1")
+    pass_2 = invoke(canonical, "pass-2")
+
+    for rc, record, details in (fail_1, fail_2):
+        assert rc == 1
+        assert exo_pair.validate_cl02_record(record) == []
+        assert record["metrics"]["token_digest"] == canonical
+        assert record["metrics"]["errors"] == [
+            f"token_digest mismatch: expected {wrong_expected}, got {canonical}"
+        ]
+        assert details["expected_token_digest"] == wrong_expected
+        assert details["token_digest_match"] is False
+
+    for rc, record, details in (pass_1, pass_2):
+        assert rc == 0
+        assert exo_pair.validate_cl02_record(record) == []
+        assert record["metrics"]["token_digest"] == canonical
+        assert record["metrics"]["errors"] == []
+        assert details["expected_token_digest"] == canonical
+        assert details["token_digest_match"] is True
+
+    assert (fail_1[0], fail_1[1]["metrics"]["token_digest"]) == (
+        fail_2[0],
+        fail_2[1]["metrics"]["token_digest"],
+    )
+    assert (pass_1[0], pass_1[1]["metrics"]["token_digest"]) == (
+        pass_2[0],
+        pass_2[1]["metrics"]["token_digest"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        exo_pair.main(["--dry-run", "--expected-token-digest", "not-a-hex-digest"])
+    assert exc_info.value.code == 2
+
+    with pytest.raises(ValueError, match="16 lowercase hex chars"):
+        exo_pair.run_exo_pair(
+            base_url="http://127.0.0.1:52415",
+            expected_token_digest="INVALID",
+        )
 
 
 def test_malformed_token_id_cmd_fails_pair_run(tmp_path: Path) -> None:
     """CLX-3: a token-id-cmd that does not emit an int array fails the run:
     errors recorded, empty digest, no text substitution."""
+    canonical = exo_pair.compute_token_digest(list(range(500, 532)))
     broken = tmp_path / "broken_ids.py"
     broken.write_text("print('not json')\n", encoding="utf-8")
     with exo_pair.MockExoServer(prompt_tokens=8192, emit_token_ids=False) as mock:
@@ -391,8 +480,16 @@ def test_malformed_token_id_cmd_fails_pair_run(tmp_path: Path) -> None:
             base_url=mock.base_url,
             model_key="Llama-3.1-8B-Q4",
             token_id_cmd=f"{sys.executable} {broken}",
+            expected_token_digest=canonical,
             dry_run=False,
         )
-    assert record["metrics"]["errors"]
+    assert exo_pair.validate_cl02_record(record) == []
+    assert any("valid JSON" in err for err in record["metrics"]["errors"])
+    assert any(
+        f"token_digest mismatch: expected {canonical}, got unavailable" in err
+        for err in record["metrics"]["errors"]
+    )
     assert record["metrics"]["token_digest"] == ""
     assert details["token_digest_basis"] == "unavailable"
+    assert details["expected_token_digest"] == canonical
+    assert details["token_digest_match"] is False
