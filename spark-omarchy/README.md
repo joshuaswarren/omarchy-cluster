@@ -18,7 +18,7 @@ Omarchy rootfs is on disk and booting.
 | Kernel | `7.0.0-1019-nvidia` family | The GB10 needs NVIDIA's Ubuntu-fork kernel patches (ConnectX-7 Ethernet, USB, full GPU). Mainline does not bring the board up. |
 | Open kernel module | `580.178.04` | Same driver build as the vendor OS, so measurements compare. |
 | CUDA toolkit | `13.4.2` | CUDA 13 SBSA payload; DGX OS ships 13.0.3, toolkit ≥ driver contract holds. |
-| llama.cpp | `v1.0.0` (`2d8a3250`) | Pinned tag; the cluster proof kit requires the same commit's binaries on both hosts. |
+| llama.cpp | `v1.0.0` (`b1b770d`) | Pinned tag; the cluster proof kit requires the same commit's binaries on both hosts. |
 | GPU architecture | `sm_121` | GB10 compute capability. |
 
 ## Layout
