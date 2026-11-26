@@ -238,7 +238,8 @@ CI runs these tests on Ubuntu 24.04 and macOS 15 with Python 3.9 and 3.13.
 ## Milestone run matrix
 
 Cluster milestone rows CL04-CL16 with the receipt paths that exist and the ones
-still missing. Status follows the lane claims log as of 2026-11-26.
+still missing. Status follows the lane claims log as of 2026-11-26, folded
+with the post-merge states of PRs #150, #153, #155, #156 and #157.
 
 ### CL04 — Spark DGX OS solo baseline — ran, numbers posted to the card
 
@@ -246,21 +247,26 @@ still missing. Status follows the lane claims log as of 2026-11-26.
 |---|---|
 | `spark:~/cl02-out/llama8b/run.json` (cold) and `spark:~/cl02-out/llama8b-warm/repeat-{1,2,3}/run.json` | exists on the Spark host |
 | `spark:~/cl02-out/qwen17b/run.json` (cold) and `spark:~/cl02-out/qwen17b-warm/repeat-{1,2,3}/run.json` | exists on the Spark host |
-| a copy under `receipts/` in this repo | missing |
+| `receipts/milestone1-status-2026-11-26.md` — per-artifact inventory with results and parity digests | exists (PR #155) |
+| `schemas/cl02-baseline-1.example.json` + `tests/test_cl02_schema.py` — the `cl02-baseline/1` output schema these run.json files must keep | exists (PR #153) |
+| a copy of the run artifacts under `receipts/` in this repo | missing |
 
 ### CL05 — macOS solo baseline — claimed, no run
 
 | Receipt path | State |
 |---|---|
 | `receipts/milestone1-jwm2-macos-solo/run.json` | missing |
+| staged command sheet + blocker chain | documented in `receipts/milestone1-status-2026-11-26.md` (PR #155) |
 
 ### CL06 — vendor-OS EXO pair (macOS + DGX OS) — dry-run only
 
 | Receipt path | State |
 |---|---|
 | `receipts/milestone1-exo-pair/run-exo-pair.sh` | exists |
+| `omarchy_cluster/exo_pair.py` — now fails a pair run on a wrong strict token-ID digest | exists, hardened (PR #156, CLX-3) |
 | `receipts/milestone1-exo-pair/dry-run/` (`run.json`, `exo-pair-details.json`, `dry-run.log`) | exists (dry-run) |
 | `receipts/milestone1-exo-pair/live-*/run.json` | missing |
+| staged Spark arm + the one timed-out arm | documented in `receipts/milestone1-status-2026-11-26.md` (PR #155) |
 
 ### CL07 — unified four-device C-a serve medians — measured
 
@@ -278,7 +284,8 @@ still missing. Status follows the lane claims log as of 2026-11-26.
 | Artifact | State |
 |---|---|
 | joint engine: prefill, KV transfer, decode over llama-server slots (PR #133) | merged |
-| `docs/cl08-test-inventory.md` loopback/mock coverage | open as PR #150 |
+| `docs/cl08-test-inventory.md` loopback/mock coverage + gap list | merged (PR #150) |
+| `docs/joint-request-path.md` sequence note for the joint-request path | merged (PR #151) |
 
 ### CL09 — joint-request A/B on Omarchy Mac + Spark — open
 
@@ -326,11 +333,12 @@ still missing. Status follows the lane claims log as of 2026-11-26.
 | receipt dir comparing Omarchy-on-both against CL04-CL06 across all 8 metrics | missing |
 | joint-request `run.json` and two-node `combine.json` arms | missing |
 
-### CL16 — live node-loss and restart drills — code merged, drill not run
+### CL16 — live node-loss and restart drills — code merged + hardened, drill not run
 
 | Artifact | State |
 |---|---|
 | `omarchy_cluster/drill.py` + `tests/test_drill.py` (PR #138) | merged |
+| node-loss/restart drill hardening + `cli.py` rewiring and CLI tests (PR #157) | merged |
 | live drill receipt on the Omarchy-on-both cluster | missing (needs CL15) |
 | unsupported-cases matrix (the former `docs/mac-spark-proof.md` was removed in PR #143) | missing |
 
