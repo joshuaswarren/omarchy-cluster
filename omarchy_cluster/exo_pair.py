@@ -1002,6 +1002,7 @@ def run_exo_pair(
     mock_lan_bytes: int | None = None,
     reuse_existing_instance: bool = False,
     token_id_cmd: str | None = None,
+    expected_token_digest: str | None = None,
     nvidia_probe: Callable[[], tuple[float | None, float | None]] = _sample_nvidia_smi_once,
     powermetrics_probe: Callable[[], float | None] = _sample_powermetrics_once,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1013,6 +1014,14 @@ def run_exo_pair(
     if power_source not in ALLOWED_POWER_SOURCES:
         raise ValueError(
             f"power_source must be one of {sorted(ALLOWED_POWER_SOURCES)}, got {power_source!r}"
+        )
+    if expected_token_digest is not None and (
+        not isinstance(expected_token_digest, str)
+        or not HEX16_RE.fullmatch(expected_token_digest)
+    ):
+        raise ValueError(
+            "expected_token_digest must be 16 lowercase hex chars, "
+            f"got {expected_token_digest!r}"
         )
 
     pin = PINNED_MODELS[model_key]
@@ -1208,6 +1217,15 @@ def run_exo_pair(
         if not errors:
             errors.append("no tokens generated")
 
+    token_digest_match: bool | None = None
+    if expected_token_digest is not None:
+        token_digest_match = token_digest == expected_token_digest
+        if not token_digest_match:
+            got_digest = token_digest or "unavailable"
+            errors.append(
+                f"token_digest mismatch: expected {expected_token_digest}, got {got_digest}"
+            )
+
     decode_s = max(0.0, t_end - t_first) if t_first is not None else 0.0
     if generated_tokens > 1 and decode_s > 0.0:
         decode_tok_s = (generated_tokens - 1) / decode_s
@@ -1312,6 +1330,8 @@ def run_exo_pair(
         },
         "nodes": nodes_detail,
         "token_digest_basis": digest_basis,
+        "expected_token_digest": expected_token_digest,
+        "token_digest_match": token_digest_match,
         "output_text_sha256_16": output_text_sha256_16,
         "generation_stats": gen_stats,
         "exo_node_system_power": {
@@ -1668,6 +1688,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--expected-token-digest",
+        default=None,
+        help=(
+            "Expected 16-hex strict token-ID digest; fail the pair run (non-zero exit and "
+            "metrics.errors entry) if metrics.token_digest does not match."
+        ),
+    )
+    parser.add_argument(
         "--reuse-instance",
         action="store_true",
         help="Reuse an already-loaded multi-node EXO instance instead of creating/deleting one.",
@@ -1688,6 +1716,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.print_setup:
         print(format_setup_instructions())
         return 0
+
+    if args.expected_token_digest is not None and not HEX16_RE.fullmatch(
+        args.expected_token_digest
+    ):
+        parser.error(
+            "--expected-token-digest must be 16 lowercase hex chars, "
+            f"got {args.expected_token_digest!r}"
+        )
 
     exo_commit = EXO_PINNED_COMMIT
     if args.exo_repo is not None:
@@ -1716,6 +1752,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 exo_commit=exo_commit,
                 dry_run=True,
                 mock_lan_bytes=16 * 1024 * 1024,
+                expected_token_digest=args.expected_token_digest,
             )
             if not mock.deleted_instances:
                 raise ExoRunnerError("Dry-run teardown failed: mock instance was not deleted")
@@ -1735,6 +1772,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dry_run=False,
             reuse_existing_instance=args.reuse_instance,
             token_id_cmd=args.token_id_cmd,
+            expected_token_digest=args.expected_token_digest,
         )
 
     validation_errors = validate_cl02_record(record)
