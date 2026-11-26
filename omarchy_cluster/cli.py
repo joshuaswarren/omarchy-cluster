@@ -1121,62 +1121,15 @@ def cmd_guard(args):
     print("guard: no running serve", flush=True)
 
 
-def _tcp_ready(host, port):
-    """wait_ready probe for cmd_drill: True once (host, port) accepts a TCP connect."""
-    def probe(_remaining_s):
-        try:
-            socket.create_connection((host, int(port)), timeout=2).close()
-            return True
-        except OSError:
-            return False
-    return probe
-
-
 def cmd_drill(args):
     """Node-loss drill against the running serve: SIGKILL a node's RPC worker while a
     request is in flight, require the request to fail cleanly (a bounded error, not a
     hang), restart the worker, and replay the request. Prints the receipt JSON and
     exits non-zero unless every step passes."""
     from . import drill as drill_mod
-    node_ip, _, node_port = args.node.rpartition(":")
-    agent_port = int(node_port or 8025)
-    tok = _read_local_token()
-
-    def agent_post(path, body, timeout=15):
-        req = urllib.request.Request(
-            client.agent_url(node_ip, agent_port, path),
-            data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json", "X-Cluster-Token": tok})
-        with client.urlopen(req, timeout) as r:
-            return json.loads(r.read())
-
-    def request():
-        body = json.dumps({"prompt": args.prompt, "max_tokens": args.max_tokens}).encode()
-        req = urllib.request.Request(args.gateway.rstrip("/") + "/v1/completions",
-                                     data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=600) as r:
-            return json.loads(r.read())
-
-    start_body = {"port": args.rpc_port}
-    if args.rpc_body:
-        with open(os.path.expanduser(args.rpc_body)) as f:
-            start_body = json.load(f)
-
-    receipt = drill_mod.run_drill(
-        request,
-        kill=lambda: agent_post("/v1/rpc/stop", {"port": args.rpc_port}),
-        restart=lambda: agent_post("/v1/rpc/start", start_body),
-        wait_ready=_tcp_ready(node_ip, args.rpc_port),
-        kill_after_s=args.kill_after,
-        error_deadline_s=args.error_deadline,
-        ready_deadline_s=args.ready_deadline)
-    out = json.dumps(receipt, indent=2)
-    if args.out:
-        with open(args.out, "w") as f:
-            f.write(out + "\n")
-    print(out)
-    if receipt.get("verdict") != "pass":
-        sys.exit(1)
+    rc = drill_mod.run_cli(args)
+    if rc:
+        sys.exit(rc)
 
 
 def _pick_route_ip(node_facts_dict, stages, node_name, links_path=None):
@@ -1426,24 +1379,10 @@ def main(argv=None):
     p.add_argument("--interval", type=float, default=10.0, help="seconds between passes")
     p.set_defaults(fn=cmd_guard)
 
+    from . import drill as drill_mod
     p = sub.add_parser("drill", help="node-loss drill: SIGKILL a node's RPC worker mid-request, "
                                      "require a clean error, restart it, replay the request")
-    p.add_argument("--node", required=True, help="agent address of the node running the RPC worker, ip[:agent-port]")
-    p.add_argument("--rpc-port", type=int, default=50060, help="port the RPC worker listens on")
-    p.add_argument("--gateway", default="http://127.0.0.1:8020", help="serve gateway URL")
-    p.add_argument("--prompt", default="Write one sentence about loss.", help="the request the drill sends")
-    p.add_argument("--max-tokens", type=int, default=256,
-                   help="keep the request in flight longer than --kill-after")
-    p.add_argument("--kill-after", type=float, default=1.0,
-                   help="seconds to let the request run before the kill")
-    p.add_argument("--error-deadline", type=float, default=10.0,
-                   help="max seconds a request may take to fail once the worker is dead")
-    p.add_argument("--ready-deadline", type=float, default=60.0,
-                   help="max seconds to wait for the restarted worker")
-    p.add_argument("--rpc-body", default=None,
-                   help="JSON file with the /v1/rpc/start body to restart the worker "
-                        "(default: {\"port\": rpc-port})")
-    p.add_argument("--out", default=None, help="also write the receipt JSON here")
+    drill_mod.add_drill_args(p)
     p.set_defaults(fn=cmd_drill)
 
     p = sub.add_parser("hub", help="run the heartbeat hub")
