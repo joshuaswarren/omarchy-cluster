@@ -35,6 +35,7 @@ can hold the model, start there and measure before adding nodes.
 | `--engine mlx` (default) | mlx-lm pipeline families: `deepseek_v2`/`v3`, `glm4_moe`, `glm4_moe_lite`, `ministral3`; `qwen2`/`qwen3` run on one node (`--stages 1`); Muse Spark Open through the omarchy-mlx adapter | any node | macOS Macs (Metal, stock MLX) and Omarchy M+ Macs (Vulkan through omarchy-mlx) |
 | `--engine llamacpp` | GGUF models supported by your llama.cpp build | the machine with the GGUF | llama.cpp RPC servers: Metal on macOS, Vulkan or CPU on Omarchy Linux, CUDA or CPU elsewhere, an iPhone over USB (`ios/`) |
 | `--engine sushi` | Sushi format (EXL3 experts), greedy only | the Sushi host (single host, Metal or the Vulkan fallback) | not sharded |
+| `--engine joint` | same GGUF as `--engine llamacpp` on two llama-servers | the decode machine | not sharded: a llama-server on another host runs prefill and hands the slot KV over through the node agents; this host's llama-server decodes |
 
 On the Vulkan backend, runs on these nodes cover 2-bit and 4-bit models; 5-bit and
 6-bit MoE checkpoints have failed. Engine details:
@@ -130,6 +131,10 @@ It uses the node's system `python3` and installs no MLX: macOS nodes that run ML
 ranks still need `mlx` and `mlx-lm` in a Python the agent can use. Use ssh keys;
 `bootstrap` never asks for a password.
 
+A node already advertising on the LAN needs one command instead: `omarchy-cluster
+join NAME` resolves it from `discover`, refuses a peer that is not Omarchy Linux,
+and runs the same install steps. `omarchy-cluster leave NAME` undoes it.
+
 ## Security
 
 - The agent on :8025 speaks TLS with its own key (made at `install-agent`, kept in
@@ -175,8 +180,10 @@ the gateway on :8020. Each node loads only its own layers from its Hugging Face
 cache, so download the model on every node first:
 
 ```sh
-hf download mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit
+omarchy-cluster models pull mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit
 ```
+
+(`hf download` of the same repo fills the same cache and works too.)
 
 Ask it something:
 
@@ -222,6 +229,9 @@ RPC servers have no authentication. Keep raw RPC on loopback and use the
 - [Troubleshooting](docs/troubleshooting.md): logs, memory limits and prompts.
 - [Measured results](docs/benchmarks.md): benchmark tables and supporting records.
 - [Wire a Mac Studio to a DGX Spark](docs/mac-studio-spark-connectx.md): set up the link and test TCP speed.
+- [Authenticate a cross-host RPC link](docs/secure-rpc.md): mutual TLS around an unauthenticated `ggml-rpc-server` hop.
+- [C-a serve A/B spec](docs/serve-ab-ca.md): the four-device llama.cpp A/B method and its receipt shape.
+- [CL08 test inventory](docs/cl08-test-inventory.md): the loopback/mock test suite map and its gaps.
 
 ## Contributing
 

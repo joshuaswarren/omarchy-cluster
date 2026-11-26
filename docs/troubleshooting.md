@@ -128,9 +128,10 @@ run recipe. These are the first-run blockers an outside tester hit (2026-11-21,
 
 ## Trust model
 
-Plain HTTP with one shared token on your LAN: a homelab trust model, no TLS, no
-per-user auth. A node slowed by other GPU work is detected and reported, not
-preempted. The MLX ring engine runs one request at a time and queues the rest. The
+The agent control plane (:8025) is TLS with pinned keys, guarded by one shared
+cluster token. The gateway (:8020), the engine and the rank ring are plain HTTP
+on your LAN: a homelab trust model with no per-user auth. A node slowed by other
+GPU work is detected and reported, not preempted. The MLX ring engine runs one request at a time and queues the rest. The
 llama.cpp engine serves concurrent requests in llama-server's slots (see the README).
 When all `--max-concurrent` gateway slots stay busy for 10 minutes, a request gets
 HTTP 503 with `Retry-After`: retry it.
