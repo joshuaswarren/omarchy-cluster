@@ -29,7 +29,7 @@ Confirm `Driver Installed: Yes`, then match the active interface to the card. We
 
 ## Set up the direct link
 
-First make sure neither host uses `10.77.0.0/30`. Keep your management link. Use only idle test ports with no configured IP address or default route. Use your own device names if they differ. Do not set a gateway or DNS server on this link.
+First make sure neither host uses `<LINK_SUBNET>`. Keep your management link. Use only idle test ports with no configured IP address or default route. Use your own device names if they differ. Do not set a gateway or DNS server on this link.
 
 On the Mac, check the interface and routes first:
 
@@ -42,9 +42,9 @@ netstat -rn -f inet
 If the port and subnet are free, add the alias:
 
 ```sh
-sudo ifconfig "$MAC_IF" inet 10.77.0.1 netmask 255.255.255.252 alias
+sudo ifconfig "$MAC_IF" inet <MAC_LINK_IP> netmask 255.255.255.252 alias
 ifconfig "$MAC_IF"
-route -n get 10.77.0.2
+route -n get <SPARK_LINK_IP>
 ```
 
 On the Spark, check the port, routes and NetworkManager profiles. Pick a profile name that is not in the list. If the test port has an active profile, note it so you can restore it later.
@@ -62,12 +62,12 @@ If the port, subnet and name checks pass, add and start a temporary profile:
 
 ```sh
 sudo nmcli connection add save no type ethernet ifname "$SPARK_IF" con-name "$PROFILE" \
-  connection.autoconnect no ipv4.method manual ipv4.addresses 10.77.0.2/30 \
+  connection.autoconnect no ipv4.method manual ipv4.addresses <SPARK_LINK_IP>/30 \
   ipv4.never-default yes ipv6.method link-local ipv6.never-default yes \
   802-3-ethernet.mtu 1500 802-3-ethernet.cloned-mac-address preserve &&
   sudo nmcli connection up id "$PROFILE" ifname "$SPARK_IF"
 ip -br address show dev "$SPARK_IF"
-ip -4 route get 10.77.0.1
+ip -4 route get <MAC_LINK_IP>
 ```
 
 Check that both interfaces show MTU 1500. The Mac listed 1280 to 2034 bytes and would not accept 9000. Check both peer routes before you run a test. Each should use its dedicated interface.
@@ -77,16 +77,16 @@ Check that both interfaces show MTU 1500. The Mac listed 1280 to 2034 bytes and 
 Use `iperf3` on both hosts. We used 3.22.1 on the Mac and 3.16 on the Spark. From the Spark, ping the Mac. Bind the server to the test address and leave it in the foreground so you can stop it later.
 
 ```sh
-ping -c 3 -I 10.77.0.2 10.77.0.1
-iperf3 -s -B 10.77.0.2
+ping -c 3 -I <SPARK_LINK_IP> <MAC_LINK_IP>
+iperf3 -s -B <SPARK_LINK_IP>
 ```
 
 On the Mac, ping the Spark and test both ways. Use `-R` when the Spark sends.
 
 ```sh
-ping -c 3 -S 10.77.0.1 10.77.0.2
-iperf3 -c 10.77.0.2 -B 10.77.0.1 -P 8 -t 10
-iperf3 -c 10.77.0.2 -B 10.77.0.1 -P 8 -t 10 -R
+ping -c 3 -S <MAC_LINK_IP> <SPARK_LINK_IP>
+iperf3 -c <SPARK_LINK_IP> -B <MAC_LINK_IP> -P 8 -t 10
+iperf3 -c <SPARK_LINK_IP> -B <MAC_LINK_IP> -P 8 -t 10 -R
 ```
 
 To repeat the other two runs in each direction, use `-P 16` in place of `-P 8`. Run once with default socket buffers and once with `-w 4M`.
@@ -111,5 +111,5 @@ The [MCDMA kext](https://github.com/ashhart/MCDMA/blob/c07ca4e28ed129f56c26ae252
 
 Stop the server with Ctrl-C. The addresses do not survive a reboot. To remove them now, undo only the alias and profile you added:
 
-- Mac: `sudo ifconfig "$MAC_IF" inet 10.77.0.1 -alias`
+- Mac: `sudo ifconfig "$MAC_IF" inet <MAC_LINK_IP> -alias`
 - Spark: `sudo nmcli connection delete id "$PROFILE"`. Restore the previous profile if it did not reconnect on its own.
