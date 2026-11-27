@@ -35,8 +35,9 @@ Omarchy rootfs is on disk and booting.
     `GGML_CUDA=ON` and `GGML_RPC=ON` for `sm_121`.
 - `boot/` — systemd-boot entry templates and notes on keeping the DGX OS
   UEFI entry as the rollback target.
-- `network/` — Avahi/mDNS setup and the UFW rule list (SSH, mDNS, Remnic
-  :8095/:8098 scoped to the LAN; the RPC port is never opened permanently).
+- `network/` — Avahi/mDNS setup and the UFW rule list (SSH, mDNS, and the
+  Remnic memory-service pair scoped to the LAN — default ports configurable
+  in `network/`; the RPC port is never opened permanently).
 - `UPDATE-AND-ROLLBACK.md` — the `pacman -Syu` procedure with pre-update
   snapshots, the in-Omarchy rollback path, and the DGX OS fallback path.
 
@@ -68,8 +69,8 @@ network or GPU to come up.
      the listed rules.
    - `rpc-server` and `llama-server` present on `PATH` for the proof kit.
 6. Restore the Remnic services and model caches from the migration bundle,
-   re-open the LAN-scoped :8095/:8098 rules, and re-run the service health
-   checks.
+   re-open the LAN-scoped rules for the service pair, and re-run the
+   service health checks.
 
 ## Rollback in one line
 
