@@ -255,7 +255,7 @@ with the post-merge states of PRs #150, #153, #155, #156 and #157.
 
 | Receipt path | State |
 |---|---|
-| `receipts/milestone1-jwm2-macos-solo/run.json` | missing |
+| `receipts/milestone1-<MAC_HOST>-macos-solo/run.json` | missing |
 | staged command sheet + blocker chain | documented in `receipts/milestone1-status-2026-11-26.md` (PR #155) |
 
 ### CL06 — vendor-OS EXO pair (macOS + DGX OS) — dry-run only

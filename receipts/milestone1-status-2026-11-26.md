@@ -29,7 +29,7 @@ cold and warm runs — these are the parity targets for CL05/CL06.
 
 ## CL05 — macOS solo baseline — claimed, staged, never ran
 
-The macOS solo baseline (jwm2 on macOS, or the Mac Studio fallback) never
+The macOS solo baseline (<MAC_HOST> on macOS, or the Mac Studio fallback) never
 executed: the 11-22 macOS window closed before CL04 landed, and no later
 window opened. Claimed in the lane log by w9C (14:02 CST 2026-11-22); no
 `-done` marker and no output.
@@ -37,15 +37,15 @@ window opened. Claimed in the lane log by w9C (14:02 CST 2026-11-22); no
 | Artifact | State |
 |---|---|
 | `omp-studio-local:~/scratch/main/cl05/COMMANDS.md` — exact command sheet, pins matching CL04 (EXO `a60b95698ca8`, same models/revisions, seed 42, powermetrics probe) | staged off-repo (2026-11-22 00:54 CST, wAY) |
-| `receipts/milestone1-jwm2-macos-solo/run.json` or any live output | missing — never ran |
+| `receipts/milestone1-<MAC_HOST>-macos-solo/run.json` or any live output | missing — never ran |
 
-To run it: the staged sheet needs a jwm2 macOS boot window; `--token-id-cmd`
+To run it: the staged sheet needs a <MAC_HOST> macOS boot window; `--token-id-cmd`
 copied from the CL04 runs; digest parity targets above.
 
-## CL06 — vendor-OS EXO pair (jwm2 macOS + Spark DGX OS) — staged, one failed arm, never ran
+## CL06 — vendor-OS EXO pair (<MAC_HOST> macOS + Spark DGX OS) — staged, one failed arm, never ran
 
 Both sides were staged on 2026-11-22; the pair never formed. The Spark side
-armed at 21:07 UTC and timed out at 23:06 UTC waiting for node 2 — jwm2
+armed at 21:07 UTC and timed out at 23:06 UTC waiting for node 2 — <MAC_HOST>
 returned to Omarchy Linux before the macOS window opened, and no second arm
 was attempted (Spark-side logs: `~/cl06/arm.log`, `exo.log`, `watchdog.log`).
 
@@ -57,7 +57,7 @@ was attempted (Spark-side logs: `~/cl06/arm.log`, `exo.log`, `watchdog.log`).
 | lane-side copy of the Spark stage | staged off-repo (`~/scratch/w85/cl06/`) |
 | `receipts/milestone1-exo-pair/live-*/run.json` | missing — never ran |
 
-Blocker chain: CL06 needs jwm2 on macOS (the CL05 window) *and* the Spark
+Blocker chain: CL06 needs <MAC_HOST> on macOS (the CL05 window) *and* the Spark
 armed at the same time. EXO pairing is wire-gated — both nodes must match on
 exo `a60b95698ca8`, mlx 0.32.4, and mlx-lm `0.32.3.dev16+g6b572ab1b`.
 
