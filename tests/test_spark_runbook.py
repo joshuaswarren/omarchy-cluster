@@ -28,12 +28,11 @@ def test_runbook_exists_and_covers_cl14_sections():
 
 def test_runbook_references_existing_repo_paths():
     text = _text()
-    for rel in (
-        "spark-omarchy/PHYSICAL-INSTALL.md",
-        "spark-omarchy/UPDATE-AND-ROLLBACK.md",
-        "docs/benchmarks.md",
-    ):
-        assert rel in text, f"runbook does not reference {rel}"
+    import re
+
+    refs = set(re.findall(r"(?:docs|spark-omarchy|receipts)/[A-Za-z0-9_./-]+", text))
+    assert refs, "runbook must reference kit docs"
+    for rel in refs:
         assert (ROOT / rel).exists(), f"referenced path {rel} does not exist"
 
 

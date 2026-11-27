@@ -65,7 +65,7 @@ permanently — see `spark-omarchy/network/`.
 |---|---|---|
 | mDNS | `avahi-resolve -n <SPARK_HOST>.local` from `<MAC_HOST>` | resolves to the LAN address |
 | UFW | `sudo ufw status verbose` | SSH + mDNS + the memory-service pair allowed, RPC closed, default deny |
-| LAN throughput | the `iperf3` leg from `docs/benchmarks.md` | within the recorded range |
+| LAN throughput | `iperf3 -s` on `<SPARK_HOST>`, `iperf3 -c <SPARK_HOST>` from `<MAC_HOST>` | measured value recorded — feeds the milestone comparison |
 
 ## 5. Rollback proof — before any service is restored
 
