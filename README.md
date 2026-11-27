@@ -340,7 +340,7 @@ with the post-merge states of PRs #150, #153, #155, #156 and #157.
 | `omarchy_cluster/drill.py` + `tests/test_drill.py` (PR #138) | merged |
 | node-loss/restart drill hardening + `cli.py` rewiring and CLI tests (PR #157) | merged |
 | live drill receipt on the Omarchy-on-both cluster | missing (needs CL15) |
-| unsupported-cases matrix (the former `docs/mac-spark-proof.md` was removed in PR #143) | missing |
+| [unsupported-cases matrix](docs/unsupported-cases.md) (the former `docs/mac-spark-proof.md` was removed in PR #143) | merged |
 
 ## License
 
