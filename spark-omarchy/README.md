@@ -6,10 +6,11 @@ install cannot get from its own repositories: the GB10 kernel, the NVIDIA
 open kernel module, the CUDA 13 toolkit, the RPC-enabled llama.cpp build, the
 network rules, and the update and rollback procedure.
 
-It does not replace the physical install notes. Flashing the spare NVMe,
+It does not replace the physical install notes. Flashing the install media,
 keeping the DGX OS install untouched as the rollback target, and the first
-boot checks are operator steps; this kit is what gets installed once the
-Omarchy rootfs is on disk and booting.
+boot checks are operator steps — see `PHYSICAL-INSTALL.md` for the CL13
+one-pager. This kit is what gets installed once the Omarchy rootfs is on
+disk and booting.
 
 ## Versions pinned for parity with DGX OS 7.6.0
 
