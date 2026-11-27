@@ -23,7 +23,11 @@ from . import token as cluster_token
 GATEWAY_PORT = 8020
 MAX_CONCURRENT = 4  # llama-server's default slot count; the MLX ranks queue behind their own worker
 QUEUE_WAIT_S = 600.0
-CONCURRENCY_FLOOR_TOKPS = 154.63  # the k=1 aggregate decode tok/s from the receipts table; k>1 switches off below it
+# Default 0.0 keeps configured k>1 concurrency active for any model/chip speed;
+# pass --concurrency-floor-tokps (or set Gateway.floor_tokps) to enable an
+# aggregate tok/s downshift floor. Previously hardcoded to 154.63 from one 4B
+# receipt, which throttled slower models/clusters to k=1 after two requests.
+CONCURRENCY_FLOOR_TOKPS = 0.0
 RATE_WINDOW = 8  # completions per aggregate-rate reading (two rounds of 4 clients)
 PROBE_AFTER = 16  # completions below the floor at k=1 before the gate tries the configured k again
 
@@ -410,9 +414,11 @@ def _sampling(req):
     return {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
 
 
-def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031", max_concurrent=MAX_CONCURRENT):
+def serve(port=GATEWAY_PORT, engine="http://127.0.0.1:8031", max_concurrent=MAX_CONCURRENT,
+          floor_tokps=CONCURRENCY_FLOOR_TOKPS):
     Gateway.engine = engine.rstrip("/")
     Gateway.max_concurrent = max_concurrent
+    Gateway.floor_tokps = floor_tokps
     Gateway.slots = Slots(max_concurrent)
     Gateway._measured.clear()
     Gateway._off_count = 0
@@ -428,10 +434,15 @@ def main(argv=None):
     ap.add_argument("--engine", default="http://127.0.0.1:8031")
     ap.add_argument("--max-concurrent", type=int, default=MAX_CONCURRENT, metavar="N",
                     help="requests the gateway passes to the engine at once; more wait for a slot (default %(default)s)")
+    ap.add_argument("--concurrency-floor-tokps", type=float, default=CONCURRENCY_FLOOR_TOKPS, metavar="TOKPS",
+                    help="aggregate tok/s below which k>1 switches down to k=1 (default %(default)s = disabled)")
     args = ap.parse_args(argv)
     if args.max_concurrent < 1:
         ap.error("--max-concurrent must be at least 1")
-    serve(port=args.port, engine=args.engine, max_concurrent=args.max_concurrent)
+    if args.concurrency_floor_tokps < 0:
+        ap.error("--concurrency-floor-tokps must be >= 0")
+    serve(port=args.port, engine=args.engine, max_concurrent=args.max_concurrent,
+          floor_tokps=args.concurrency_floor_tokps)
 
 
 if __name__ == "__main__":

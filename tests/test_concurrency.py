@@ -253,6 +253,16 @@ def finish(clock, tokens, start, end):
     Gateway._record_rate(start, tokens)
 
 
+def test_default_floor_keeps_k2_on_for_slower_models(fresh_gate, monkeypatch, clock):
+    serve_slots(monkeypatch, 2)
+    assert fresh_gate.floor_tokps == 0.0
+    t = 0.0
+    for _ in range(8):  # 40 tok/s (below the old 154.63 4B receipt floor)
+        finish(clock, 20, t, t + 0.5)
+        t += 0.5
+    assert fresh_gate.slots.limit == 2
+
+
 def test_idle_time_between_bursts_does_not_switch_a_measured_better_k2_off(fresh_gate, monkeypatch, clock):
     serve_slots(monkeypatch, 2)
     monkeypatch.setattr(Gateway, "floor_tokps", 154.63)
