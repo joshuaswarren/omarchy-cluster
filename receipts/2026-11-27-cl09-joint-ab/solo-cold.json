@@ -1,0 +1,1 @@
+{"wall_s": 6.225912094116211, "prompt_ms": 5049.563, "prompt_n": 8192, "prompt_per_second": 1622.3186046000417, "predicted_ms": 1144.195, "predicted_n": 64, "predicted_per_second": 55.06054474980227, "token_ids_sha256": "1c48810a16497ad636438fd504a4ee02152181f371d5768b18e33dc81fb4bf43", "total_s": 6.193758}
