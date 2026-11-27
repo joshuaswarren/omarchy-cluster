@@ -10,10 +10,11 @@ ufw allow ssh
 ufw allow in proto udp to 224.0.0.251 port 5353
 ufw allow in proto udp from 224.0.0.251 port 5353
 
-# Remnic core + reranker — LAN only (the :8095/:8098 services the migration
-# restores). Scope to the LAN prefix at install time:
-#   ufw allow from <LAN_PREFIX> to any port 8095 proto tcp
-#   ufw allow from <LAN_PREFIX> to any port 8098 proto tcp
+# Remnic core + reranker — LAN only. The two service ports are configurable
+# defaults (the service's own config names them); substitute the pair your
+# deployment uses, and scope to the LAN prefix at install time:
+#   ufw allow from <LAN_PREFIX> to any port <REMNIC_CORE_PORT> proto tcp
+#   ufw allow from <LAN_PREFIX> to any port <RERANKER_PORT> proto tcp
 
 # Cluster RPC — the raw llama.cpp RPC port is never opened directly. The
 # two-node proof kit opens one scoped, labelled rule for the TLS relay port
