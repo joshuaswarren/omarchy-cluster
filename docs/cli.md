@@ -9,12 +9,20 @@ Files the tools read and write:
 | Path | Purpose |
 |---|---|
 | `~/.config/omarchy-cluster/token` | the cluster token agents require (HMAC-compared on every request) and remote gateway callers send as a bearer token |
+| `~/.config/omarchy-cluster/hosts` | manual node list `discover` reads alongside mDNS: `name=host` or `name=host:port` lines |
 | `~/.local/share/omarchy-cluster/` | `agent.log`, `gateway.log`, `rankN.log`, the installed source copy |
 | `~/.local/state/omarchy-cluster/links.json` | probe's measured routes (override with `--links` / `--out`) |
+| `~/.local/state/omarchy-cluster/pins` | the pinned TLS key per node (`address:port sha256`): the only endpoints the token is ever sent to |
+| `~/.local/state/omarchy-cluster/serve.json` | the running serve's stage map; `stop` and `guard` read it |
+| `~/.local/state/omarchy-cluster/ring-hostfile.json` | the ring addresses `serve` resolved for the running ranks |
+| `~/.local/state/omarchy-cluster/gpu-cap.json` | a Vulkan node's measured per-process allocation cap, cached per boot |
+| `~/.local/state/omarchy-cluster/kv/` | the joint engine's slot-save dir and the agent `/v1/kv` root |
 | `~/.local/state/omarchy-cluster/layer-ms.json` | fastest decode ms/layer seen per node |
 | `~/.local/state/omarchy-cluster/live-env` | default `OMARCHY_LIVE_ENV` file |
 | `~/.local/state/omarchy-cluster/join.log` | join's appended record: one line per joined peer with the clock time |
 | `~/.local/state/omarchy-cluster/joined` | one line per node `bootstrap` installed: its name and the `address:port` endpoints this machine trusts for it |
+| `~/.local/state/omarchy-cluster/left` | the `user@host` of each finished `leave`; a repeat `leave NAME` finds its target here |
+| `~/.local/state/omarchy-cluster/chat.log` | one clock-stamped line per `chat` session |
 
 ## Node commands
 
@@ -75,9 +83,10 @@ advertiser is listed with the error `not joined` and gets no request at all, bec
 on the network can advertise the service under any name. The client does not follow HTTP
 redirects on token-bearing requests. A node whose address changed shows `not joined` until
 `bootstrap` runs on it again. Pools set up before this rule need that one run per node, or a
-hosts-file line. Limit: a recorded address stays trusted until removed; an address that
-another machine later takes over (DHCP reuse) receives the token, and the token crosses
-plain HTTP (issue 98).
+hosts-file line. Limit: a recorded pin stays trusted until removed. Token-bearing
+requests go over TLS to the key pinned for the address (recorded in `pins`), never
+over plain HTTP, so a machine that takes over a recorded address (DHCP reuse) gets a
+refused handshake and no token; whoever still holds the pinned key is still trusted.
 
 ### `probe [--seconds 3.0] [--out PATH]`
 Measures RTT and bandwidth for every node pair and every interface route, writes
@@ -234,9 +243,11 @@ default).
 A terminal chat with a running `serve`. It sends the whole conversation to
 `POST /v1/chat/completions` on the gateway (default `http://127.0.0.1:8020`)
 with the cluster token if this machine has one, prints each reply, and then the
-gateway's `tokens_per_s` when the engine reports it. Replies are not streamed.
-Sampling is greedy: it sends `temperature` 0, which is all the gateway serves
-until non-greedy sampling lands. `/reset` clears the history; `/exit`, `/quit`
+gateway's `tokens_per_s` when the engine reports it. Replies stream into the
+terminal as SSE delta chunks; a gateway (or engine) that answers without
+streaming prints the whole reply at once. `chat` stays greedy: it sends
+`temperature` 0, though the gateway itself accepts `temperature`, `top_p` and
+`seed` (the gateway API below). `/reset` clears the history; `/exit`, `/quit`
 or end of input leave. A request that fails — including a 200 reply with an
 unexpected body — prints the error and leaves the conversation as it was.
 It keeps no history or memory files; each session appends one clock-stamped
