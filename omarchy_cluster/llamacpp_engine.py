@@ -30,6 +30,8 @@ import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import joint_engine
+
 LM_HEAD_ON_HOST = r"^output\.weight=CPU"
 HOST_FIT_FRACTION = 0.9
 SWA_UBATCH = 512  # llama.cpp's default n_ubatch
@@ -531,3 +533,33 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# --- CL08 joint-request surface (SUP-400) --------------------------------------
+# The CL08 decision docs (PR #149/#150/#151) chose the KV-transfer half: one
+# /generate runs five phases — prefill -> save -> transport -> restore ->
+# decode — across two llama-servers, and the CL08 card names this file as the
+# joint-request surface. The merged implementation lives in joint_engine
+# (PR #133, --engine joint). This surface delegates to it rather than
+# re-declaring the phases, so a caller or test on this file reads real
+# behavior and real telemetry: the phase order, the injectable transport
+# seam (the KV moves exactly once per request, between save and restore —
+# SUP-171), JointError's phase names, and the telemetry shape are
+# joint_engine's, not a parallel copy that could drift.
+
+CL08_PHASES = ("prefill", "save", "transport", "restore", "decode")
+
+JointError = joint_engine.JointError
+transport_kv = joint_engine.transport_kv
+
+
+def joint_generate(cfg, req, transport=None):
+    """One joint request on this engine's surface: delegates to
+    joint_engine.joint_generate unchanged.
+
+    Same cfg keys (prefill_url, decode_url, prefill_kv, decode_kv, slot,
+    kv_name, probes), same injectable transport seam, same module lock,
+    same telemetry contract: always returns a dict with `telemetry`;
+    failures also carry `error` and `telemetry.errors` with the JointError
+    phase named."""
+    return joint_engine.joint_generate(cfg, req, transport)
