@@ -538,7 +538,7 @@ if __name__ == "__main__":
 # Staged from the CL08 decision docs (PR #149/#150/#151) and SUP-171's
 # request-path note (docs/joint-request-path.md):
 #   - #149 chose the KV-transfer half: one /generate runs five phases —
-#     prefill -> save -> transfer -> restore -> decode — across two
+#     prefill -> save -> transport -> restore -> decode — across two
 #     llama-servers. The merged implementation lives in joint_engine.py
 #     (PR #133, --engine joint); this file is the surface the CL08 card names.
 #   - SUP-171 named the test seam: the KV moves exactly once per request,
@@ -549,19 +549,25 @@ if __name__ == "__main__":
 #
 # The phase functions are stubs to be filled or delegated to joint_engine;
 # the pinned contract is the phase order, the injectable transport seam,
-# JointError's phase names, and the telemetry.phases keys. Tests exercise
-# the seam by patching the stubs, not by calling them.
+# JointError's phase names, and the telemetry shape — all mirrored from
+# joint_engine so a test written against this surface reads real telemetry:
+# str(JointError) is the bare message with .phase carrying the name (the KV
+# leg is "transport"; its phases metric is "transfer_ms"), phases holds the
+# flat joint_engine metric keys (prefill_ms, save_ms, transfer_ms,
+# restore_ms, decode_ms, ...), and errors carry {"phase", "message"} dicts.
+# Tests exercise the seam by patching the stubs, not by calling them.
 
-CL08_PHASES = ("prefill", "save", "transfer", "restore", "decode")
+CL08_PHASES = ("prefill", "save", "transport", "restore", "decode")
 
 _CL08_LOCK = threading.Lock()
 
 
 class JointError(Exception):
-    """A CL08 phase failed; .phase names which of CL08_PHASES."""
+    """A CL08 phase failed; .phase names which of CL08_PHASES. Same contract
+    as joint_engine.JointError: str(e) is the bare message, .phase the name."""
 
     def __init__(self, phase, msg):
-        super().__init__("%s: %s" % (phase, msg))
+        super().__init__(msg)
         self.phase = phase
 
 
@@ -619,19 +625,33 @@ def joint_generate(cfg, req, transport=None):
     `error` and `telemetry.errors` with the JointError phase named."""
     transport = transport or transport_kv
     slot, kv_name = cfg["slot"], cfg["kv_name"]
-    tel = {"phases": {}, "errors": [], "power_watts": None, "power_source": "none"}
+    # Same field set as joint_engine._new_telemetry(): the skeleton pins the
+    # merged shape, not a subset a reader would have to translate.
+    tel = {"token_ids_sha256": None, "ttft_ms": None, "decode_tokps": None,
+           "total_s": None, "memory": {"prefill": None, "decode": None},
+           "errors": [], "lan_mbps": None, "transport": None, "kv_bytes": 0,
+           "power_watts": None, "power_source": "none", "phases": {}}
+    t0 = time.perf_counter()
     with _CL08_LOCK:
         try:
-            tel["phases"]["prefill"] = _phase("prefill", cl08_prefill, cfg, req, slot)
-            tel["phases"]["save"] = _phase("save", cl08_slot_save, cfg, slot, kv_name)
+            # Each phase stub returns the flat joint_engine metric keys it
+            # contributes (prefill_ms, save_ms, restore_ms, decode_ms, ...).
+            tel["phases"].update(_phase("prefill", cl08_prefill, cfg, req, slot))
+            saved = _phase("save", cl08_slot_save, cfg, slot, kv_name)
+            tel["kv_bytes"] = int(saved.get("n_written", 0))
+            tel["phases"].update({k: v for k, v in saved.items() if k != "n_written"})
             try:
-                tel["phases"]["transfer"] = transport(kv_name, cfg["prefill_kv"],
-                                                      cfg["decode_kv"])
+                tr = transport(kv_name, cfg["prefill_kv"], cfg["decode_kv"])
             except Exception as e:
-                raise JointError("transfer", str(e)) from e
-            tel["phases"]["restore"] = _phase("restore", cl08_slot_restore, cfg, slot, kv_name)
-            tel["phases"]["decode"] = _phase("decode", cl08_decode, cfg, req, slot)
+                raise JointError("transport", str(e)) from e
+            tel["transport"] = tr["path"]
+            tel["phases"]["transfer_ms"] = tr["seconds"] * 1e3
+            if tr["path"] == "lan" and tr["seconds"] > 0:
+                tel["lan_mbps"] = round(tr["bytes"] * 8 / 1e6 / tr["seconds"], 2)
+            tel["phases"].update(_phase("restore", cl08_slot_restore, cfg, slot, kv_name))
+            tel["phases"].update(_phase("decode", cl08_decode, cfg, req, slot))
         except JointError as e:
-            tel["errors"].append(str(e))
+            tel["errors"].append({"phase": e.phase, "message": str(e)})
+            tel["total_s"] = round(time.perf_counter() - t0, 3)
             return {"error": str(e), "telemetry": tel}
     return {"telemetry": tel}
