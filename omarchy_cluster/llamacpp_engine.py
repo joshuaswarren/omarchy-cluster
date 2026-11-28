@@ -25,11 +25,12 @@ import os
 import re
 import struct
 import subprocess
-import threading
 import sys
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from . import joint_engine
 
 LM_HEAD_ON_HOST = r"^output\.weight=CPU"
 HOST_FIT_FRACTION = 0.9
@@ -534,124 +535,31 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-# --- CL08 joint-request skeleton (SUP-400) --------------------------------------
-# Staged from the CL08 decision docs (PR #149/#150/#151) and SUP-171's
-# request-path note (docs/joint-request-path.md):
-#   - #149 chose the KV-transfer half: one /generate runs five phases —
-#     prefill -> save -> transport -> restore -> decode — across two
-#     llama-servers. The merged implementation lives in joint_engine.py
-#     (PR #133, --engine joint); this file is the surface the CL08 card names.
-#   - SUP-171 named the test seam: the KV moves exactly once per request,
-#     between save and restore, through an injectable `transport` callable.
-#   - #150's gaps this skeleton leaves room for: the gateway->joint hop test,
-#     the decode-phase failure path, partial local transport, and a power
-#     probe (telemetry carries power_watts=None by construction).
-#
-# The phase functions are stubs to be filled or delegated to joint_engine;
-# the pinned contract is the phase order, the injectable transport seam,
-# JointError's phase names, and the telemetry shape — all mirrored from
-# joint_engine so a test written against this surface reads real telemetry:
-# str(JointError) is the bare message with .phase carrying the name (the KV
-# leg is "transport"; its phases metric is "transfer_ms"), phases holds the
-# flat joint_engine metric keys (prefill_ms, save_ms, transfer_ms,
-# restore_ms, decode_ms, ...), and errors carry {"phase", "message"} dicts.
-# Tests exercise the seam by patching the stubs, not by calling them.
+# --- CL08 joint-request surface (SUP-400) --------------------------------------
+# The CL08 decision docs (PR #149/#150/#151) chose the KV-transfer half: one
+# /generate runs five phases — prefill -> save -> transport -> restore ->
+# decode — across two llama-servers, and the CL08 card names this file as the
+# joint-request surface. The merged implementation lives in joint_engine
+# (PR #133, --engine joint). This surface delegates to it rather than
+# re-declaring the phases, so a caller or test on this file reads real
+# behavior and real telemetry: the phase order, the injectable transport
+# seam (the KV moves exactly once per request, between save and restore —
+# SUP-171), JointError's phase names, and the telemetry shape are
+# joint_engine's, not a parallel copy that could drift.
 
 CL08_PHASES = ("prefill", "save", "transport", "restore", "decode")
 
-_CL08_LOCK = threading.Lock()
-
-
-class JointError(Exception):
-    """A CL08 phase failed; .phase names which of CL08_PHASES. Same contract
-    as joint_engine.JointError: str(e) is the bare message, .phase the name."""
-
-    def __init__(self, phase, msg):
-        super().__init__(msg)
-        self.phase = phase
-
-
-def _phase(name, fn, *args):
-    try:
-        return fn(*args)
-    except JointError:
-        raise
-    except Exception as e:
-        raise JointError(name, str(e)) from e
-
-
-def cl08_prefill(cfg, req, slot):
-    """Phase 1: n_predict=1 prompt eval on the prefill server, warming slot KV."""
-    raise NotImplementedError("CL08 skeleton: see joint_engine._joint_generate_locked")
-
-
-def cl08_slot_save(cfg, slot, kv_name):
-    """Phase 2: POST /slots/<slot>?action=save on the prefill server."""
-    raise NotImplementedError("CL08 skeleton: needs --slot-save-path on the server")
-
-
-def cl08_slot_restore(cfg, slot, kv_name):
-    """Phase 4: POST /slots/<slot>?action=restore on the decode server."""
-    raise NotImplementedError("CL08 skeleton: needs --slot-save-path on the server")
-
-
-def cl08_decode(cfg, req, slot):
-    """Phase 5: full-prompt /completion on the decode server; the restored
-    prefix makes its prompt evaluation free."""
-    raise NotImplementedError("CL08 skeleton: see joint_engine._joint_generate_locked")
-
-
-def transport_kv(name, src, dst, timeout=600):
-    """The SUP-171 seam: move slot file `name` from endpoint src to endpoint
-    dst, exactly once per request, between the save and restore phases.
-
-    Contract: return {"bytes", "seconds", "path"} with path "loopback" for a
-    same-host copy or "lan" when the file crossed an agent link. A partial
-    local copy must be removed before re-raising (gap 4 in
-    docs/cl08-test-inventory.md). The production implementation is
-    joint_engine.transport_kv; tests inject a double via
-    joint_generate(..., transport=...)."""
-    raise NotImplementedError("CL08 skeleton: see joint_engine.transport_kv")
+JointError = joint_engine.JointError
+transport_kv = joint_engine.transport_kv
 
 
 def joint_generate(cfg, req, transport=None):
-    """Skeleton of the CL08 five-phase handoff on this engine's surface.
+    """One joint request on this engine's surface: delegates to
+    joint_engine.joint_generate unchanged.
 
-    cfg keys follow joint_engine.joint_generate: prefill_url, decode_url,
-    prefill_kv, decode_kv, slot, kv_name. `transport` is the SUP-171 seam —
-    injected in tests, defaults to transport_kv. The whole handoff runs
-    under a module lock: the slot file and both servers' slot state are
-    shared. Always returns a dict with `telemetry`; failures also carry
-    `error` and `telemetry.errors` with the JointError phase named."""
-    transport = transport or transport_kv
-    slot, kv_name = cfg["slot"], cfg["kv_name"]
-    # Same field set as joint_engine._new_telemetry(): the skeleton pins the
-    # merged shape, not a subset a reader would have to translate.
-    tel = {"token_ids_sha256": None, "ttft_ms": None, "decode_tokps": None,
-           "total_s": None, "memory": {"prefill": None, "decode": None},
-           "errors": [], "lan_mbps": None, "transport": None, "kv_bytes": 0,
-           "power_watts": None, "power_source": "none", "phases": {}}
-    t0 = time.perf_counter()
-    with _CL08_LOCK:
-        try:
-            # Each phase stub returns the flat joint_engine metric keys it
-            # contributes (prefill_ms, save_ms, restore_ms, decode_ms, ...).
-            tel["phases"].update(_phase("prefill", cl08_prefill, cfg, req, slot))
-            saved = _phase("save", cl08_slot_save, cfg, slot, kv_name)
-            tel["kv_bytes"] = int(saved.get("n_written", 0))
-            tel["phases"].update({k: v for k, v in saved.items() if k != "n_written"})
-            try:
-                tr = transport(kv_name, cfg["prefill_kv"], cfg["decode_kv"])
-            except Exception as e:
-                raise JointError("transport", str(e)) from e
-            tel["transport"] = tr["path"]
-            tel["phases"]["transfer_ms"] = tr["seconds"] * 1e3
-            if tr["path"] == "lan" and tr["seconds"] > 0:
-                tel["lan_mbps"] = round(tr["bytes"] * 8 / 1e6 / tr["seconds"], 2)
-            tel["phases"].update(_phase("restore", cl08_slot_restore, cfg, slot, kv_name))
-            tel["phases"].update(_phase("decode", cl08_decode, cfg, req, slot))
-        except JointError as e:
-            tel["errors"].append({"phase": e.phase, "message": str(e)})
-            tel["total_s"] = round(time.perf_counter() - t0, 3)
-            return {"error": str(e), "telemetry": tel}
-    return {"telemetry": tel}
+    Same cfg keys (prefill_url, decode_url, prefill_kv, decode_kv, slot,
+    kv_name, probes), same injectable transport seam, same module lock,
+    same telemetry contract: always returns a dict with `telemetry`;
+    failures also carry `error` and `telemetry.errors` with the JointError
+    phase named."""
+    return joint_engine.joint_generate(cfg, req, transport)
